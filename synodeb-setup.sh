@@ -37,9 +37,30 @@ SHA_INSTALLER=14760a79060042f5df787bec45c8e31862677b4e3e620a8b7636705bf8ef6234
 P1=${SYNOBOOT1:-/dev/synoboot1}      # overridable for tests only
 P2=${SYNOBOOT2:-/dev/synoboot2}
 DOM=${SYNOBOOT:-/dev/synoboot}
-FAT_ID="9c 58 ee 10"                                       # 10EE-589C, as in SynoBootLoader.conf
-EXT_UUID="45 e5 b0 7d 47 83 48 67 a3 69 f9 9c 0c d1 e6 10" # 45e5b07d-4783-4867-a369-f99c0cd1e610
-P2UUID=45e5b07d-4783-4867-a369-f99c0cd1e610
+# Model profile: everything that is specific to one model. The script must stay a single
+# downloadable file, so the profiles live here. Only the DS923+ is supported.
+model_profile() { # model (from syno_hw_version)
+    case "$1" in
+    DS923+)
+        MODEL=DS923+
+        FAT_ID="9c 58 ee 10"                                       # 10EE-589C, as in SynoBootLoader.conf
+        FAT_ID_TXT=10EE-589C
+        EXT_UUID="45 e5 b0 7d 47 83 48 67 a3 69 f9 9c 0c d1 e6 10" # 45e5b07d-4783-4867-a369-f99c0cd1e610
+        P2UUID=45e5b07d-4783-4867-a369-f99c0cd1e610
+        P1_MIN=16777216 P2_MIN=67108864                           # minimum DOM partition sizes
+        CONSOLE="console=tty0 console=uart8250,mmio32,0xfedc9000,115200n8"
+        ;;
+    *) return 1 ;;
+    esac
+}
+# the model DSM runs on: /proc/sys/kernel/syno_hw_version, else syno_hw_version= on the
+# kernel command line
+hw_version() {
+    v=$(cat /proc/sys/kernel/syno_hw_version 2>/dev/null) ||
+        v=$(tr ' ' '\n' < /proc/cmdline | sed -n 's/^syno_hw_version=//p' | head -n 1)
+    echo "$v"
+}
+model_profile DS923+
 CONF_REL=EFI/boot/SynoBootLoader.conf
 BEGIN='### synodeb begin'
 END='### synodeb end'
@@ -98,8 +119,9 @@ preflight_dom() {
     [ "$(id -u)" = 0 ] || die "run as root: sudo bash $0"
     if [ "${SYNODEB_TEST:-0}" != 1 ]; then
         [ -f /etc.defaults/VERSION ] || die "this is not DSM: run this script on the NAS, under DSM"
-        grep -q 'DS923+' /proc/sys/kernel/syno_hw_version 2>/dev/null ||
-            die "this NAS is not a DS923+ ($(cat /proc/sys/kernel/syno_hw_version 2>/dev/null))"
+        hw=$(hw_version)
+        case "$hw" in *DS923+*) hw=DS923+ ;; esac
+        model_profile "$hw" || die "this NAS is not a DS923+ ($hw)"
     fi
     for t in dd od sha256sum mount umount blockdev sed awk mktemp; do
         command -v $t >/dev/null 2>&1 || die "missing tool: $t"
@@ -116,11 +138,11 @@ preflight() {
         [ -b "$p" ] || die "$p not found: is the DOM (synoboot) present?"
     done
     [ "$(bytes "$P1" 39 4)" = "$FAT_ID" ] || [ "$(bytes "$P1" 67 4)" = "$FAT_ID" ] ||
-        die "$P1 is not the Synology boot partition (FAT volume id 10EE-589C expected)"
+        die "$P1 is not the Synology boot partition (FAT volume id $FAT_ID_TXT expected)"
     [ "$(bytes "$P2" 1080 2)" = "53 ef" ] && [ "$(bytes "$P2" 1128 16)" = "$EXT_UUID" ] ||
         die "$P2 is not the Synology kernel partition (ext2 $P2UUID expected)"
     s1=$(size_of "$P1"); s2=$(size_of "$P2")
-    [ "$s1" -ge 16777216 ] && [ "$s2" -ge 67108864 ] || die "unexpected DOM partition sizes ($s1, $s2)"
+    [ "$s1" -ge "$P1_MIN" ] && [ "$s2" -ge "$P2_MIN" ] || die "unexpected DOM partition sizes ($s1, $s2)"
 }
 
 T=
@@ -248,7 +270,7 @@ drop_installer() {
 check_conf() {
     [ -f "$1" ] || die "$CONF_REL missing on the DOM"
     grep -q '^set default=' "$1" || die "unexpected $CONF_REL (no 'set default')"
-    grep -q 'syno_hw_version=DS923+' "$1" || die "unexpected $CONF_REL (not a DS923+ boot loader)"
+    grep -q "syno_hw_version=$MODEL" "$1" || die "unexpected $CONF_REL (not a $MODEL boot loader)"
     grep -q '^menuentry "SYNOLOGY_2"' "$1" || die "unexpected $CONF_REL (no SYNOLOGY_2 entry)"
 }
 # the Synology lines of a conf, without the ones synodeb changes (default, fallback)
@@ -258,7 +280,7 @@ syno_lines() { strip_conf "$1" | grep -v -e '^set default=' -e '^set fallback=' 
 # verbatim if synodeb never touched it
 save_original() {
     check_conf "$1"
-    if [ -f "$1.dsm" ] && grep -q 'syno_hw_version=DS923+' "$1.dsm" &&
+    if [ -f "$1.dsm" ] && grep -q "syno_hw_version=$MODEL" "$1.dsm" &&
        [ "$(syno_lines "$1" | sha256sum)" = "$(syno_lines "$1.dsm" | sha256sum)" ]; then
         check_conf "$1.dsm"
         return
@@ -325,7 +347,7 @@ cmd_install() {
     dsm_net
     HOST=${HOSTNAME_OPT:-$(hostname | tr 'A-Z_' 'a-z-' | tr -cd 'a-z0-9-' | sed 's/^-*//; s/-*$//' | cut -c1-63)}
     valid_host "$HOST" || HOST=debian
-    say "synodeb $VERSION — Debian installer for the Synology DS923+"
+    say "synodeb $VERSION — Debian installer for the Synology $MODEL"
     say ""
     say "DSM network: $IFACE ($MAC) $CIDR, gateway $GW, DNS $DNS$([ "$DSM_DHCP" = 1 ] && echo ', from DHCP')"
     [ -z "$NETWARN" ] || say "$NETWARN"
@@ -429,7 +451,7 @@ cmd_install() {
         cat <<EOT
 menuentry "INSTALLER" {
         search --fs-uuid --no-floppy --set=root $P2UUID
-        linux /synodeb/installer.vmlinuz console=tty0 console=uart8250,mmio32,0xfedc9000,115200n8 debian-installer/locale=$LOCALE keyboard-configuration/xkb-keymap=$KEYMAP netcfg/get_hostname=$HOST netcfg/hostname=$HOST $net network-console/password=$PW network-console/password-again=$PW${REPO:+ synodeb.repo=$REPO}
+        linux /synodeb/installer.vmlinuz $CONSOLE debian-installer/locale=$LOCALE keyboard-configuration/xkb-keymap=$KEYMAP netcfg/get_hostname=$HOST netcfg/hostname=$HOST $net network-console/password=$PW network-console/password-again=$PW${REPO:+ synodeb.repo=$REPO}
         initrd /synodeb/installer.img
 }
 EOT
@@ -642,7 +664,7 @@ menu() {
     if [ -t 1 ]; then B=$'\e[1m' D=$'\e[2m' C=$'\e[36m' N=$'\e[0m'; else B='' D='' C='' N=''; fi
     while true; do
         say ""
-        say "${B}synodeb $VERSION${N} — Debian for the Synology DS923+"
+        say "${B}synodeb $VERSION${N} — Debian for the Synology $MODEL"
         say "${D}$(summary)${N}"
         say ""
         say "  ${C}1${N}) Install Debian        add the Debian installer to the DOM (reached over SSH)"
