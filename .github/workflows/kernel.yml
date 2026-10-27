@@ -1,6 +1,10 @@
-# Builds and publishes the synodeb kernel when kernel.org releases a new stable version of the
-# series in kernel/VERSION (7.3 -> 7.3.1 -> 7.3.2 ...): new ABI, packages signed and added to
-# the apt repository on gh-pages, kernel/VERSION committed to main.
+# Builds and publishes the synodeb kernels when kernel.org releases a new version of a series:
+#   longterm  kernel/longterm/VERSION, the LTS branch (6.18.59 -> 6.18.60 ...), the default
+#   stable    kernel/stable/VERSION, the newest x.y (7.3 -> 7.3.1 -> 7.3.2 ...)
+# For each: new ABI, packages signed and added to the apt repository on gh-pages,
+# kernel/<series>/VERSION committed to main. The two series run one after the other.
+# A newer branch (next longterm, next x.y) is only reported as a warning: moving to it needs
+# kernel/patches/<x.y> and kernel/config-debian-<x.y>, added by hand.
 # Needs the secret SYNODEB_SIGNING_KEY: the armored private key of the repository
 # (gpg --export-secret-keys --armor CEE2A6FA9657FB3CBD61EA074200ADB5550E6DEE).
 name: kernel
@@ -10,12 +14,17 @@ on:
     - cron: '23 5 * * *'
   workflow_dispatch:
     inputs:
+      series:
+        description: Kernel series
+        type: choice
+        options: [all, longterm, stable]
+        default: all
       rebuild:
-        description: Build even without a new stable release (new ABI, e.g. after a patch change)
+        description: Build even without a new release (new ABI, e.g. after a patch change)
         type: boolean
         default: false
       installer:
-        description: Also rebuild and publish the installer (updates synodeb-setup.sh)
+        description: Also rebuild and publish the installer (longterm only; updates synodeb-setup.sh)
         type: boolean
         default: false
       publish:
@@ -34,30 +43,49 @@ jobs:
   kernel:
     runs-on: ubuntu-latest
     timeout-minutes: 350
+    strategy:
+      max-parallel: 1
+      fail-fast: false
+      matrix:
+        series: [longterm, stable]
     env:
+      SERIES: ${{ matrix.series }}
       PUBLISH: ${{ github.event_name == 'schedule' || inputs.publish }}
-      INSTALLER: ${{ github.event_name == 'workflow_dispatch' && inputs.installer }}
+      INSTALLER: ${{ github.event_name == 'workflow_dispatch' && inputs.installer && matrix.series == 'longterm' }}
+      SELECTED: ${{ github.event_name == 'schedule' || inputs.series == 'all' || inputs.series == matrix.series }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: main
 
-      - name: New stable release?
+      - name: New release?
         id: check
         env:
           REBUILD: ${{ inputs.rebuild || false }}
         run: |
-          . kernel/VERSION
-          series=$(echo "$KVER" | cut -d. -f1,2)
-          latest=$(curl -fsSL "https://cdn.kernel.org/pub/linux/kernel/v${series%%.*}.x/" |
-              grep -oE "linux-${series//./\\.}(\.[0-9]+)?\.tar\.xz" | sed 's/^linux-//; s/\.tar\.xz$//' |
+          [ "$SELECTED" = true ] || { echo "series $SERIES not selected"; echo "build=false" >> "$GITHUB_OUTPUT"; exit 0; }
+          V=kernel/$SERIES/VERSION
+          . $V
+          latest=$(curl -fsSL "https://cdn.kernel.org/pub/linux/kernel/v${KMAJ}.x/" |
+              grep -oE "linux-${KBRANCH//./\\.}(\.[0-9]+)?\.tar\.xz" | sed 's/^linux-//; s/\.tar\.xz$//' |
               sort -uV | tail -n 1)
-          [ -n "$latest" ] || { echo "no $series release found on kernel.org" >&2; exit 1; }
-          echo "kernel/VERSION: $KVER ABI $ABI, kernel.org: $latest"
+          [ -n "$latest" ] || { echo "no $KBRANCH release found on kernel.org" >&2; exit 1; }
+          echo "$V: $KVER ABI $ABI, kernel.org: $latest"
+          # a newer branch for this series? (releases.json: longterm entries; mainline/stable
+          # entries that are not release candidates)
+          branch=$(curl -fsSL https://www.kernel.org/releases.json | jq -r --arg s "$SERIES" '
+              .releases[] | select(if $s == "longterm" then .moniker == "longterm"
+                                   else (.moniker == "mainline" or .moniker == "stable") and (.version | test("-rc") | not) end)
+              | .version | split(".")[0:2] | join(".")' | sort -uV | tail -n 1)
+          if [ -n "$branch" ] && [ "$(printf '%s\n' "$branch" "$KBRANCH" | sort -V | tail -n 1)" != "$KBRANCH" ]; then
+              echo "::warning::$SERIES: kernel.org has $branch, synodeb builds $KBRANCH (add kernel/patches/$branch and kernel/config-debian-$branch, then set KVER in $V)"
+          fi
           if [ "$latest" = "$KVER" ] && [ "$REBUILD" != true ]; then
               echo "build=false" >> "$GITHUB_OUTPUT"
               exit 0
           fi
-          sed -i -e "s/^KVER=.*/KVER=$latest/" -e "s/^ABI=.*/ABI=$((ABI + 1))/" kernel/VERSION
-          . kernel/VERSION
+          sed -i -e "s/^KVER=.*/KVER=$latest/" -e "s/^ABI=.*/ABI=$((ABI + 1))/" $V
+          . $V
           echo "new kernel: $KREL ($KPKGVER)"
           { echo "build=true"; echo "krel=$KREL"; } >> "$GITHUB_OUTPUT"
 
@@ -107,16 +135,16 @@ jobs:
           git config --global user.name 'Marco Ziliani'
           git config --global user.email '508111+rylos@users.noreply.github.com'
           git -C build/pages add -A
-          git -C build/pages commit -qm "apt repository: kernel $KREL"
+          git -C build/pages commit -qm "apt repository: kernel $KREL ($SERIES)"
           git -C build/pages push -q origin gh-pages
-          git add kernel/VERSION synodeb-setup.sh
-          git commit -qm "kernel $KREL"
+          git add kernel/$SERIES/VERSION synodeb-setup.sh
+          git commit -qm "kernel $KREL ($SERIES)"
           git push -q origin HEAD:main
           gh api -X POST "repos/$GITHUB_REPOSITORY/pages/builds" >/dev/null || true
 
       - uses: actions/upload-artifact@v4
         if: steps.check.outputs.build == 'true' && env.PUBLISH != 'true'
         with:
-          name: kernel-${{ steps.check.outputs.krel }}
+          name: kernel-${{ matrix.series }}-${{ steps.check.outputs.krel }}
           path: build/out/*.deb
           retention-days: 7
