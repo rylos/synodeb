@@ -12,8 +12,8 @@ Unattended-Upgrade::Origins-Pattern {
 };
 // regular expressions on the package name
 Unattended-Upgrade::Package-Blacklist {
-        "linux-image-.*ds923$";
-        "linux-headers-.*ds923$";
+        "linux-image-.*ds923(-longterm|-stable)?$";
+        "linux-headers-.*ds923(-longterm|-stable)?$";
         "synology-ds923$";
 };
 Unattended-Upgrade::Automatic-Reboot "false";

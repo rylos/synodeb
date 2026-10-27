@@ -3,7 +3,7 @@
 
 Takes over the hardware management DSM does on this model, using the front-panel
 microcontroller (uP) on the AMD UART at MMIO 0xFEDCA000 (AMDI0020:01) and the
-DS923+ drivers built into the linux-image-7.3.0-ds923 kernel (synology_ds923,
+DS923+ drivers built into the synodeb kernel (synology_ds923,
 leds-atmega1608, rtc-s35390a).
 
 uP protocol (9600 8N1, ASCII):

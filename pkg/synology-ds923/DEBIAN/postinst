@@ -17,8 +17,8 @@ if [ "$1" = configure ]; then
     update-initramfs -u -k all || true
     # /boot/vmlinuz(.old) and the copy on the DOM: the kernel may have been installed before
     # this package and its hook (on a new system the installer does exactly that)
-    # (the hook also creates the initrd of the newest kernel if it is missing)
-    newest=$(ls /boot/vmlinuz-* 2>/dev/null | sed 's|^/boot/vmlinuz-||' | sort -V | tail -n 1)
+    # (the hook also creates the initrd of the DEBIAN kernel if it is missing)
+    newest=$(/usr/lib/synodeb/boot-kernels | cut -d' ' -f1)
     /etc/kernel/postinst.d/zz-synodeb-boot-links $newest || true
     udevadm control --reload || true
     udevadm trigger --subsystem-match=tty --action=add || true

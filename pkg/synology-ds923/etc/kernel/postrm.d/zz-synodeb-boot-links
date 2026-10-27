@@ -1,14 +1,14 @@
 #!/bin/sh
 # The Synology GRUB on the DOM boots /vmlinuz and /initrd.img (DEBIAN entry) and
 # /vmlinuz.old and /initrd.img.old (DEBIAN_OLD entry) from the SYNODEB_BOOT partition.
-# They point to the newest and the previous kernel among those in /boot.
+# They point to the kernels chosen by /usr/lib/synodeb/boot-kernels: the newest of the series
+# the system follows (longterm or stable) and the previous one.
 # No set -e: a missing file must not stop the rest (symlinks and copy to the DOM).
 set -u
 cd /boot || exit 0
-kernels=$(ls vmlinuz-* 2>/dev/null | sed 's/^vmlinuz-//' | sort -V | tac)
-new=$(echo "$kernels" | sed -n 1p)
-old=$(echo "$kernels" | sed -n 2p)
-[ -n "$old" ] || old=$new
+sel=$(/usr/lib/synodeb/boot-kernels)
+new=${sel% *}
+old=${sel#* }
 for v in $new $old; do
     # postinst.d runs before the initrd of a new kernel exists: create it here
     if [ ! -f "initrd.img-$v" ] && [ "$v" = "${1:-}" ]; then

@@ -1,0 +1,37 @@
+#!/bin/sh
+# Prints the two kernels the DOM boots: "<DEBIAN> <DEBIAN_OLD>" (uname -r of each), chosen
+# among the kernels in /boot.
+#  - DEBIAN: the newest kernel of the series the system follows. linux-image-ds923-stable
+#    installed: the newest kernel of all; otherwise linux-image-ds923-longterm installed: the
+#    newest kernel of its branch (e.g. 6.18), even when a newer series is still installed;
+#    neither: the newest kernel of all.
+#  - DEBIAN_OLD: the running kernel, which is known to boot; if DEBIAN is the running kernel
+#    (or the running one is gone), the previous kernel of the same branch, else the newest of
+#    the others, else DEBIAN itself.
+set -u
+cd /boot || exit 0
+kernels=$(ls vmlinuz-* 2>/dev/null | sed 's/^vmlinuz-//' | sort -V | tac)
+[ -n "$kernels" ] || exit 0
+wanted() { # package: selected for install (also while dpkg is still unpacking it)
+    dpkg-query -W -f='${db:Status-Want}' "$1" 2>/dev/null | grep -q '^install$'
+}
+branch() { echo "$1" | cut -d. -f1,2; }
+br=
+if ! wanted linux-image-ds923-stable && wanted linux-image-ds923-longterm; then
+    dep=$(dpkg-query -W -f='${Depends}' linux-image-ds923-longterm 2>/dev/null |
+        sed -n 's/^linux-image-\([0-9][^ ,]*\).*/\1/p')
+    [ -n "$dep" ] && br=$(branch "$dep")
+fi
+new=
+[ -n "$br" ] && new=$(echo "$kernels" | while read -r k; do
+    [ "$(branch "$k")" = "$br" ] && { echo "$k"; break; }; done)
+[ -n "$new" ] || new=$(echo "$kernels" | sed -n 1p)
+others=$(echo "$kernels" | grep -vxF "$new")
+run=$(uname -r)
+old=
+echo "$others" | grep -qxF "$run" && old=$run
+[ -n "$old" ] || old=$(echo "$others" | while read -r k; do
+    [ -n "$k" ] && [ "$(branch "$k")" = "$(branch "$new")" ] && { echo "$k"; break; }; done)
+[ -n "$old" ] || old=$(echo "$others" | sed -n 1p)
+[ -n "$old" ] || old=$new
+echo "$new $old"
