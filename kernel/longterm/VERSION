@@ -1,0 +1,19 @@
+# synodeb kernel, "longterm" series: the kernel.org longterm (LTS) branch (6.18.59, 6.18.60, ...).
+# KVER is the upstream version (kernel.org tarball name), ABI is bumped on every published
+# build, so the previous kernel stays installed next to the new one and serves as
+# DEBIAN_OLD on the DOM. The kernel is named <upstream x.y.z>-<ABI>-ds923 (e.g.
+# 6.18.59-1-ds923, package linux-image-6.18.59-1-ds923); metapackages linux-image-ds923-longterm
+# and linux-image-ds923 (the default).
+# .github/workflows/kernel.yml updates KVER and ABI when a new release of the series is out.
+# ABI=0: not published yet (the first workflow build publishes ABI 1).
+# Moving to the next longterm branch is done by hand: kernel/patches/<x.y> and
+# kernel/config-debian-<x.y> must exist for it.
+SERIES=longterm
+KVER=6.18.59
+ABI=0
+# derived
+KMAJ=${KVER%%.*}; KMIN=${KVER#*.}; KMIN=${KMIN%%.*}
+KBRANCH=$KMAJ.$KMIN             # 6.18: kernel/patches/6.18, kernel/config-debian-6.18
+KUPS=$KVER; case $KUPS in *.*.*) ;; *) KUPS=$KUPS.0 ;; esac
+KREL=$KUPS-$ABI-ds923           # uname -r
+KPKGVER=$KUPS-$ABI              # version of the .deb packages

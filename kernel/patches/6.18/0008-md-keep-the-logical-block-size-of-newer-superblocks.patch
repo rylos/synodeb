@@ -1,0 +1,59 @@
+diff --git a/drivers/md/md.c b/drivers/md/md.c
+index 03d328506..69ea6fdf2 100644
+--- a/drivers/md/md.c
++++ b/drivers/md/md.c
+@@ -2009,6 +2009,8 @@ static int super_1_validate(struct mddev *mddev, struct md_rdev *freshest, struc
+ 		mddev->clevel[0] = 0;
+ 		mddev->layout = le32_to_cpu(sb->layout);
+ 		mddev->raid_disks = le32_to_cpu(sb->raid_disks);
++		if (!mddev->logical_block_size)
++			mddev->logical_block_size = le32_to_cpu(sb->logical_block_size);
+ 		mddev->dev_sectors = le64_to_cpu(sb->size);
+ 		mddev->events = ev1;
+ 		mddev->bitmap_info.offset = 0;
+@@ -2202,6 +2204,7 @@ static void super_1_sync(struct mddev *mddev, struct md_rdev *rdev)
+ 	sb->pad0 = 0;
+ 	sb->recovery_offset = cpu_to_le64(0);
+ 	memset(sb->pad3, 0, sizeof(sb->pad3));
++	sb->logical_block_size = cpu_to_le32(mddev->logical_block_size);
+ 
+ 	sb->utime = cpu_to_le64((__u64)mddev->utime);
+ 	sb->events = cpu_to_le64(mddev->events);
+@@ -6840,6 +6843,7 @@ static void md_clean(struct mddev *mddev)
+ 	mddev->external_size = 0;
+ 	mddev->dev_sectors = 0;
+ 	mddev->raid_disks = 0;
++	mddev->logical_block_size = 0;
+ 	mddev->resync_offset = 0;
+ 	mddev->resync_min = 0;
+ 	mddev->resync_max = MaxSector;
+diff --git a/drivers/md/md.h b/drivers/md/md.h
+index cab3d7360..0242be32c 100644
+--- a/drivers/md/md.h
++++ b/drivers/md/md.h
+@@ -431,6 +431,11 @@ struct mddev {
+ 							 * managed externally */
+ 	char				metadata_type[17]; /* externally set*/
+ 	int				chunk_sectors;
++	/*
++	 * Logical block size recorded in the superblock by newer kernels (7.x)
++	 * for arrays they create; kept as read, so such arrays assemble here.
++	 */
++	unsigned int			logical_block_size;
+ 	time64_t			ctime, utime;
+ 	int				level, layout;
+ 	char				clevel[16];
+diff --git a/include/uapi/linux/raid/md_p.h b/include/uapi/linux/raid/md_p.h
+index ac74133a4..310068bb2 100644
+--- a/include/uapi/linux/raid/md_p.h
++++ b/include/uapi/linux/raid/md_p.h
+@@ -291,7 +291,8 @@ struct mdp_superblock_1 {
+ 	__le64	resync_offset;	/* data before this offset (from data_offset) known to be in sync */
+ 	__le32	sb_csum;	/* checksum up to devs[max_dev] */
+ 	__le32	max_dev;	/* size of devs[] array to consider */
+-	__u8	pad3[64-32];	/* set to 0 when writing */
++	__le32  logical_block_size;	/* same as q->limits->logical_block_size */
++	__u8	pad3[64-36];	/* set to 0 when writing */
+ 
+ 	/* device state information. Indexed by dev_number.
+ 	 * 2 bytes per device

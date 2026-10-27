@@ -1,0 +1,30 @@
+diff --git a/drivers/leds/Kconfig b/drivers/leds/Kconfig
+index 06e6291..cc16be5 100644
+--- a/drivers/leds/Kconfig
++++ b/drivers/leds/Kconfig
+@@ -107,6 +107,13 @@ config LEDS_ARIEL
+ 
+ 	  Say Y to if your machine is a Dell Wyse 3020 thin client.
+ 
++config LEDS_ATMEGA1608
++	tristate "LED support for the Synology ATmega1608 disk LED controller"
++	depends on LEDS_CLASS && I2C
++	help
++	  The ATmega1608 microcontroller that drives the green/orange disk
++	  LEDs of Synology NAS such as the DS923+ (I2C address 0x60).
++
+ config LEDS_AW200XX
+ 	tristate "LED support for Awinic AW20036/AW20054/AW20072/AW20108"
+ 	depends on LEDS_CLASS
+diff --git a/drivers/leds/Makefile b/drivers/leds/Makefile
+index 9a0333e..92bb166 100644
+--- a/drivers/leds/Makefile
++++ b/drivers/leds/Makefile
+@@ -15,6 +15,7 @@ obj-$(CONFIG_LEDS_ADP5520)		+= leds-adp5520.o
+ obj-$(CONFIG_LEDS_AN30259A)		+= leds-an30259a.o
+ obj-$(CONFIG_LEDS_APU)			+= leds-apu.o
+ obj-$(CONFIG_LEDS_ARIEL)		+= leds-ariel.o
++obj-$(CONFIG_LEDS_ATMEGA1608)		+= leds-atmega1608.o
+ obj-$(CONFIG_LEDS_AW200XX)		+= leds-aw200xx.o
+ obj-$(CONFIG_LEDS_AW2013)		+= leds-aw2013.o
+ obj-$(CONFIG_LEDS_BCM6328)		+= leds-bcm6328.o

@@ -1,0 +1,32 @@
+diff --git a/fs/btrfs/tree-checker.c b/fs/btrfs/tree-checker.c
+index baaca33..a4fbd9e 100644
+--- a/fs/btrfs/tree-checker.c
++++ b/fs/btrfs/tree-checker.c
+@@ -1169,7 +1169,11 @@ static int check_inode_item(struct extent_buffer *leaf,
+ 		return -EUCLEAN;
+ 	}
+ 	btrfs_inode_split_flags(btrfs_inode_flags(leaf, iitem), &flags, &ro_flags);
+-	if (unlikely(flags & ~BTRFS_INODE_FLAG_MASK)) {
++	/*
++	 * Unknown flags are tolerated on read-only mounts, like unknown ro_flags
++	 * below: Synology DSM sets bit 30 on its inodes.
++	 */
++	if (unlikely(!sb_rdonly(fs_info->sb) && (flags & ~BTRFS_INODE_FLAG_MASK))) {
+ 		inode_item_err(leaf, slot,
+ 			       "unknown incompat flags detected: 0x%x", flags);
+ 		return -EUCLEAN;
+@@ -1278,8 +1282,12 @@ static int check_root_item(struct extent_buffer *leaf, struct btrfs_key *key,
+ 		return -EUCLEAN;
+ 	}
+ 
+-	/* Flags check */
+-	if (unlikely(btrfs_root_flags(&ri) & ~valid_root_flags)) {
++	/*
++	 * Flags check. Unknown flags are tolerated on read-only mounts: Synology
++	 * DSM sets bit 34 in the root items of its subvolumes.
++	 */
++	if (unlikely(!sb_rdonly(fs_info->sb) &&
++		     (btrfs_root_flags(&ri) & ~valid_root_flags))) {
+ 		generic_err(leaf, slot,
+ 			    "invalid root flags, have 0x%llx expect mask 0x%llx",
+ 			    btrfs_root_flags(&ri), valid_root_flags);

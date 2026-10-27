@@ -10,8 +10,9 @@ CACHE=$W/build/installer-cache
 DEST=$OUT/installer
 MIRROR=${MIRROR:-https://deb.debian.org/debian}
 DIST=trixie
+# the installer runs the kernel of the default series (longterm)
 # shellcheck source=/dev/null
-. $W/kernel/VERSION
+. $W/kernel/longterm/VERSION
 KDEB=$OUT/linux-image-${KREL}_${KPKGVER}_amd64.deb
 [ -f "$KDEB" ] || { echo "$KDEB missing: build the kernel first (kernel/run-build.sh)" >&2; exit 1; }
 

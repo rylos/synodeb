@@ -1,0 +1,35 @@
+diff --git a/drivers/platform/x86/Kconfig b/drivers/platform/x86/Kconfig
+index c883a28..4abf67a 100644
+--- a/drivers/platform/x86/Kconfig
++++ b/drivers/platform/x86/Kconfig
+@@ -1022,6 +1022,19 @@ config SEL3350_PLATFORM
+ 	  To compile this driver as a module, choose M here: the module
+ 	  will be called sel3350-platform.
+ 
++config SYNOLOGY_DS923
++	tristate "Synology DS923+ platform support"
++	depends on ACPI && DMI && I2C && GPIOLIB && HWMON
++	depends on PINCTRL_AMD
++	help
++	  Hardware of the Synology DS923+ NAS that the BIOS does not describe:
++	  SATA bay power and presence, USB VBUS, fan tachometers, the I2C RTC
++	  and LED controller, and the restart/power-off handshake with the
++	  front-panel microcontroller.
++
++	  Build it in (Y): the USB ports are powered from here, and the boot
++	  disk may be behind them.
++
+ config OXP_EC
+ 	tristate "OneXPlayer EC platform control"
+ 	depends on ACPI_EC
+diff --git a/drivers/platform/x86/Makefile b/drivers/platform/x86/Makefile
+index c7db2a8..61a5447 100644
+--- a/drivers/platform/x86/Makefile
++++ b/drivers/platform/x86/Makefile
+@@ -163,3 +163,6 @@ obj-$(CONFIG_SEL3350_PLATFORM)		+= sel3350-platform.o
+ 
+ # OneXPlayer
+ obj-$(CONFIG_OXP_EC)			+= oxpec.o
++
++# Synology
++obj-$(CONFIG_SYNOLOGY_DS923)		+= synology_ds923.o

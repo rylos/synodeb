@@ -1,0 +1,53 @@
+diff --git a/include/linux/reboot.h b/include/linux/reboot.h
+index aa08c3b..2448f02 100644
+--- a/include/linux/reboot.h
++++ b/include/linux/reboot.h
+@@ -46,6 +46,9 @@ extern int unregister_reboot_notifier(struct notifier_block *);
+ 
+ extern int devm_register_reboot_notifier(struct device *, struct notifier_block *);
+ 
++extern int register_emergency_restart_prep_notifier(struct notifier_block *nb);
++extern int unregister_emergency_restart_prep_notifier(struct notifier_block *nb);
++
+ extern int register_restart_handler(struct notifier_block *);
+ extern int unregister_restart_handler(struct notifier_block *);
+ extern void do_kernel_restart(char *cmd);
+diff --git a/kernel/reboot.c b/kernel/reboot.c
+index 61924a0..8ff1f40 100644
+--- a/kernel/reboot.c
++++ b/kernel/reboot.c
+@@ -82,6 +82,26 @@ void __weak (*pm_power_off)(void);
+  */
+ static BLOCKING_NOTIFIER_HEAD(reboot_notifier_list);
+ 
++/*
++ * Called by emergency_restart() (panic, sysrq-b) right before the machine
++ * reset, from any context: callbacks must not sleep. For boards whose
++ * power controller must be told about a reset, like the front-panel
++ * microcontroller of Synology NAS.
++ */
++static ATOMIC_NOTIFIER_HEAD(emergency_restart_prep_list);
++
++int register_emergency_restart_prep_notifier(struct notifier_block *nb)
++{
++	return atomic_notifier_chain_register(&emergency_restart_prep_list, nb);
++}
++EXPORT_SYMBOL_GPL(register_emergency_restart_prep_notifier);
++
++int unregister_emergency_restart_prep_notifier(struct notifier_block *nb)
++{
++	return atomic_notifier_chain_unregister(&emergency_restart_prep_list, nb);
++}
++EXPORT_SYMBOL_GPL(unregister_emergency_restart_prep_notifier);
++
+ /**
+  *	emergency_restart - reboot the system
+  *
+@@ -94,6 +114,7 @@ void emergency_restart(void)
+ {
+ 	kmsg_dump(KMSG_DUMP_EMERG);
+ 	system_state = SYSTEM_RESTART;
++	atomic_notifier_call_chain(&emergency_restart_prep_list, SYS_RESTART, NULL);
+ 	machine_emergency_restart();
+ }
+ EXPORT_SYMBOL_GPL(emergency_restart);

@@ -1,9 +1,15 @@
 #!/bin/bash
-# Builds vanilla Linux (kernel/VERSION) with the Debian configuration + the DS923+ fragment
-# and produces the .deb packages. Runs in a debian:trixie container (see run-build.sh).
+# Builds vanilla Linux for one kernel series (SERIES=longterm|stable, kernel/<series>/VERSION)
+# with the Debian configuration of its branch + the DS923+ fragment, and produces the .deb
+# packages. Runs in a debian:trixie container (see run-build.sh).
 set -euo pipefail
+SERIES=${SERIES:-longterm}
+[ -f "/work/kernel/$SERIES/VERSION" ] || { echo "unknown kernel series: $SERIES" >&2; exit 1; }
 # shellcheck source=/dev/null
-. /work/kernel/VERSION
+. "/work/kernel/$SERIES/VERSION"
+PATCHES=/work/kernel/patches/$KBRANCH
+CONFIG=/work/kernel/config-debian-$KBRANCH
+[ -d "$PATCHES" ] && [ -f "$CONFIG" ] || { echo "$PATCHES or $CONFIG missing for $KVER" >&2; exit 1; }
 VER=$KVER
 SRC=/work/build/linux-$VER
 OUT=/work/build/out
@@ -26,7 +32,7 @@ gpgv --keyring /tmp/kernel.org.gpg /work/build/sha256sums.asc 2>/dev/null || { e
 want=$(awk -v f="linux-$VER.tar.xz" '$2 == f { print $1 }' /work/build/sha256sums.asc)
 [ -n "$want" ] && [ "$(sha256sum "$TB" | cut -d' ' -f1)" = "$want" ] || { echo "$TB: wrong sha256" >&2; exit 1; }
 # Sources: a linux-$VER tree under git (commit "vanilla" = the tarball). The patches
-# (kernel/patches) are applied again only when they change, after resetting the files
+# (kernel/patches/<x.y>) are applied again only when they change, after resetting the files
 # they touch to vanilla; the new drivers (kernel/src) are copied only when different.
 # So make rebuilds only what changed. FULL=1 starts again from the tarball.
 export GIT_AUTHOR_NAME=synodeb GIT_AUTHOR_EMAIL=synodeb@localhost
@@ -40,11 +46,11 @@ if [ "${FULL:-0}" = 1 ] || [ ! -d "$SRC/.git" ]; then
     git -C "$SRC" commit -qm vanilla
 fi
 cd "$SRC"
-STAMP=$(cat /work/kernel/patches/*.patch | sha256sum | cut -d' ' -f1)
+STAMP=$(cat "$PATCHES"/*.patch | sha256sum | cut -d' ' -f1)
 if [ "$(cat .synodeb-patches 2>/dev/null)" != "$STAMP" ]; then
     echo "patches changed: touched files reset to vanilla"
     git checkout -q -- .
-    for p in /work/kernel/patches/*.patch; do
+    for p in "$PATCHES"/*.patch; do
         echo "patch $(basename "$p")"
         patch -p1 --forward --no-backup-if-mismatch < "$p"
     done
@@ -53,7 +59,7 @@ else
     echo "patches unchanged"
 fi
 rsync -rc --itemize-changes /work/kernel/src/ ./
-cp /work/kernel/config-debian-7.3-rc7 .config
+cp "$CONFIG" .config
 scripts/kconfig/merge_config.sh -m .config /work/kernel/ds923.config /work/kernel/ds923-slim.config
 make olddefconfig
 for o in SYNOLOGY_DS923=y LEDS_ATMEGA1608=m RTC_DRV_S35390A=y RTC_DRV_CMOS=m PINCTRL_AMD=y \
@@ -66,21 +72,47 @@ make -j"$(nproc)" bindeb-pkg KDEB_PKGVERSION="$PKGVER" LOCALVERSION="-$ABI-ds923
 rm -f ../linux-image-*-dbg_*.deb
 mv ../linux-*.deb "$OUT"/
 cp .config "$OUT"/config-$KREL
-# Metapackages: always depend on the latest kernel (like linux-image-amd64 in Debian)
-for kind in image headers; do
-    d=/tmp/meta-$kind
+# Metapackages: always depend on the latest kernel of the series (like linux-image-amd64 in
+# Debian). linux-image-ds923 is the default and follows the longterm series; its epoch keeps
+# it newer than the 7.3.0-1 it had before the series were split.
+meta() { # package version depends description
+    d=/tmp/meta-$1
     rm -rf "$d"; mkdir -p "$d/DEBIAN"
     cat > "$d/DEBIAN/control" <<EOT
-Package: linux-$kind-ds923
-Version: $PKGVER
+Package: $1
+Version: $2
 Architecture: amd64
 Maintainer: Marco Ziliani <508111+rylos@users.noreply.github.com>
-Depends: linux-$kind-$KREL (= $PKGVER)
+Depends: $3
 Section: kernel
 Priority: optional
-Description: Linux kernel for the Synology DS923+ ($kind, latest)
- Depends on the latest synodeb kernel $kind package.
+Description: $4
 EOT
-    dpkg-deb --root-owner-group -Zxz -b "$d" "$OUT/linux-$kind-ds923_${PKGVER}_amd64.deb" >/dev/null
+    # the series decides which kernel the DOM boots (/usr/lib/synodeb/boot-kernels): installing
+    # or removing linux-image-ds923-<series> alone must choose again
+    case $1 in linux-image-ds923-*)
+        for s in postinst postrm; do
+            cat > "$d/DEBIAN/$s" <<'EOT'
+#!/bin/sh
+set -e
+case "$1" in configure|remove|purge)
+    [ ! -x /etc/kernel/postinst.d/zz-synodeb-boot-links ] || /etc/kernel/postinst.d/zz-synodeb-boot-links ;;
+esac
+EOT
+            chmod 755 "$d/DEBIAN/$s"
+        done ;;
+    esac
+    dpkg-deb --root-owner-group -Zxz -b "$d" "$OUT/${1}_${2#*:}_amd64.deb" >/dev/null
+}
+for kind in image headers; do
+    meta "linux-$kind-ds923-$SERIES" "$PKGVER" "linux-$kind-$KREL (= $PKGVER)" \
+        "Linux kernel for the Synology DS923+ ($kind, $SERIES series)
+ Depends on the latest synodeb kernel $kind package of the $SERIES series ($KBRANCH)."
+    if [ "$SERIES" = longterm ]; then
+        meta "linux-$kind-ds923" "1:$PKGVER" "linux-$kind-ds923-longterm (= $PKGVER)" \
+            "Linux kernel for the Synology DS923+ ($kind, default)
+ Depends on the synodeb kernel of the longterm series. For the newest stable series
+ install linux-$kind-ds923-stable instead."
+    fi
 done
 ls -la "$OUT"
