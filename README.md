@@ -5,9 +5,9 @@ Debian 13 on the Synology DS923+, with every piece of hardware working:<br>
 fans, LEDs, buttons, beeper, power schedule, UPS, watchdog, all four bays and both M.2 slots.
 </h3>
 
-synodeb turns a **Synology DS923+** into a plain **Debian trixie** server. A small Linux
-kernel (7.3) with drivers for the DS923+ platform is started by the NAS's own boot loader,
-and the official **Debian installer** runs over **SSH**, because the NAS has no screen. You
+synodeb turns a **Synology DS923+** into a plain **Debian trixie** server. A Linux
+kernel (6.18 LTS, or the newest stable 7.3) with drivers for the DS923+ platform is started by
+the NAS's own boot loader, and the official **Debian installer** runs over **SSH**, because the NAS has no screen. You
 choose the disks, RAID, LVM and filesystems in the installer, as on any Debian
 machine.
 
@@ -30,7 +30,8 @@ This project is not affiliated with, endorsed or supported by Synology Inc. "Syn
 
 ## What works
 
-Tested on a DS923+ (AMD Ryzen R1600) with Debian 13 trixie and the synodeb kernel 7.3.
+Tested on a DS923+ (AMD Ryzen R1600) with Debian 13 trixie and the synodeb kernel 7.3; the
+6.18 longterm kernel carries the same patches.
 Please report problems in the [issues](https://github.com/rylos/synodeb/issues).
 
 | | |
@@ -182,15 +183,32 @@ and reboots by itself when mains power is back.
 
 **Kernel updates.** The kernel and `synology-ds923` come from the synodeb apt repository and
 are updated with `sudo apt update && sudo apt full-upgrade` (a new kernel is a new package, as
-with Debian's own kernels), then a reboot. New stable releases of the kernel series (7.3.1,
-7.3.2…) are built and published automatically, usually within a day of their release on
-kernel.org. Debian's own security updates are installed
+with Debian's own kernels), then a reboot. New releases of the kernel series are built and
+published automatically, usually within a day of their release on kernel.org. Debian's own security updates are installed
 automatically; the kernel never is, because a kernel update writes the DOM. The DOM keeps two kernels: if the new one does not boot, the next boot starts the
 previous one and you get a notification. A normal boot never writes the DOM.
 
 **Kernel headers.** For DKMS modules or anything built against the kernel install
-`linux-headers-ds923`: it follows the installed kernel like `linux-image-ds923` does. Module
+`linux-headers-ds923` (or `linux-headers-ds923-stable`): it follows the kernel of its series. Module
 signatures are checked but not enforced, so modules built locally load.
+
+**Kernel series.** There are two, named as on [kernel.org](https://www.kernel.org/category/releases.html):
+
+| Metapackage | Series | |
+|---|---|---|
+| `linux-image-ds923-longterm` | longterm (6.18.y), fixes until December 2028 | **default**, also installed as `linux-image-ds923` |
+| `linux-image-ds923-stable` | the newest stable branch (7.3.y, then 7.4.y…) | newer features, each branch maintained for a few months only |
+
+To follow the stable series: `sudo apt install linux-image-ds923-stable` (plus
+`linux-headers-ds923-stable` if you build modules). With both installed, the DOM boots the newest
+stable kernel; remove `linux-image-ds923-stable` to go back to longterm. Systems installed
+before the split (kernel 7.3.0-1) move to longterm with the next `full-upgrade`; the 7.3 kernel
+stays as the fallback until it is removed.
+
+RAID arrays created by a 7.x kernel (the synodeb installer before the split used 7.3) record their
+logical block size in the md superblock, and a stock 6.18 kernel refuses to assemble them. The
+synodeb longterm kernel carries a small patch that reads and keeps that field, so these arrays
+work with both series. Moving such disks to another machine needs a kernel newer than 6.18 there.
 
 ## How it works
 
@@ -199,14 +217,16 @@ that holds the Synology boot loader (GRUB) and the DSM kernel. synodeb adds two 
 boot menu, *DEBIAN* and *DEBIAN_OLD*, and copies the Debian kernel and initrd next to the DSM
 ones. Everything else, the whole Debian system, is on the disks you choose.
 
-The kernel is Linux 7.3 with Debian's configuration and a few additions for the DS923+:
+The kernel is a kernel.org release (6.18 longterm or 7.3 stable) with Debian's configuration of
+that branch and a few additions for the DS923+:
 
 - a platform driver for bay power and presence, USB power, fan speed sensors and the power-off
   and reboot sequence of the front-panel microcontroller;
 - the driver for the ATmega1608 that drives the bay LEDs;
 - JMB585 SATA PHY tuning, the S-35390A RTC alarm on the power-on line, per-port ATA LED
   triggers;
-- read-only mounting of btrfs volumes written by DSM.
+- read-only mounting of btrfs volumes written by DSM;
+- longterm only: md superblocks written by newer kernels (logical block size) are accepted.
 
 `synohwd` (Python) talks to the front-panel microcontroller: fans, LEDs, buttons, beeper,
 power-on settings.
@@ -220,22 +240,30 @@ mirror) and a final step that installs the synodeb kernel and package and writes
 Everything builds in `debian:trixie` containers (Docker).
 
 ```sh
-kernel/run-build.sh          # kernel .deb packages (kernel/VERSION: upstream version and ABI)
-installer/run-build.sh       # build/out/installer: vmlinuz, installer.img
-tools/publish.sh             # apt repository and installer for GitHub Pages (build/pages)
+kernel/run-build.sh          # kernel .deb packages, longterm series (kernel/longterm/VERSION)
+SERIES=stable kernel/run-build.sh   # stable series (kernel/stable/VERSION)
+installer/run-build.sh       # build/out/installer: vmlinuz, installer.img (longterm kernel)
+tools/publish.sh             # apt repository and installer for GitHub Pages (build/pages);
+                             # SERIES=stable publishes the stable kernel packages
 tests/run-test-setup.sh DOM.img   # synodeb-setup.sh against a copy of a DOM image
 ```
 
-The GitHub workflow [`kernel`](.github/workflows/kernel.yml) checks kernel.org every day: when a
-new stable release of the series in `kernel/VERSION` is out it bumps the version and ABI, builds
-the kernel, adds it to the signed apt repository and commits the new `kernel/VERSION`. It can
-also be started by hand (rebuild with a new ABI, rebuild the installer, or build only).
+Each series has its `kernel/<series>/VERSION` (upstream version and ABI); patches and Debian
+configuration are per branch, in `kernel/patches/<x.y>` and `kernel/config-debian-<x.y>`.
+
+The GitHub workflow [`kernel`](.github/workflows/kernel.yml) checks kernel.org every day for both
+series: when a new release of a branch is out it bumps the version and ABI, builds the kernel,
+adds it to the signed apt repository and commits the new `VERSION`. When kernel.org has a newer
+branch (a new longterm, or the next stable x.y) it only warns: moving to it means porting the
+patches. It can also be started by hand (one series or both, rebuild with a new ABI, rebuild the
+installer, or build only).
 
 ## Known limitations
 
 - **No root on an encrypted volume**: unlocking it at boot would need a console. Encrypt data
   volumes instead (with a key file on the root filesystem).
-- **No ZFS**: OpenZFS does not support Linux 7.3 yet. btrfs, mdadm, LVM, XFS and ext4 work.
+- **ZFS** only with the longterm kernel (`zfs-dkms` with `linux-headers-ds923`): OpenZFS does
+  not support Linux 7.3 yet. btrfs, mdadm, LVM, XFS and ext4 work with both.
 - The installer and the system are reached over the network only. The internal serial port
   shows the boot menu and the console, for debugging: see [docs/serial.md](docs/serial.md).
 - Only the DS923+ is supported.
