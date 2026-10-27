@@ -1,0 +1,25 @@
+diff --git a/drivers/ata/libata-pmp.c b/drivers/ata/libata-pmp.c
+index 299b1823e..01898fdf9 100644
+--- a/drivers/ata/libata-pmp.c
++++ b/drivers/ata/libata-pmp.c
+@@ -482,6 +482,20 @@ static void sata_pmp_quirks(struct ata_port *ap)
+ 			if (link->pmp == 4)
+ 				link->flags |= ATA_LFLAG_DISABLED;
+ 		}
++	} else if (vendor == 0x1b4b && devid == 0x9705) {
++		/*
++		 * Marvell 88SM9705 quirks
++		 *
++		 * Reports 6 ports, but port 5 is a SEMB (enclosure management)
++		 * device that never answers SRST.  Probing it costs about a
++		 * minute of reset retries per PMP and stalls every other port
++		 * on the host while it does.  Seen behind a Marvell 88SE9235
++		 * in the Synology DX1215 expansion unit.
++		 */
++		ata_for_each_link(link, ap, EDGE) {
++			if (link->pmp == 5)
++				link->flags |= ATA_LFLAG_DISABLED;
++		}
+ 	}
+ }
+ 
