@@ -4,35 +4,35 @@ Hash: SHA512
 Architectures: amd64
 Codename: trixie
 Components: main
-Date: Wed, 28 Oct 2026 12:28:30 +0000
+Date: Wed, 28 Oct 2026 13:10:04 +0000
 Description: synodeb: Debian on the Synology DS923+
 Label: synodeb
 Origin: synodeb
 Suite: trixie
 MD5Sum:
- 7b02056414ed487760029c3b1ef1c5de             1588 Release
- 726658ab6f050055becd264b8fed28a9             9702 main/binary-amd64/Packages
- e32735c4ae76825f82e051b584685cc3             3295 main/binary-amd64/Packages.gz
- c30fd8b4105b59729a46eefe1f51171c             3188 main/binary-amd64/Packages.xz
+ 8ad384c025a10d7403b67d086e5fadd3             1960 Release
+ 21e1160830ab80e4c038fccdc7c43aa7            12757 main/binary-amd64/Packages
+ e6aaca6c4b3f4ec85ae1388a9569c346             4119 main/binary-amd64/Packages.gz
+ 8fa6c2f7a11cb768e4dd2d2832157022             3884 main/binary-amd64/Packages.xz
 SHA1:
- a01deabbc0b1f6f35b6e7066eeaccbbe0e05e537             1588 Release
- e9b17cd1892649d653f9d5d613fd3c6bc816fb4c             9702 main/binary-amd64/Packages
- 84551eeb80bfa35ec459b16acc4fc3700bb5fef0             3295 main/binary-amd64/Packages.gz
- edea650f5e8a85f6c517d674a186a30b1439a2c6             3188 main/binary-amd64/Packages.xz
+ 4aee1e9ee9eff065e4859c3dbd7ad7ea1845e70d             1960 Release
+ 126e10d5cdafaab411d55579cba4acc38cea4cbd            12757 main/binary-amd64/Packages
+ 37b43999a5631cbc7f4e519b54e52f5cbb4ab105             4119 main/binary-amd64/Packages.gz
+ a9413f2879a029ee1a405eeb149270bee9c3b64e             3884 main/binary-amd64/Packages.xz
 SHA256:
- 936d858bd0db53e906d10b3f4aa9817056016e0cb1113cd02e901aa87567a9d7             1588 Release
- 8fc85bae240a50a6423dcc018e128106bb2f37696bd2b897bc3328edd16f8752             9702 main/binary-amd64/Packages
- 908098af091c3074c32bf535fe267d89adf25bd9ace9a6a250df3ab3d5c70c51             3295 main/binary-amd64/Packages.gz
- 9c0737e5abcef73c865fd5cbe98029df75933c9e4861b7112db2e1c32d769080             3188 main/binary-amd64/Packages.xz
+ baa663f0002b71461f06040ec1457168a3459bf9f5c46bbdb072f3d9fc3e2682             1960 Release
+ a8e6604e1e5eeef5fba9404d84e2f785714e44695f3cb442223e5b221f4c1a92            12757 main/binary-amd64/Packages
+ 7d4354f716e185e65234f52624e9b0b13372d7987044ff2f3bfe2f54ae0040b6             4119 main/binary-amd64/Packages.gz
+ 0eba1f366bdd3f641b6faad4f66b318d1915ca17eedf1bc750978795c92fe8ce             3884 main/binary-amd64/Packages.xz
 SHA512:
- ce7d0978d960d091322fe33f3ae6585e4e0eb6fc63fb4a95b1ff68010b4ef9098d71eae64facb77b030ff930d8869d771ef2ae4b28e72f4458ebd400b46a8230             1588 Release
- 259ce20df2349037e6759ddbc8147c2c709b91e016a1919f166f9fdf30af7c05b33ba7fe7a2991d5d4ac43cfab4c034c8783f4cae6197bda486406aa75859522             9702 main/binary-amd64/Packages
- 1d2f350db9871d4332c2615c9c88eacc3ebc4b328bb07bba254c9d43c4b1f2acf7862b58c53722d556508942f255376a99ddf20d50873892d3d53d4fff63e284             3295 main/binary-amd64/Packages.gz
- 236344140d886a394a72a7680e1be4cbf58391558b634e3d9bd82ce25dc2348d4eb1f84c3e40ab53630a083c12c7218c8687b76b6098d765abd72743eee6c7e2             3188 main/binary-amd64/Packages.xz
+ f51754de1c7c0587dd7723454ccf3b92233fbd7a0d758856fc2aa3b979d0876eb5b9e858c34fbac7b380aa48e9ad7764e416dd794b58ff13128db18ce9cd6e38             1960 Release
+ 312da24ac2efeed8cb2e9cc3b17719009b6f5e9741ddeb71a5e631e026aed319217a92456bddd597c7a257c5d625cc178681e4fec4b79191fb859d9d020603d0            12757 main/binary-amd64/Packages
+ 842254186c75b79303e4332f45e4f2540f99d17314b5d8bd28df5a6a8c646d63b19eb7b5cd3dc4374e5a316bb1a13d05ceea3cf5763859a010ad1ad1934de5d8             4119 main/binary-amd64/Packages.gz
+ 5339fd9746f46093fd2c13f5c57ea22597b9c0dbc4557e5b99f14e7135965791564869b33aa54f136d632a32ffa9ee2d024c488e88a0a9a967422f72dd6bbd6a             3884 main/binary-amd64/Packages.xz
 -----BEGIN PGP SIGNATURE-----
 
-iHUEARYKAB0WIQTO4qb6llf7PL1h6gdCAK21VQ5t7gUCauHqbgAKCRBCAK21VQ5t
-7r1oAQD0NXWUoyN+XFuX0B+cVxcmwpze9OcP6ioXyjuEFzCCPwEAu98COAyEy9EX
-Grp+jUUzUexLe9pLWAbtS8vLSBpaTgA=
-=Uy5E
+iHUEARYKAB0WIQTO4qb6llf7PL1h6gdCAK21VQ5t7gUCauH0LAAKCRBCAK21VQ5t
+7u8UAQDZtrjK9D3+zUYejcgPuUiOA55NxkiH2il7O66ozgjRNAD+I2foQlK7Mn7e
+pz0ArUQO4ImbTuXA3JslW7rFWYFTFwo=
+=LRwO
 -----END PGP SIGNATURE-----
