@@ -266,7 +266,8 @@ installer, or build only).
   not support Linux 7.3 yet. btrfs, mdadm, LVM, XFS and ext4 work with both.
 - The installer and the system are reached over the network only. The internal serial port
   shows the boot menu and the console, for debugging: see [docs/serial.md](docs/serial.md).
-- Only the DS923+ is supported.
+- Only the DS923+ is supported. Support for more models is being planned in
+  [#6](https://github.com/rylos/synodeb/issues/6).
 
 ## Related projects
 
@@ -278,6 +279,8 @@ installer, or build only).
 
 synodeb is developed in spare time on the author's own NAS. Supporting other Synology models
 (DS723+, DS1522+, DS224+, DS423+…) needs the hardware to test on: donations go towards that.
+If you own another model and would like to port synodeb to it, join the discussion in
+[#6](https://github.com/rylos/synodeb/issues/6).
 
 ## Buy me a beer
 
