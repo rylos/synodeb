@@ -32,7 +32,8 @@ This project is not affiliated with, endorsed or supported by Synology Inc. "Syn
 
 Tested on a DS923+ (AMD Ryzen R1600) with Debian 13 trixie and the synodeb kernel 7.3; the
 6.18 longterm kernel carries the same patches.
-Please report problems in the [issues](https://github.com/rylos/synodeb/issues).
+Please report problems in the [issues](https://github.com/rylos/synodeb/issues); questions and
+ideas go to the [discussions](https://github.com/rylos/synodeb/discussions).
 
 | | |
 |---|---|
@@ -279,8 +280,9 @@ installer, or build only).
 
 synodeb is developed in spare time on the author's own NAS. Supporting other Synology models
 (DS723+, DS1522+, DS224+, DS423+…) needs the hardware to test on: donations go towards that.
-If you own another model and would like to port synodeb to it, join the discussion in
-[#6](https://github.com/rylos/synodeb/issues/6).
+If you own another model and would like to port synodeb to it, see the plan in
+[#6](https://github.com/rylos/synodeb/issues/6) and say hello in the
+[discussions](https://github.com/rylos/synodeb/discussions/categories/ideas).
 
 ## Buy me a beer
 

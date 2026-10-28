@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Questions and help
+    url: https://github.com/rylos/synodeb/discussions/categories/q-a
+    about: Installing, configuring or using synodeb.
+  - name: Ideas and other models
+    url: https://github.com/rylos/synodeb/discussions/categories/ideas
+    about: Feature proposals, support for other Synology models and expansion units.

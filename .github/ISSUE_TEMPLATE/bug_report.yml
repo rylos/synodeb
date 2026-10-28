@@ -1,0 +1,40 @@
+name: Bug report
+description: Something in synodeb does not work as documented.
+labels: [bug]
+body:
+  - type: input
+    id: model
+    attributes:
+      label: Model
+      description: NAS model and any expansion unit.
+      placeholder: DS923+ with DX517
+    validations:
+      required: true
+  - type: input
+    id: kernel
+    attributes:
+      label: Kernel
+      description: Output of `uname -r` (or the installer version, if the problem is in the installer).
+      placeholder: 6.18.59-1-ds923
+    validations:
+      required: true
+  - type: input
+    id: package
+    attributes:
+      label: synology-ds923 version
+      description: Output of `dpkg-query -W synology-ds923`.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected and what happened instead.
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: >-
+        The relevant part of `journalctl -b` or `dmesg`; for boot problems, the serial console
+        output if you have it (see docs/serial.md). Remove any private data.
+      render: text
