@@ -14,6 +14,12 @@
  *                 0 = off, 1 = on, 2 = PWM A, 3 = PWM B
  *
  * DS923+ wiring (model.dtb): led 2n = bay n+1 green, led 2n+1 = bay n+1 orange.
+ *
+ * Brightness: 0 = off and 255 = on are per LED; every value in between uses
+ * PWM channel A, which all LEDs share. Writing an intermediate value to one
+ * LED therefore dims every LED that is dimmed at that moment to the same
+ * level, and their brightness reads back that common level. Use one level
+ * for all LEDs (synohwd led_brightness) to keep them consistent.
  */
 
 #include <linux/i2c.h>
@@ -42,7 +48,7 @@ struct atmega_led {
 
 struct atmega1608 {
 	struct i2c_client *client;
-	struct mutex lock;
+	struct mutex lock;		/* read-modify-write of the mode registers */
 	struct atmega_led leds[NUM_LEDS];
 };
 
@@ -92,6 +98,12 @@ static enum led_brightness atmega_get(struct led_classdev *cdev)
 		return LED_OFF;
 	case MODE_ON:
 		return LED_FULL;
+	case MODE_PWM_A:
+		/* the shared level, whichever LED set it last */
+		cur = i2c_smbus_read_byte_data(led->chip->client, REG_PWM_A_DUTY);
+		if (cur > LED_OFF && cur < LED_FULL)
+			return cur;
+		fallthrough;
 	default:
 		return cdev->brightness ? cdev->brightness : LED_HALF;
 	}
@@ -100,11 +112,11 @@ static enum led_brightness atmega_get(struct led_classdev *cdev)
 static int atmega_probe(struct i2c_client *client)
 {
 	struct atmega1608 *chip;
-	int i, ret;
+	int i, id, ret;
 
-	ret = i2c_smbus_read_byte_data(client, REG_ID);
-	if (ret < 0)
-		return dev_err_probe(&client->dev, ret, "chip not responding\n");
+	id = i2c_smbus_read_byte_data(client, REG_ID);
+	if (id < 0)
+		return dev_err_probe(&client->dev, id, "chip not responding\n");
 
 	chip = devm_kzalloc(&client->dev, sizeof(*chip), GFP_KERNEL);
 	if (!chip)
@@ -133,8 +145,7 @@ static int atmega_probe(struct i2c_client *client)
 	ret = i2c_smbus_write_byte_data(client, REG_MASK, 0);
 	if (ret)
 		dev_warn(&client->dev, "LED mask not cleared: %d\n", ret);
-	dev_info(&client->dev, "ATmega1608 LED controller, id 0x%02x\n",
-		 i2c_smbus_read_byte_data(client, REG_ID));
+	dev_info(&client->dev, "ATmega1608 LED controller, id 0x%02x\n", id);
 	return 0;
 }
 

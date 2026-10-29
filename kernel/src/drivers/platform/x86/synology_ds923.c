@@ -92,7 +92,12 @@ MODULE_PARM_DESC(power_empty_bays, "Also power bays with no disk detected");
 
 static unsigned int poll_ms = 200;
 module_param(poll_ms, uint, 0644);
-MODULE_PARM_DESC(poll_ms, "Presence polling interval in ms (3 equal reads = debounce)");
+MODULE_PARM_DESC(poll_ms, "Presence polling interval in ms, at least 50 (3 equal reads = debounce)");
+
+static unsigned int ds923_poll_ms(void)
+{
+	return max(READ_ONCE(poll_ms), 50U);
+}
 
 static bool usb_vbus = true;
 module_param(usb_vbus, bool, 0444);
@@ -143,17 +148,11 @@ struct ds923 {
 	unsigned long fan_stamp;
 	long fan_pwm;
 	unsigned long last_power_on;
-	struct mutex lock;
+	struct mutex lock;		/* bay power and debounce state */
 	struct delayed_work poll;
 	void __iomem *up;
 	struct notifier_block emergency_nb;
 };
-
-/* I2C clients live outside the platform device: they are created at init. */
-static struct i2c_client *ds923_rtc, *ds923_leds;
-static struct work_struct ds923_i2c_work;
-static bool ds923_i2c_notifier_registered;
-static struct platform_device *ds923_pdev;
 
 /* ---------------------------------------------------------------- bays */
 
@@ -185,7 +184,7 @@ static int bay_set_power(struct ds923 *ds, int bay, bool on)
 /* Same order and timing as DSM's ata_port_probe() spin-up groups. */
 static void ds923_spinup(struct ds923 *ds)
 {
-	unsigned int group[NUM_BAYS] = { 0 };
+	unsigned int group[NUM_BAYS] = { 0 }, sum = 0;
 	int ngroups = 0, bay = 0, g, i;
 	char *s, *buf, *tok;
 
@@ -196,13 +195,14 @@ static void ds923_spinup(struct ds923 *ds)
 
 		if (kstrtouint(tok, 10, &n) || !n)
 			continue;
+		n = min_t(unsigned int, n, NUM_BAYS);
 		group[ngroups++] = n;
+		sum += n;
 	}
 	kfree(buf);
-	if (!ngroups) {
-		group[0] = NUM_BAYS;
-		ngroups = 1;
-	}
+	/* bays beyond the configured groups: one more group, delayed like the others */
+	if (sum < NUM_BAYS)
+		group[ngroups++] = NUM_BAYS - sum;
 
 	for (g = 0; g < ngroups && bay < NUM_BAYS; g++) {
 		bool powered_any = false;
@@ -232,13 +232,6 @@ static void ds923_spinup(struct ds923 *ds)
 		if (powered_any && settle_ms)
 			msleep(settle_ms);
 	}
-	/* Bays beyond the configured groups. */
-	for (; bay < NUM_BAYS; bay++) {
-		ds->bay[bay].state = bay_present(ds, bay);
-		if (ds->bay[bay].power && !bay_powered(ds, bay) &&
-		    (ds->bay[bay].state || power_empty_bays))
-			bay_set_power(ds, bay, true);
-	}
 }
 
 static void ds923_bays_poll(struct ds923 *ds)
@@ -264,7 +257,7 @@ static void ds923_bays_poll(struct ds923 *ds)
 			b->stable = 1;
 			continue;
 		}
-		if (++b->stable < 3 || b->stable * poll_ms < 200)
+		if (++b->stable < 3 || b->stable * ds923_poll_ms() < 200)
 			continue;
 		if (present && hotplug && !power_empty_bays && b->power &&
 		    !bay_powered(ds, bay) && spinup_delay &&
@@ -316,10 +309,19 @@ static void ds923_poll(struct work_struct *work)
 
 	ds923_bays_poll(ds);
 	ds923_fans_poll(ds);
-	schedule_delayed_work(&ds->poll, msecs_to_jiffies(max(poll_ms, 50U)));
+	queue_delayed_work(system_freezable_wq, &ds->poll, msecs_to_jiffies(ds923_poll_ms()));
 }
 
 /* ---------------------------------------------------------------- microcontroller */
+
+/* Bounded busy wait for an LSR bit, in 10 us steps. */
+static void ds923_up_wait(void __iomem *p, u32 bit, unsigned int us)
+{
+	unsigned int i;
+
+	for (i = 0; i < us / 10 && !(readl(p + (UART_LSR << 2)) & bit); i++)
+		udelay(10);
+}
 
 /*
  * Polled write on the microcontroller UART, used only once user space is
@@ -330,19 +332,21 @@ static void ds923_up_write(struct ds923 *ds, u8 c)
 {
 	unsigned int div = DIV_ROUND_CLOSEST(UP_UART_CLK, 16 * UP_UART_BAUD);
 	void __iomem *p = ds->up;
-	int i;
 
 	if (!p)
 		return;
+	/*
+	 * Let whatever the tty layer queued go out first: changing the divisor
+	 * mid-character garbles it. A full 64-byte FIFO at 9600 is ~67 ms.
+	 */
+	ds923_up_wait(p, UART_LSR_TEMT, 100000);
 	writel(UART_LCR_DLAB | UART_LCR_WLEN8, p + (UART_LCR << 2));
 	writel(div & 0xff, p + (UART_DLL << 2));
 	writel(div >> 8, p + (UART_DLM << 2));
 	writel(UART_LCR_WLEN8, p + (UART_LCR << 2));
-	for (i = 0; i < 1000 && !(readl(p + (UART_LSR << 2)) & UART_LSR_THRE); i++)
-		udelay(10);
+	ds923_up_wait(p, UART_LSR_THRE, 10000);
 	writel(c, p + (UART_TX << 2));
-	for (i = 0; i < 1000 && !(readl(p + (UART_LSR << 2)) & UART_LSR_TEMT); i++)
-		udelay(10);
+	ds923_up_wait(p, UART_LSR_TEMT, 10000);
 	mdelay(20);
 }
 
@@ -486,6 +490,7 @@ static ssize_t usb_slot_vbus_store(struct device *dev, struct device_attribute *
 	ret = vbus_set(dev_get_drvdata(dev), attr_usb(attr), on);
 	return ret ?: count;
 }
+
 static struct device_attribute dev_attr_usb1_vbus =
 	__ATTR(usb1_vbus, 0644, usb_slot_vbus_show, usb_slot_vbus_store);
 static struct device_attribute dev_attr_usb2_vbus =
@@ -588,6 +593,31 @@ static int match_adapter(struct device *dev, const void *data)
 	return is_ds923_adapter(dev);
 }
 
+static int match_client_addr(struct device *dev, void *data)
+{
+	struct i2c_client *client = i2c_verify_client(dev);
+
+	return client && client->addr == *(unsigned short *)data;
+}
+
+/* Create @info on @adap unless the address already has a client. */
+static void ds923_i2c_add(struct i2c_adapter *adap, struct i2c_board_info *info,
+			  const char *what)
+{
+	struct i2c_client *client;
+
+	if (device_for_each_child(&adap->dev, &info->addr, match_client_addr))
+		return;
+	client = i2c_new_client_device(adap, info);
+	if (IS_ERR(client))
+		pr_warn(DRV_NAME ": %s: %pe\n", what, client);
+}
+
+/*
+ * The clients belong to the adapter, not to this driver: no pointer to them
+ * is kept, they go away with the adapter and are created again when it comes
+ * back. Only ever run from ds923_i2c_work, so never concurrently.
+ */
 static void ds923_i2c_register(struct work_struct *work)
 {
 	struct i2c_board_info rtc = {
@@ -595,36 +625,23 @@ static void ds923_i2c_register(struct work_struct *work)
 		.swnode = &ds923_rtc_swnode,
 	};
 	struct i2c_board_info leds = { I2C_BOARD_INFO("atmega1608", 0x60) };
-	struct i2c_adapter *adap;
 	struct device *dev;
 
-	if (ds923_rtc && ds923_leds)
-		return;
 	dev = bus_find_device(&i2c_bus_type, NULL, NULL, match_adapter);
 	if (!dev)
 		return;
-	adap = i2c_verify_adapter(dev);
-	if (!ds923_rtc) {
-		ds923_rtc = i2c_new_client_device(adap, &rtc);
-		if (IS_ERR(ds923_rtc)) {
-			pr_warn(DRV_NAME ": S-35390A RTC: %pe\n", ds923_rtc);
-			ds923_rtc = NULL;
-		}
-	}
-	if (!ds923_leds) {
-		ds923_leds = i2c_new_client_device(adap, &leds);
-		if (IS_ERR(ds923_leds)) {
-			pr_warn(DRV_NAME ": ATmega1608 LEDs: %pe\n", ds923_leds);
-			ds923_leds = NULL;
-		}
-	}
+	ds923_i2c_add(i2c_verify_adapter(dev), &rtc, "S-35390A RTC");
+	ds923_i2c_add(i2c_verify_adapter(dev), &leds, "ATmega1608 LEDs");
 	put_device(dev);
 }
 
+static DECLARE_WORK(ds923_i2c_work, ds923_i2c_register);
+
 /*
  * The DesignWare I2C controller normally probes at subsys_initcall, before
- * this driver; if it shows up later, add the clients from a work item (not
- * from the notifier itself, which runs inside the adapter's device_add()).
+ * this driver; if it shows up later, or again after an unbind, add the
+ * clients from the work item (not from the notifier itself, which runs inside
+ * the adapter's device_add()).
  */
 static int ds923_i2c_notify(struct notifier_block *nb, unsigned long action, void *data)
 {
@@ -742,7 +759,7 @@ static int ds923_probe(struct platform_device *pdev)
 		dev_warn(dev, "hwmon: %pe\n", hwmon);
 
 	INIT_DELAYED_WORK(&ds->poll, ds923_poll);
-	schedule_delayed_work(&ds->poll, msecs_to_jiffies(poll_ms));
+	queue_delayed_work(system_freezable_wq, &ds->poll, msecs_to_jiffies(ds923_poll_ms()));
 	dev_info(dev, "Synology DS923+ platform ready\n");
 	return 0;
 }
@@ -795,61 +812,46 @@ static const struct dmi_system_id ds923_dmi[] = {
 };
 MODULE_DEVICE_TABLE(dmi, ds923_dmi);
 
+/* Built in only (Kconfig bool): there is no exit path. */
 static int __init ds923_init(void)
 {
+	struct platform_device *pdev;
 	int ret;
 
 	if (!dmi_check_system(ds923_dmi) && !force)
 		return -ENODEV;
 
 	/*
-	 * The RTC is created here, synchronously, so that it exists (as rtc0:
-	 * there is no other RTC driver on this board) before rtc_hctosys runs
-	 * at late_initcall.
+	 * The notifier stays registered for good, so the clients come back
+	 * whenever the adapter does. The first scan is waited for, so that
+	 * the RTC exists (as rtc0: there is no other RTC driver on this board)
+	 * before rtc_hctosys runs at late_initcall.
 	 */
-	INIT_WORK(&ds923_i2c_work, ds923_i2c_register);
-	ds923_i2c_register(&ds923_i2c_work);
-	if (!ds923_rtc || !ds923_leds)
-		ds923_i2c_notifier_registered =
-			!bus_register_notifier(&i2c_bus_type, &ds923_i2c_nb);
+	ret = bus_register_notifier(&i2c_bus_type, &ds923_i2c_nb);
+	if (ret)
+		pr_warn(DRV_NAME ": i2c bus notifier: %d\n", ret);
+	schedule_work(&ds923_i2c_work);
+	flush_work(&ds923_i2c_work);
 
 	gpiod_add_lookup_table(&ds923_gpios);
 	ret = platform_driver_register(&ds923_driver);
 	if (ret)
 		goto err_table;
-	ds923_pdev = platform_device_register_simple(DRV_NAME, PLATFORM_DEVID_NONE, NULL, 0);
-	if (IS_ERR(ds923_pdev)) {
-		ret = PTR_ERR(ds923_pdev);
+	pdev = platform_device_register_simple(DRV_NAME, PLATFORM_DEVID_NONE, NULL, 0);
+	if (IS_ERR(pdev)) {
+		ret = PTR_ERR(pdev);
 		goto err_drv;
 	}
 	return 0;
 
+	/* the RTC and LED clients stay: they do not depend on the platform device */
 err_drv:
 	platform_driver_unregister(&ds923_driver);
 err_table:
 	gpiod_remove_lookup_table(&ds923_gpios);
-	if (ds923_i2c_notifier_registered)
-		bus_unregister_notifier(&i2c_bus_type, &ds923_i2c_nb);
-	cancel_work_sync(&ds923_i2c_work);
-	i2c_unregister_device(ds923_leds);
-	i2c_unregister_device(ds923_rtc);
 	return ret;
 }
-
-static void __exit ds923_exit(void)
-{
-	platform_device_unregister(ds923_pdev);
-	platform_driver_unregister(&ds923_driver);
-	gpiod_remove_lookup_table(&ds923_gpios);
-	if (ds923_i2c_notifier_registered)
-		bus_unregister_notifier(&i2c_bus_type, &ds923_i2c_nb);
-	cancel_work_sync(&ds923_i2c_work);
-	i2c_unregister_device(ds923_leds);
-	i2c_unregister_device(ds923_rtc);
-}
-
 module_init(ds923_init);
-module_exit(ds923_exit);
 
 MODULE_AUTHOR("Marco Ziliani <508111+rylos@users.noreply.github.com>");
 MODULE_DESCRIPTION("Synology DS923+ platform: bays, USB VBUS, fans, RTC/LED devices, microcontroller shutdown");

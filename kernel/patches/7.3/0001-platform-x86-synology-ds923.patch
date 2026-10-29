@@ -7,8 +7,8 @@ index 957034f39..24c3e54d8 100644
  	  will be called sel3350-platform.
  
 +config SYNOLOGY_DS923
-+	tristate "Synology DS923+ platform support"
-+	depends on ACPI && DMI && I2C && GPIOLIB && HWMON
++	bool "Synology DS923+ platform support"
++	depends on ACPI && DMI && I2C=y && GPIOLIB && HWMON=y
 +	depends on PINCTRL_AMD
 +	help
 +	  Hardware of the Synology DS923+ NAS that the BIOS does not describe:
@@ -16,7 +16,7 @@ index 957034f39..24c3e54d8 100644
 +	  and LED controller, and the restart/power-off handshake with the
 +	  front-panel microcontroller.
 +
-+	  Build it in (Y): the USB ports are powered from here, and the boot
++	  Built in only: the USB ports are powered from here, and the boot
 +	  disk may be behind them.
 +
  config OXP_EC

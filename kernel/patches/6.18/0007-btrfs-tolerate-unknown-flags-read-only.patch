@@ -1,32 +1,97 @@
+btrfs: tolerate unknown inode and root flags on read-only mounts
+
+Synology DSM sets bit 30 in the flags of its inodes and bit 34 in the
+root items of its subvolumes; the tree-checker rejects both, so DSM
+volumes cannot even be read. Accept them when the filesystem is mounted
+read-only, as is already done for unknown inode ro_flags.
+
+Items accepted that way would fail the tree-checker when written back
+(the transaction aborts and the filesystem is forced read-only), so once
+one has been read the mount refuses to go read-write. Limitation: the
+mark is set only by items actually read; a remount read-write before any
+such item was read succeeds, and the items are then rejected on read as
+in vanilla.
+
+diff --git a/fs/btrfs/fs.h b/fs/btrfs/fs.h
+--- a/fs/btrfs/fs.h
++++ b/fs/btrfs/fs.h
+@@ -205,6 +205,13 @@ enum {
+ 	 */
+ 	BTRFS_FS_UNALIGNED_TREE_BLOCK,
+ 
++	/*
++	 * Indicate that a read-only mount accepted inode or root items with
++	 * unknown flags (Synology DSM): writing them back would fail the
++	 * tree-checker, so the filesystem must not go read-write.
++	 */
++	BTRFS_FS_UNKNOWN_FLAGS_TOLERATED,
++
+ #if BITS_PER_LONG == 32
+ 	/* Indicate if we have error/warn message printed on 32bit systems */
+ 	BTRFS_FS_32BIT_ERROR,
+diff --git a/fs/btrfs/super.c b/fs/btrfs/super.c
+--- a/fs/btrfs/super.c
++++ b/fs/btrfs/super.c
+@@ -1320,6 +1320,12 @@ static int btrfs_remount_rw(struct btrfs
+ 		return -EINVAL;
+ 	}
+ 
++	if (test_bit(BTRFS_FS_UNKNOWN_FLAGS_TOLERATED, &fs_info->flags)) {
++		btrfs_err(fs_info,
++			  "items with unknown flags were read, cannot remount read-write");
++		return -EINVAL;
++	}
++
+ 	/*
+ 	 * NOTE: when remounting with a change that does writes, don't put it
+ 	 * anywhere above this point, as we are not sure to be safe to write
 diff --git a/fs/btrfs/tree-checker.c b/fs/btrfs/tree-checker.c
-index baaca33..a4fbd9e 100644
 --- a/fs/btrfs/tree-checker.c
 +++ b/fs/btrfs/tree-checker.c
-@@ -1169,7 +1169,11 @@ static int check_inode_item(struct extent_buffer *leaf,
+@@ -1169,10 +1169,18 @@ static int check_inode_item(struct exten
  		return -EUCLEAN;
  	}
  	btrfs_inode_split_flags(btrfs_inode_flags(leaf, iitem), &flags, &ro_flags);
--	if (unlikely(flags & ~BTRFS_INODE_FLAG_MASK)) {
 +	/*
 +	 * Unknown flags are tolerated on read-only mounts, like unknown ro_flags
-+	 * below: Synology DSM sets bit 30 on its inodes.
++	 * below: Synology DSM sets bit 30 on its inodes. The mount then stays
++	 * read-only (btrfs_remount_rw()).
 +	 */
-+	if (unlikely(!sb_rdonly(fs_info->sb) && (flags & ~BTRFS_INODE_FLAG_MASK))) {
- 		inode_item_err(leaf, slot,
- 			       "unknown incompat flags detected: 0x%x", flags);
- 		return -EUCLEAN;
-@@ -1278,8 +1282,12 @@ static int check_root_item(struct extent_buffer *leaf, struct btrfs_key *key,
+ 	if (unlikely(flags & ~BTRFS_INODE_FLAG_MASK)) {
+-		inode_item_err(leaf, slot,
+-			       "unknown incompat flags detected: 0x%x", flags);
+-		return -EUCLEAN;
++		if (!sb_rdonly(fs_info->sb)) {
++			inode_item_err(leaf, slot,
++				       "unknown incompat flags detected: 0x%x", flags);
++			return -EUCLEAN;
++		}
++		set_bit(BTRFS_FS_UNKNOWN_FLAGS_TOLERATED, &fs_info->flags);
+ 	}
+ 	if (unlikely(!sb_rdonly(fs_info->sb) &&
+ 		     (ro_flags & ~BTRFS_INODE_RO_FLAG_MASK))) {
+@@ -1278,12 +1286,19 @@ static int check_root_item(struct extent
  		return -EUCLEAN;
  	}
  
 -	/* Flags check */
--	if (unlikely(btrfs_root_flags(&ri) & ~valid_root_flags)) {
 +	/*
 +	 * Flags check. Unknown flags are tolerated on read-only mounts: Synology
-+	 * DSM sets bit 34 in the root items of its subvolumes.
++	 * DSM sets bit 34 in the root items of its subvolumes. The mount then
++	 * stays read-only (btrfs_remount_rw()).
 +	 */
-+	if (unlikely(!sb_rdonly(fs_info->sb) &&
-+		     (btrfs_root_flags(&ri) & ~valid_root_flags))) {
- 		generic_err(leaf, slot,
- 			    "invalid root flags, have 0x%llx expect mask 0x%llx",
- 			    btrfs_root_flags(&ri), valid_root_flags);
+ 	if (unlikely(btrfs_root_flags(&ri) & ~valid_root_flags)) {
+-		generic_err(leaf, slot,
+-			    "invalid root flags, have 0x%llx expect mask 0x%llx",
+-			    btrfs_root_flags(&ri), valid_root_flags);
+-		return -EUCLEAN;
++		if (!sb_rdonly(fs_info->sb)) {
++			generic_err(leaf, slot,
++				    "invalid root flags, have 0x%llx expect mask 0x%llx",
++				    btrfs_root_flags(&ri), valid_root_flags);
++			return -EUCLEAN;
++		}
++		set_bit(BTRFS_FS_UNKNOWN_FLAGS_TOLERATED, &fs_info->flags);
+ 	}
+ 	return 0;
+ }
