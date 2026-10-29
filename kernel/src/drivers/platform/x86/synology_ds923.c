@@ -149,12 +149,6 @@ struct ds923 {
 	struct notifier_block emergency_nb;
 };
 
-/* I2C clients live outside the platform device: they are created at init. */
-static struct i2c_client *ds923_rtc, *ds923_leds;
-static struct work_struct ds923_i2c_work;
-static bool ds923_i2c_notifier_registered;
-static struct platform_device *ds923_pdev;
-
 /* ---------------------------------------------------------------- bays */
 
 static bool bay_powered(struct ds923 *ds, int bay)
@@ -588,6 +582,31 @@ static int match_adapter(struct device *dev, const void *data)
 	return is_ds923_adapter(dev);
 }
 
+static int match_client_addr(struct device *dev, void *data)
+{
+	struct i2c_client *client = i2c_verify_client(dev);
+
+	return client && client->addr == *(unsigned short *)data;
+}
+
+/* Create @info on @adap unless the address already has a client. */
+static void ds923_i2c_add(struct i2c_adapter *adap, struct i2c_board_info *info,
+			  const char *what)
+{
+	struct i2c_client *client;
+
+	if (device_for_each_child(&adap->dev, &info->addr, match_client_addr))
+		return;
+	client = i2c_new_client_device(adap, info);
+	if (IS_ERR(client))
+		pr_warn(DRV_NAME ": %s: %pe\n", what, client);
+}
+
+/*
+ * The clients belong to the adapter, not to this driver: no pointer to them
+ * is kept, they go away with the adapter and are created again when it comes
+ * back. Only ever run from ds923_i2c_work, so never concurrently.
+ */
 static void ds923_i2c_register(struct work_struct *work)
 {
 	struct i2c_board_info rtc = {
@@ -595,36 +614,23 @@ static void ds923_i2c_register(struct work_struct *work)
 		.swnode = &ds923_rtc_swnode,
 	};
 	struct i2c_board_info leds = { I2C_BOARD_INFO("atmega1608", 0x60) };
-	struct i2c_adapter *adap;
 	struct device *dev;
 
-	if (ds923_rtc && ds923_leds)
-		return;
 	dev = bus_find_device(&i2c_bus_type, NULL, NULL, match_adapter);
 	if (!dev)
 		return;
-	adap = i2c_verify_adapter(dev);
-	if (!ds923_rtc) {
-		ds923_rtc = i2c_new_client_device(adap, &rtc);
-		if (IS_ERR(ds923_rtc)) {
-			pr_warn(DRV_NAME ": S-35390A RTC: %pe\n", ds923_rtc);
-			ds923_rtc = NULL;
-		}
-	}
-	if (!ds923_leds) {
-		ds923_leds = i2c_new_client_device(adap, &leds);
-		if (IS_ERR(ds923_leds)) {
-			pr_warn(DRV_NAME ": ATmega1608 LEDs: %pe\n", ds923_leds);
-			ds923_leds = NULL;
-		}
-	}
+	ds923_i2c_add(i2c_verify_adapter(dev), &rtc, "S-35390A RTC");
+	ds923_i2c_add(i2c_verify_adapter(dev), &leds, "ATmega1608 LEDs");
 	put_device(dev);
 }
 
+static DECLARE_WORK(ds923_i2c_work, ds923_i2c_register);
+
 /*
  * The DesignWare I2C controller normally probes at subsys_initcall, before
- * this driver; if it shows up later, add the clients from a work item (not
- * from the notifier itself, which runs inside the adapter's device_add()).
+ * this driver; if it shows up later, or again after an unbind, add the
+ * clients from the work item (not from the notifier itself, which runs inside
+ * the adapter's device_add()).
  */
 static int ds923_i2c_notify(struct notifier_block *nb, unsigned long action, void *data)
 {
@@ -795,61 +801,46 @@ static const struct dmi_system_id ds923_dmi[] = {
 };
 MODULE_DEVICE_TABLE(dmi, ds923_dmi);
 
+/* Built in only (Kconfig bool): there is no exit path. */
 static int __init ds923_init(void)
 {
+	struct platform_device *pdev;
 	int ret;
 
 	if (!dmi_check_system(ds923_dmi) && !force)
 		return -ENODEV;
 
 	/*
-	 * The RTC is created here, synchronously, so that it exists (as rtc0:
-	 * there is no other RTC driver on this board) before rtc_hctosys runs
-	 * at late_initcall.
+	 * The notifier stays registered for good, so the clients come back
+	 * whenever the adapter does. The first scan is waited for, so that
+	 * the RTC exists (as rtc0: there is no other RTC driver on this board)
+	 * before rtc_hctosys runs at late_initcall.
 	 */
-	INIT_WORK(&ds923_i2c_work, ds923_i2c_register);
-	ds923_i2c_register(&ds923_i2c_work);
-	if (!ds923_rtc || !ds923_leds)
-		ds923_i2c_notifier_registered =
-			!bus_register_notifier(&i2c_bus_type, &ds923_i2c_nb);
+	ret = bus_register_notifier(&i2c_bus_type, &ds923_i2c_nb);
+	if (ret)
+		pr_warn(DRV_NAME ": i2c bus notifier: %d\n", ret);
+	schedule_work(&ds923_i2c_work);
+	flush_work(&ds923_i2c_work);
 
 	gpiod_add_lookup_table(&ds923_gpios);
 	ret = platform_driver_register(&ds923_driver);
 	if (ret)
 		goto err_table;
-	ds923_pdev = platform_device_register_simple(DRV_NAME, PLATFORM_DEVID_NONE, NULL, 0);
-	if (IS_ERR(ds923_pdev)) {
-		ret = PTR_ERR(ds923_pdev);
+	pdev = platform_device_register_simple(DRV_NAME, PLATFORM_DEVID_NONE, NULL, 0);
+	if (IS_ERR(pdev)) {
+		ret = PTR_ERR(pdev);
 		goto err_drv;
 	}
 	return 0;
 
+	/* the RTC and LED clients stay: they do not depend on the platform device */
 err_drv:
 	platform_driver_unregister(&ds923_driver);
 err_table:
 	gpiod_remove_lookup_table(&ds923_gpios);
-	if (ds923_i2c_notifier_registered)
-		bus_unregister_notifier(&i2c_bus_type, &ds923_i2c_nb);
-	cancel_work_sync(&ds923_i2c_work);
-	i2c_unregister_device(ds923_leds);
-	i2c_unregister_device(ds923_rtc);
 	return ret;
 }
-
-static void __exit ds923_exit(void)
-{
-	platform_device_unregister(ds923_pdev);
-	platform_driver_unregister(&ds923_driver);
-	gpiod_remove_lookup_table(&ds923_gpios);
-	if (ds923_i2c_notifier_registered)
-		bus_unregister_notifier(&i2c_bus_type, &ds923_i2c_nb);
-	cancel_work_sync(&ds923_i2c_work);
-	i2c_unregister_device(ds923_leds);
-	i2c_unregister_device(ds923_rtc);
-}
-
 module_init(ds923_init);
-module_exit(ds923_exit);
 
 MODULE_AUTHOR("Marco Ziliani <508111+rylos@users.noreply.github.com>");
 MODULE_DESCRIPTION("Synology DS923+ platform: bays, USB VBUS, fans, RTC/LED devices, microcontroller shutdown");
