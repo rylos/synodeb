@@ -48,7 +48,7 @@ struct atmega_led {
 
 struct atmega1608 {
 	struct i2c_client *client;
-	struct mutex lock;
+	struct mutex lock;		/* read-modify-write of the mode registers */
 	struct atmega_led leds[NUM_LEDS];
 };
 

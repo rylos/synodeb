@@ -148,7 +148,7 @@ struct ds923 {
 	unsigned long fan_stamp;
 	long fan_pwm;
 	unsigned long last_power_on;
-	struct mutex lock;
+	struct mutex lock;		/* bay power and debounce state */
 	struct delayed_work poll;
 	void __iomem *up;
 	struct notifier_block emergency_nb;
@@ -490,6 +490,7 @@ static ssize_t usb_slot_vbus_store(struct device *dev, struct device_attribute *
 	ret = vbus_set(dev_get_drvdata(dev), attr_usb(attr), on);
 	return ret ?: count;
 }
+
 static struct device_attribute dev_attr_usb1_vbus =
 	__ATTR(usb1_vbus, 0644, usb_slot_vbus_show, usb_slot_vbus_store);
 static struct device_attribute dev_attr_usb2_vbus =
