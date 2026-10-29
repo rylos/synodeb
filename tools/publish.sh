@@ -50,7 +50,7 @@ PKG=pkg/synology-ds923
 PKGVER=$(git -C "$ROOT" show "HEAD:$PKG/DEBIAN/control" | sed -n 's/^Version: //p')
 PKGCOMMIT=$(git -C "$ROOT" log -1 --format=%H HEAD -- "$PKG")
 PKGEPOCH=$(git -C "$ROOT" log -1 --format=%ct HEAD -- "$PKG")
-PKGYEARS=$(git -C "$ROOT" log --reverse --format=%ad --date=format:%Y HEAD -- "$PKG" | head -n 1)
+PKGYEARS=$(git -C "$ROOT" log --reverse --format=%ad --date=format:%Y HEAD -- "$PKG" | sed -n 1p)
 [ "$PKGYEARS" = "$(date -u -d "@$PKGEPOCH" +%Y)" ] || PKGYEARS=$PKGYEARS-$(date -u -d "@$PKGEPOCH" +%Y)
 mkdir -p "$ROOT/build"
 git -C "$ROOT" -c tar.umask=022 archive --format=tar -o "$ROOT/build/synology-ds923.tar" HEAD "$PKG"
