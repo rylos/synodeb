@@ -38,26 +38,6 @@ Description: Linux kernel headers for 6.18.59-2-ds923 on amd64
  .
  This is useful for people who need to build external modules
 
-Package: linux-headers-7.3.0-1-ds923
-Architecture: amd64
-Version: 7.3.0-1
-Priority: optional
-Section: kernel
-Source: linux-upstream
-Maintainer: synodeb <synodeb@synodeb>
-Installed-Size: 58576
-Filename: pool/main/linux-headers-7.3.0-1-ds923_7.3.0-1_amd64.deb
-Size: 9874536
-MD5sum: 6824c9214d8c7000666d2435830de881
-SHA1: 12e10f0ed30549162182db8612effbddbe647c86
-SHA256: eff3b382e19039a50157deb3f30913712fda3de0312d2ee7f2bfbb7e23c81a56
-SHA512: 8b6cc74d3e7079fff5680313d3a65064a51194064820f310b247d7847306c30842feb1d5acd078f9048097224610e2e290480423b17c49757b423de4ff1535e4
-Homepage: https://www.kernel.org/
-Description: Linux kernel headers for 7.3.0-1-ds923 on amd64
- This package provides kernel header files for 7.3.0-1-ds923 on amd64
- .
- This is useful for people who need to build external modules
-
 Package: linux-headers-7.3.0-2-ds923
 Architecture: amd64
 Version: 7.3.0-2
@@ -75,6 +55,26 @@ SHA512: 5b0f5614c2d4f8ef6124577dccffbbf192f6039d5322e61b157b360096ee17514d697ae6
 Homepage: https://www.kernel.org/
 Description: Linux kernel headers for 7.3.0-2-ds923 on amd64
  This package provides kernel header files for 7.3.0-2-ds923 on amd64
+ .
+ This is useful for people who need to build external modules
+
+Package: linux-headers-7.3.0-3-ds923
+Architecture: amd64
+Version: 7.3.0-3
+Priority: optional
+Section: kernel
+Source: linux-upstream
+Maintainer: synodeb <synodeb@synodeb>
+Installed-Size: 58576
+Filename: pool/main/linux-headers-7.3.0-3-ds923_7.3.0-3_amd64.deb
+Size: 9874660
+MD5sum: d8b9417c274b6595efaa8b5f6bab2bce
+SHA1: c1be83b33c1f2ec5e9700516dc0e0415582a854c
+SHA256: 2701114d42d18762a5b76951c151330f45ce1757698e6d67812669972abdc2b0
+SHA512: 73abb1ee05470f7bd9025ac0fe5928cb0d3944bb41013fbffb0ad93e7f0a445a3e62b72497b42eace33804d6908e0264d10c00a47f086381e5af85acf9ca2faa
+Homepage: https://www.kernel.org/
+Description: Linux kernel headers for 7.3.0-3-ds923 on amd64
+ This package provides kernel header files for 7.3.0-3-ds923 on amd64
  .
  This is useful for people who need to build external modules
 
@@ -96,17 +96,17 @@ Description: Linux kernel for the Synology DS923+ (headers, longterm series)
 
 Package: linux-headers-ds923-stable
 Architecture: amd64
-Version: 7.3.0-2
+Version: 7.3.0-3
 Priority: optional
 Section: kernel
 Maintainer: Marco Ziliani <508111+rylos@users.noreply.github.com>
-Depends: linux-headers-7.3.0-2-ds923 (= 7.3.0-2)
-Filename: pool/main/linux-headers-ds923-stable_7.3.0-2_amd64.deb
-Size: 812
-MD5sum: 56a9e4af87a3302c91a71deb901d81c3
-SHA1: 082ec4ef8628610e72a6ac18232b9ce85c530ea2
-SHA256: d8e2bf0b0250ea42f607f96e44d7008ab12df0c342936be8be11dfd0b2ec8ce9
-SHA512: 84c3dcbc706d48a6caa46bfd8d7bf92b88ce9961bd6ca0d39e142f9955a79f5a441c11725f12f49d8a12bf0317ca3f065048e888b07481375f618379af1984a3
+Depends: linux-headers-7.3.0-3-ds923 (= 7.3.0-3)
+Filename: pool/main/linux-headers-ds923-stable_7.3.0-3_amd64.deb
+Size: 816
+MD5sum: 536405f3ce824cb0b1f3e9d9848f8fe0
+SHA1: 809b87aeae5f934b323b0682bbee04a57907d6ee
+SHA256: 678cd18c74b70eb0f4b6128369beed28164ff7b40bbc283d360881ed4152201a
+SHA512: b929fca395160bbb1bc97a77b3fbff44f7745dfe4482434502bbca41e44062fd7147432cb7aad9b86f59f2e9d27b0fb6f55434b2ef46db0954e1e45d5ed78324
 Description: Linux kernel for the Synology DS923+ (headers, stable series)
  Depends on the latest synodeb kernel headers package of the stable series (7.3).
 
@@ -165,25 +165,6 @@ Description: Linux kernel, version 6.18.59-2-ds923
  This package contains the Linux kernel, modules and corresponding other
  files, version: 6.18.59-2-ds923.
 
-Package: linux-image-7.3.0-1-ds923
-Architecture: amd64
-Version: 7.3.0-1
-Priority: optional
-Section: kernel
-Source: linux-upstream
-Maintainer: synodeb <synodeb@synodeb>
-Installed-Size: 59847
-Filename: pool/main/linux-image-7.3.0-1-ds923_7.3.0-1_amd64.deb
-Size: 49616388
-MD5sum: fe82edd528de513e2067aee1327e5c53
-SHA1: f9f1f0ed3ab310f6cc4feaea767179c586c80e22
-SHA256: e5c65e7b2f32f716e3c7c2aeed790f2e975716a952d608c276869c09cd81d08d
-SHA512: 00f3fabf63365af8b2148fee99464b11fae57223d551a974d6ab59488395f3237d14b680b6e0e4e8116c71a0453ca7aab7ddc1c8c0b4cb5e5a2614c76473651f
-Homepage: https://www.kernel.org/
-Description: Linux kernel, version 7.3.0-1-ds923
- This package contains the Linux kernel, modules and corresponding other
- files, version: 7.3.0-1-ds923.
-
 Package: linux-image-7.3.0-2-ds923
 Architecture: amd64
 Version: 7.3.0-2
@@ -203,6 +184,25 @@ Description: Linux kernel, version 7.3.0-2-ds923
  This package contains the Linux kernel, modules and corresponding other
  files, version: 7.3.0-2-ds923.
 
+Package: linux-image-7.3.0-3-ds923
+Architecture: amd64
+Version: 7.3.0-3
+Priority: optional
+Section: kernel
+Source: linux-upstream
+Maintainer: synodeb <synodeb@synodeb>
+Installed-Size: 59836
+Filename: pool/main/linux-image-7.3.0-3-ds923_7.3.0-3_amd64.deb
+Size: 49607380
+MD5sum: fbcb3c6db0e4d5c4870b501197b3a95b
+SHA1: 0facd4d34c20d8f361b3cfd041a9b2d5307052c4
+SHA256: 03582248ae81638692aa670fa46cc32aa3065f154e0319f977147f3a9f0fbd9c
+SHA512: 4aeb71f3355b1286cd1b0d82579aadd05ce6b11cc8b93678e4b3cbb2c8f88652c694aea3f010472fb1cef5374351990c442881e67ab46f6a6a103bb3959d0610
+Homepage: https://www.kernel.org/
+Description: Linux kernel, version 7.3.0-3-ds923
+ This package contains the Linux kernel, modules and corresponding other
+ files, version: 7.3.0-3-ds923.
+
 Package: linux-image-ds923-longterm
 Architecture: amd64
 Version: 6.18.59-2
@@ -221,17 +221,17 @@ Description: Linux kernel for the Synology DS923+ (image, longterm series)
 
 Package: linux-image-ds923-stable
 Architecture: amd64
-Version: 7.3.0-2
+Version: 7.3.0-3
 Priority: optional
 Section: kernel
 Maintainer: Marco Ziliani <508111+rylos@users.noreply.github.com>
-Depends: linux-image-7.3.0-2-ds923 (= 7.3.0-2)
-Filename: pool/main/linux-image-ds923-stable_7.3.0-2_amd64.deb
+Depends: linux-image-7.3.0-3-ds923 (= 7.3.0-3)
+Filename: pool/main/linux-image-ds923-stable_7.3.0-3_amd64.deb
 Size: 940
-MD5sum: 9f4cc132c822b46e0e30a25187255965
-SHA1: 84779047977f4138283d946467cb1fa7efd52ddb
-SHA256: b96ae59cbcd502442430a7b3ddeb836bca11e4e945c7e9e32a611283336c1b75
-SHA512: b953f05f798a986a2626e675a4c3aee2d5ce5ad5607e1059f9a492e11976801387fe451e7693aa45c080265950802c34e20bbc846ffddf0bbf047369580a0015
+MD5sum: 6bedd02ab90651fa1710c7d7953cc76b
+SHA1: b2a6843b4dab55769b1958d5bf2b4a62730b1f97
+SHA256: 3dc118717bffc6ccceff4ddbc860647325bef4f2f64abb50c8c6f24acfd9b49e
+SHA512: 0b31f067e1f14f1c6cfaa7ce406124e937939573516e600451303da16b17617b9150b5dd38d9a0569bca23574b3e41d105aa716b446f4c23fc3a049bdd6d0e4b
 Description: Linux kernel for the Synology DS923+ (image, stable series)
  Depends on the latest synodeb kernel image package of the stable series (7.3).
 
