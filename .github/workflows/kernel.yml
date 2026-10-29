@@ -7,6 +7,19 @@
 # kernel/patches/<x.y> and kernel/config-debian-<x.y>, added by hand.
 # Needs the secret SYNODEB_SIGNING_KEY: the armored private key of the repository
 # (gpg --export-secret-keys --armor CEE2A6FA9657FB3CBD61EA074200ADB5550E6DEE).
+#
+# The build runs kernel.org code as root in a container, on the checkout in src/ (without git
+# credentials). Publishing happens from a second, clean checkout in pub/ (the build cannot
+# touch it): only build/out moves over, and the signing key exists only during the Publish
+# step.
+# Publishing order: main first (kernel/<series>/VERSION, synodeb-setup.sh; rebased if main
+# moved during the build), then gh-pages. So:
+#   - anything failing before the push to main (build, signing, a rebase conflict): nothing
+#     is published, VERSION is not bumped, the next run builds the same version again;
+#   - the push to gh-pages failing after main: VERSION is bumped but the repository does not
+#     have that kernel; the next run sees it missing and builds again with the next ABI (an
+#     ABI is never published twice with different bytes, a skipped ABI is harmless);
+#   - main and gh-pages pushed, Pages build request failing: Pages catches up on the next push.
 name: kernel
 
 on:
@@ -32,9 +45,7 @@ on:
         type: boolean
         default: true
 
-permissions:
-  contents: write
-  pages: write
+permissions: {}
 
 concurrency:
   group: kernel
@@ -43,6 +54,9 @@ jobs:
   kernel:
     runs-on: ubuntu-latest
     timeout-minutes: 350
+    permissions:
+      contents: write     # push main and gh-pages
+      pages: write        # request a Pages build
     strategy:
       max-parallel: 1
       fail-fast: false
@@ -54,18 +68,25 @@ jobs:
       INSTALLER: ${{ github.event_name == 'workflow_dispatch' && inputs.installer && matrix.series == 'longterm' }}
       SELECTED: ${{ github.event_name == 'schedule' || inputs.series == 'all' || inputs.series == matrix.series }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           ref: main
+          path: src
+          persist-credentials: false
 
       - name: New release?
         id: check
+        working-directory: src
         env:
           REBUILD: ${{ inputs.rebuild || false }}
+          HAS_KEY: ${{ secrets.SYNODEB_SIGNING_KEY != '' }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           [ "$SELECTED" = true ] || { echo "series $SERIES not selected"; echo "build=false" >> "$GITHUB_OUTPUT"; exit 0; }
+          [ "$PUBLISH" != true ] || [ "$HAS_KEY" = true ] || { echo "secret SYNODEB_SIGNING_KEY is not set" >&2; exit 1; }
           V=kernel/$SERIES/VERSION
-          . $V
+          # shellcheck source=/dev/null
+          . "./$V"
           latest=$(curl -fsSL "https://cdn.kernel.org/pub/linux/kernel/v${KMAJ}.x/" |
               grep -oE "linux-${KBRANCH//./\\.}(\.[0-9]+)?\.tar\.xz" | sed 's/^linux-//; s/\.tar\.xz$//' |
               sort -uV | tail -n 1)
@@ -80,28 +101,24 @@ jobs:
           if [ -n "$branch" ] && [ "$(printf '%s\n' "$branch" "$KBRANCH" | sort -V | tail -n 1)" != "$KBRANCH" ]; then
               echo "::warning::$SERIES: kernel.org has $branch, synodeb builds $KBRANCH (add kernel/patches/$branch and kernel/config-debian-$branch, then set KVER in $V)"
           fi
-          if [ "$latest" = "$KVER" ] && [ "$REBUILD" != true ]; then
+          # VERSION bumped but its kernel not in the repository (gh-pages push failed): build again
+          missing=false
+          if pool=$(gh api "repos/$GITHUB_REPOSITORY/contents/debian/pool/main?ref=gh-pages" --jq '.[].name'); then
+              grep -qxF "linux-image-${KREL}_${KPKGVER}_amd64.deb" <<< "$pool" ||
+                  { missing=true; echo "::warning::$KREL is in $V but not in the apt repository: building again"; }
+          else
+              echo "::warning::could not list the apt repository"
+          fi
+          if [ "$latest" = "$KVER" ] && [ "$REBUILD" != true ] && [ "$missing" = false ]; then
               echo "build=false" >> "$GITHUB_OUTPUT"
               exit 0
           fi
-          sed -i -e "s/^KVER=.*/KVER=$latest/" -e "s/^ABI=.*/ABI=$((ABI + 1))/" $V
-          . $V
+          sed -i -e "s/^KVER=.*/KVER=$latest/" -e "s/^ABI=.*/ABI=$((ABI + 1))/" "$V"
+          # shellcheck source=/dev/null
+          . "./$V"
           echo "new kernel: $KREL ($KPKGVER)"
-          { echo "build=true"; echo "krel=$KREL"; } >> "$GITHUB_OUTPUT"
-
-      - name: Signing key
-        if: steps.check.outputs.build == 'true' && env.PUBLISH == 'true'
-        env:
-          KEY: ${{ secrets.SYNODEB_SIGNING_KEY }}
-        run: |
-          [ -n "$KEY" ] || { echo "secret SYNODEB_SIGNING_KEY is not set" >&2; exit 1; }
-          export GNUPGHOME=$RUNNER_TEMP/gnupg
-          mkdir -m 700 "$GNUPGHOME"
-          echo "$KEY" | gpg --batch -q --import
-          gpg -K --with-colons | grep -q '^fpr:::::::::CEE2A6FA9657FB3CBD61EA074200ADB5550E6DEE:' ||
-              { echo "wrong signing key" >&2; exit 1; }
-          gpgconf --kill all
-          echo "SYNODEB_GNUPG=$GNUPGHOME" >> "$GITHUB_ENV"
+          { echo "build=true"; echo "krel=$KREL"; echo "kver=$KVER"; echo "abi=$ABI"
+            echo "sha=$(git rev-parse HEAD)"; } >> "$GITHUB_OUTPUT"
 
       - name: Free disk space
         if: steps.check.outputs.build == 'true'
@@ -111,45 +128,93 @@ jobs:
 
       - name: Build the kernel
         if: steps.check.outputs.build == 'true'
+        working-directory: src
         run: kernel/run-build.sh
 
       - name: Build the installer
         if: steps.check.outputs.build == 'true' && env.INSTALLER == 'true'
+        working-directory: src
         run: installer/run-build.sh
 
       # the builds run as root in a container: give build/ back to the runner user
       - name: Own build/
         if: steps.check.outputs.build == 'true'
-        run: sudo chown -R "$(id -u):$(id -g)" build
+        run: sudo chown -R "$(id -u):$(id -g)" src/build
 
-      - uses: actions/checkout@v4
+      # clean checkout of the commit that was built, outside the tree the build could write
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        if: steps.check.outputs.build == 'true' && env.PUBLISH == 'true'
+        with:
+          ref: ${{ steps.check.outputs.sha }}
+          path: pub
+
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         if: steps.check.outputs.build == 'true' && env.PUBLISH == 'true'
         with:
           ref: gh-pages
-          path: build/pages
+          path: pub/build/pages
 
       - name: Publish
         if: steps.check.outputs.build == 'true' && env.PUBLISH == 'true'
+        working-directory: pub
         env:
           KREL: ${{ steps.check.outputs.krel }}
+          NEWKVER: ${{ steps.check.outputs.kver }}
+          NEWABI: ${{ steps.check.outputs.abi }}
+          KEY: ${{ secrets.SYNODEB_SIGNING_KEY }}
           GH_TOKEN: ${{ github.token }}
         run: |
+          # publish.sh dates synology-ds923 from the git history of main
+          git fetch -q --unshallow origin main
+          mv ../src/build/out build/out
+          V=kernel/$SERIES/VERSION
+          sed -i -e "s/^KVER=.*/KVER=$NEWKVER/" -e "s/^ABI=.*/ABI=$NEWABI/" "$V"
+          # shellcheck source=/dev/null
+          [ "$(. "./$V"; echo "$KREL")" = "$KREL" ] || { echo "$V does not give $KREL" >&2; exit 1; }
+          # the signing key, only for publish.sh
+          export SYNODEB_GNUPG=$RUNNER_TEMP/gnupg
+          trap 'rc=$?; GNUPGHOME=$SYNODEB_GNUPG gpgconf --kill all 2>/dev/null; rm -rf "$SYNODEB_GNUPG"; exit $rc' EXIT
+          mkdir -m 700 "$SYNODEB_GNUPG"
+          printf '%s\n' "$KEY" | GNUPGHOME=$SYNODEB_GNUPG gpg --batch -q --import
+          unset KEY
+          GNUPGHOME=$SYNODEB_GNUPG gpg -K --with-colons | grep -q '^fpr:::::::::CEE2A6FA9657FB3CBD61EA074200ADB5550E6DEE:' ||
+              { echo "wrong signing key" >&2; exit 1; }
+          GNUPGHOME=$SYNODEB_GNUPG gpgconf --kill all
           SKIP_INSTALLER=1
           [ "$INSTALLER" = true ] && SKIP_INSTALLER=0
           SKIP_INSTALLER=$SKIP_INSTALLER tools/publish.sh
+          GNUPGHOME=$SYNODEB_GNUPG gpgconf --kill all; rm -rf "$SYNODEB_GNUPG"
+          # push: on rejection, rebase on the branch as it is now and try again
+          push() {
+              for i in 1 2 3; do
+                  git -C "$1" push -q origin "HEAD:$2" && return 0
+                  [ "$i" = 3 ] && break
+                  sleep 15
+                  git -C "$1" fetch -q origin "$2" || continue
+                  if ! git -C "$1" rebase -q FETCH_HEAD; then
+                      git -C "$1" rebase --abort
+                      echo "$2 moved and does not rebase cleanly" >&2
+                      return 1
+                  fi
+              done
+              return 1
+          }
           git config --global user.name 'Marco Ziliani'
           git config --global user.email '508111+rylos@users.noreply.github.com'
+          # main first: if this fails, nothing is published
+          git add "$V" synodeb-setup.sh
+          git commit -qm "kernel $KREL ($SERIES)"
+          push . main
+          # after a rebase synodeb-setup.sh may hold other changes from main
+          [ "$INSTALLER" != true ] || cp synodeb-setup.sh build/pages/synodeb-setup.sh
           git -C build/pages add -A
           git -C build/pages commit -qm "apt repository: kernel $KREL ($SERIES)"
-          git -C build/pages push -q origin gh-pages
-          git add kernel/$SERIES/VERSION synodeb-setup.sh
-          git commit -qm "kernel $KREL ($SERIES)"
-          git push -q origin HEAD:main
+          push build/pages gh-pages
           gh api -X POST "repos/$GITHUB_REPOSITORY/pages/builds" >/dev/null || true
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: steps.check.outputs.build == 'true' && env.PUBLISH != 'true'
         with:
           name: kernel-${{ matrix.series }}-${{ steps.check.outputs.krel }}
-          path: build/out/*.deb
+          path: src/build/out/*.deb
           retention-days: 7
