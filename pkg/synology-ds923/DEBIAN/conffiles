@@ -26,6 +26,7 @@
 /etc/systemd/system/rescue.service.d/synodeb-reboot.conf
 /etc/systemd/system/service.d/10-synodeb-onfailure.conf
 /etc/systemd/system/ssh.service.d/synodeb-ups.conf
+/etc/systemd/system/ssh.socket.d/synodeb-ups.conf
 /etc/systemd/system/synodeb-boot-ok.service
 /etc/systemd/system/synodeb-notify-failure@.service
 /etc/systemd/system/synodeb-notify-failure@.service.d/99-synodeb-no-recursion.conf
