@@ -227,6 +227,10 @@ with Debian's own kernels), then a reboot. New releases of the kernel series are
 published automatically, usually within a day of their release on kernel.org. Debian's own security updates are installed
 automatically; the kernel never is, because a kernel update writes the DOM. The DOM keeps two kernels: if the new one does not boot, the next boot starts the
 previous one and you get a notification. A normal boot never writes the DOM.
+Synology does not publish the endurance of the DOM. A kernel update writes about 25 MB to it, so
+even with MLC flash it should last thousands of updates; the failures reported for older models
+are of the controller, not wear. Keep the DOM backup that `synodeb-setup.sh` makes off the NAS:
+it is the only way to rebuild the DOM.
 
 **Kernel headers.** For DKMS modules or anything built against the kernel install
 `linux-headers-ds923` (or `linux-headers-ds923-stable`): it follows the kernel of its series. Module
