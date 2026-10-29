@@ -298,13 +298,23 @@ with tempfile.TemporaryDirectory() as d:
     m.hwmon_by_name = lambda n: hw.get(n, [])
     m.SYS_BLOCK, m.NVME_CLASS = f"{d}/block", f"{d}/ctrl"
     os.environ["PATH"] = "/nonexistent"                       # no hdparm
+    real_dt = m.DRIVETEMP
     try:
+        m.DRIVETEMP = d                                       # drivetemp loaded
         s = m.sensors({1: "sda", 2: "sdb"})
+        m.DRIVETEMP = f"{d}/nonexistent"                      # drivetemp not loaded
+        s_nomod = m.sensors({1: "sda", 2: "sdb"})
+        last = {"bay2": 40.0}                                 # sdb had a sensor before
+        m.DRIVETEMP = d
+        s_gone = m.sensors({1: "sda", 2: "sdb"}, last)
     finally:
         m.hwmon_by_name, os.environ["PATH"] = real_by_name, real_path
+        m.DRIVETEMP = real_dt
     check("sensors: Tctl 0.0 °C kept", s["cpu"], 0.0)
-    check("sensors: disk 0.0 °C kept, disk without drivetemp = None", s["disk"],
-          {"bay1": 0.0, "bay2": None})
+    check("sensors: disk 0.0 °C kept, disk drivetemp does not support left out", s["disk"],
+          {"bay1": 0.0})
+    check("sensors: drivetemp not loaded = no reading", s_nomod["disk"], {"bay1": 0.0, "bay2": None})
+    check("sensors: disk sensor gone = no reading", s_gone["disk"], {"bay1": 0.0, "bay2": None})
     check("sensors: NVMe Composite 0.0 °C kept, controller without hwmon = None",
           sorted(s["nvme"].values(), key=str), [0.0, None])
 

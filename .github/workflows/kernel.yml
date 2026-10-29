@@ -109,6 +109,22 @@ jobs:
           else
               echo "::warning::could not list the apt repository"
           fi
+          # the installer synodeb-setup.sh on main points to is not published (gh-pages push
+          # failed after main): build it again with this kernel
+          # shellcheck disable=SC2153  # INSTALLER: job env
+          installer=$INSTALLER
+          if [ "$SERIES" = longterm ]; then
+              dir=$(sed -n 's/^INSTALLER_DIR=//p' synodeb-setup.sh)
+              if [ -n "$dir" ] && ! err=$(gh api "repos/$GITHUB_REPOSITORY/contents/$dir/SHA256SUMS?ref=gh-pages" --silent 2>&1); then
+                  if grep -q 'HTTP 404' <<< "$err"; then
+                      echo "::warning::$dir (synodeb-setup.sh) is not on gh-pages: building the installer again"
+                      missing=true; installer=true
+                  else
+                      echo "::warning::could not check $dir on gh-pages: $err"
+                  fi
+              fi
+          fi
+          echo "installer=$installer" >> "$GITHUB_OUTPUT"
           if [ "$latest" = "$KVER" ] && [ "$REBUILD" != true ] && [ "$missing" = false ]; then
               echo "build=false" >> "$GITHUB_OUTPUT"
               exit 0
@@ -132,7 +148,7 @@ jobs:
         run: kernel/run-build.sh
 
       - name: Build the installer
-        if: steps.check.outputs.build == 'true' && env.INSTALLER == 'true'
+        if: steps.check.outputs.build == 'true' && steps.check.outputs.installer == 'true'
         working-directory: src
         run: installer/run-build.sh
 
@@ -161,6 +177,7 @@ jobs:
           KREL: ${{ steps.check.outputs.krel }}
           NEWKVER: ${{ steps.check.outputs.kver }}
           NEWABI: ${{ steps.check.outputs.abi }}
+          INSTALLER: ${{ steps.check.outputs.installer }}
           KEY: ${{ secrets.SYNODEB_SIGNING_KEY }}
           GH_TOKEN: ${{ github.token }}
         run: |

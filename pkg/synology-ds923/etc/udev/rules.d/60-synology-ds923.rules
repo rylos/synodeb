@@ -1,7 +1,6 @@
 # UARTs identified by MMIO address (serial_core iomem_base attribute, "0x%lX"):
 # front microcontroller (AMDI0020:01, MMIO 0xFEDCA000) -> /dev/synology-up
-# (TAG systemd: dev-synology\x2dup.device, which synohwd.service waits for)
-SUBSYSTEM=="tty", KERNEL=="ttyS*", ATTR{iomem_base}=="0xFEDCA000", SYMLINK+="synology-up", MODE="0600", TAG+="systemd"
+SUBSYSTEM=="tty", KERNEL=="ttyS*", ATTR{iomem_base}=="0xFEDCA000", SYMLINK+="synology-up", MODE="0600"
 # serial console (AMDI0020:00, MMIO 0xFEDC9000) -> /dev/synology-console
 SUBSYSTEM=="tty", KERNEL=="ttyS*", ATTR{iomem_base}=="0xFEDC9000", SYMLINK+="synology-console"
 # The daemon drives the disk LEDs: no default trigger. Only on "add": the kernel sends a
