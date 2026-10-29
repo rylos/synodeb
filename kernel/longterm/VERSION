@@ -10,7 +10,7 @@
 # kernel/config-debian-<x.y> must exist for it.
 SERIES=longterm
 KVER=6.18.59
-ABI=1
+ABI=2
 # derived
 KMAJ=${KVER%%.*}; KMIN=${KVER#*.}; KMIN=${KMIN%%.*}
 KBRANCH=$KMAJ.$KMIN             # 6.18: kernel/patches/6.18, kernel/config-debian-6.18
