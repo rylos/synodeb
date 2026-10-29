@@ -190,6 +190,9 @@ Configuration:
 
 - `/etc/synohwd.toml`: fan mode (the DSM quiet or cool curve, or full speed) and minimum fan
   duty, beeper, disk LEDs, power on after AC loss, Wake-on-LAN. The curves themselves are fixed.
+  The fans go to full speed while a fan has failed, or when the CPU, an NVMe drive or a disk
+  that had a temperature sensor gives no reading; a disk without one (drivetemp does not
+  support it) is left out.
 - `/etc/synodeb/notify.conf`: notifications (SMTP, Telegram, ntfy). Nothing is sent until a
   channel is configured.
 - `/etc/synodeb/ups.conf`: UPS behaviour, see [UPS](#ups).

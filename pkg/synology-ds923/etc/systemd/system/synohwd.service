@@ -2,9 +2,6 @@
 Description=Synology DS923+ hardware daemon (fan, LEDs, buttons, beep)
 After=systemd-modules-load.service systemd-udevd.service
 Wants=systemd-modules-load.service
-# no dependency on dev-synology\x2dup.device: without the microcontroller (another machine,
-# driver not loaded) the device job would hold up the boot for 90 s and fail the unit;
-# Restart=always covers a /dev/synology-up that shows up late
 # microcontroller UART in the ACPI tables (absent in QEMU and on other machines)
 ConditionPathExists=/sys/bus/acpi/devices/AMDI0020:01
 # fans and LEDs also in UPS Safe Mode (synodeb-ups-safe.target)
@@ -12,11 +9,15 @@ IgnoreOnIsolate=yes
 
 [Service]
 Type=simple
+# /dev/synology-up (udev, 60-synology-ds923.rules) may come a moment after the unit starts:
+# wait up to 10 s. Not a device dependency: on a machine without it that would hold the boot
+# for the device job timeout
+ExecStartPre=/bin/sh -c 'i=0; while [ ! -c /dev/synology-up ] && [ $$i -lt 50 ]; do sleep 0.2; i=$$((i + 1)); done; [ -c /dev/synology-up ]'
 ExecStart=/usr/sbin/synohwd run
 Restart=always
 RestartSec=3
 # the daemon sends V99 itself on exit; this covers SIGKILL. The uP talks 9600 8N1.
-ExecStopPost=/bin/sh -c 'stty -F /dev/synology-up 9600 raw -echo 2>/dev/null; printf V99 > /dev/synology-up || true'
+ExecStopPost=/bin/sh -c '[ -c /dev/synology-up ] || exit 0; stty -F /dev/synology-up 9600 raw -echo 2>/dev/null; printf V99 > /dev/synology-up || true'
 
 [Install]
 WantedBy=multi-user.target

@@ -32,9 +32,12 @@ if [ "$1" = configure ]; then
     udevadm control --reload || true
     udevadm trigger --subsystem-match=tty --action=add || true
     systemctl daemon-reload || true
-    if [ -z "${2:-}" ]; then
-        # first install only: an upgrade leaves the units as the admin set them (a unit
-        # added by a later version needs its own versioned enable here)
+    # first install, or reinstall after a remove (prerm disabled the units and left the mark):
+    # an upgrade leaves the units as the admin set them (a unit added by a later version
+    # needs its own versioned enable here)
+    removed=/var/lib/synodeb/removed
+    if [ -z "${2:-}" ] || [ -e $removed ]; then
+        rm -f $removed
         systemctl enable synohwd.service synodeb-nvme-power-limit.service synodeb-boot-ok.service \
             synodeb-nut-firewall.service || true
     elif [ -d /run/systemd/system ]; then
@@ -56,4 +59,5 @@ if [ "$1" = configure ]; then
         mkdir -p ${mark%/*}
         : > $mark
     fi
+    [ ! -d /etc/nut ] || /usr/sbin/synodeb-ups netbind || true
 fi

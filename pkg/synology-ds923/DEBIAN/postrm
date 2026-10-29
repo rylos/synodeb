@@ -6,7 +6,8 @@ for f in /etc/systemd/journald.conf.d/synodeb-volatile.conf /etc/systemd/system/
     dpkg-maintscript-helper rm_conffile "$f" 3.0~ synology-ds923 -- "$@"
 done
 if [ "$1" = purge ]; then
-    rm -f /var/lib/synodeb/nut-setup
+    rm -f /var/lib/synodeb/nut-setup /var/lib/synodeb/removed
+    rmdir /var/lib/synodeb 2>/dev/null || true
     # written by 'synodeb-ups setup' for NETWORK_CLIENTS: kept, so that upsd (still listening
     # on the network per /etc/nut/upsd.conf) does not start without its firewall
     if [ -f /etc/systemd/system/nut-server.service.d/synodeb-network-clients.conf ]; then

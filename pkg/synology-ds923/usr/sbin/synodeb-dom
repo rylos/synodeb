@@ -209,6 +209,15 @@ sync)
     S=$M/synodeb
     mkdir -p $S
     rm -f $S/*.tmp                       # leftovers of an interrupted copy
+    # during a kernel trial the running kernel (DEBIAN) is not confirmed yet: DEBIAN_OLD stays
+    # the kernel already there, the last one known to boot (boot-kernels picks the running one)
+    if [ "$st" != none ] && [ "$(running_entry)" = DEBIAN ] && [ -f $S/VERSION.old ]; then
+        k=$(cut -d' ' -f1 $S/VERSION.old)
+        if [ -n "$k" ] && [ "$k" != "$new" ] && [ -f "vmlinuz-$k" ] && [ -f "initrd.img-$k" ]; then
+            [ "$k" = "$old" ] || echo "synodeb-dom: kernel trial in progress: DEBIAN_OLD stays $k (not $old)" >&2
+            old=$k
+        fi
+    fi
     changed=0; pair_same "$new" "" || changed=1
     # .old already holds the kernel that stays DEBIAN_OLD
     keep=0
@@ -230,6 +239,18 @@ sync)
         why=; [ $keep = 0 ] || [ "$d" != DEBIAN_OLD ] || why=" (kept: it is the default entry)"
         die "not enough space on synoboot2 for $new: $need KB needed, $free KB free," \
             "$(old_kb) KB in DEBIAN_OLD$why; DOM unchanged"
+    fi
+    # a new DEBIAN with DEBIAN_OLD behind it gets a trial: armed before DEBIAN changes, so that
+    # a crash or power cut during the copy still boots it as a trial (removed below if no
+    # DEBIAN_OLD is left after all)
+    prearm=0
+    if [ $changed = 1 ] && [ $block = 1 ] && [ "$d" = DEBIAN ] && [ "$old" != "$new" ]; then
+        unmount
+        withmount $P1 vfat
+        echo armed | put "$TRIAL"
+        unmount
+        prearm=1
+        withmount $P2 ext2
     fi
     [ $keep = 1 ] || drop .old
     if [ $link = 1 ]; then
@@ -271,7 +292,13 @@ sync)
         *) act=other ;;
         esac
     fi
+    [ $prearm = 0 ] || [ "$act" = arm ] || act=disarm
     case $act in
+    disarm)
+        withmount $P1 vfat
+        rm -f "$TRIAL"
+        unmount
+        echo "synodeb-dom: no DEBIAN_OLD on the DOM: $new boots without a kernel trial" >&2 ;;
     debian|arm|rearm)
         withmount $P1 vfat
         case $act in

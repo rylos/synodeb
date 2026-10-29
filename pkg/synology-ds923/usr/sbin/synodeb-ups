@@ -9,6 +9,8 @@
 #                                         same as DSM) and write it to upsd.users and upsmon.conf
 #   synodeb-ups status                    UPS and Safe Mode status
 #   synodeb-ups firewall                  nftables rules for upsd (synodeb-nut-firewall.service)
+#   synodeb-ups netbind                   (postinst) bind nut-server to the firewall unit when
+#                                         upsd listens on the network and the drop-in is missing
 #   events (from upssched, CMDSCRIPT):     onbatt online lowbatt nocomm fsd waittimeup
 #   safemode-shutdowncmd                   upsmon SHUTDOWNCMD (critical UPS: OB+LB, FSD,
 #                                          OB and then unreachable)
@@ -215,11 +217,8 @@ setup() {
     # network clients (NETWORK_CLIENTS): upsd listens on all addresses, nftables does the
     # filtering, and nut-server is bound to the firewall unit (fail closed)
     if [ -n "$cl" ]; then
-        mkdir -p "${NETBIND%/*}"
-        printf '%s\n' "# written by 'synodeb-ups setup' (NETWORK_CLIENTS in $CONF): upsd listens on" \
-            "# the network, so it runs only while the nftables rules of synodeb-nut-firewall are loaded" \
-            '[Unit]' 'BindsTo=synodeb-nut-firewall.service' 'After=synodeb-nut-firewall.service' > "$NETBIND"
         printf '%s\n' 'LISTEN 0.0.0.0 3493' 'LISTEN :: 3493' >> /etc/nut/upsd.conf
+        netbind
     else
         rm -f "$NETBIND"
     fi
@@ -278,6 +277,13 @@ listens_network() {
     awk '$1 == "LISTEN" && $2 != "127.0.0.1" && $2 != "::1" && $2 != "localhost" { f = 1 } END { exit !f }' \
         /etc/nut/upsd.conf 2>/dev/null
 }
+# nut-server bound to the firewall unit: no nftables rules, no upsd (fail closed)
+netbind() {
+    mkdir -p "${NETBIND%/*}"
+    printf '%s\n' "# written by 'synodeb-ups setup' (NETWORK_CLIENTS in $CONF): upsd listens on" \
+        "# the network, so it runs only while the nftables rules of synodeb-nut-firewall are loaded" \
+        '[Unit]' 'BindsTo=synodeb-nut-firewall.service' 'After=synodeb-nut-firewall.service' > "$NETBIND"
+}
 
 # nftables rules: upsd (3493) only from localhost and NETWORK_CLIENTS. Separate table,
 # does not touch Docker's rules or /etc/nftables.conf. Fails (and upsd, bound to this
@@ -327,6 +333,11 @@ case "${1:-}" in
 setup) shift; setup "$@"; exit 0 ;;
 passwd) passwd_cmd; exit 0 ;;
 firewall) firewall; exit $? ;;
+netbind)    # postinst: a configuration from before the binding (3.1) that listens on the network
+    if [ ! -f "$NETBIND" ] && grep -q '^# synodeb' /etc/nut/upsmon.conf 2>/dev/null && listens_network; then
+        netbind; echo "synodeb-ups: nut-server now bound to synodeb-nut-firewall ($NETBIND)"
+    fi
+    exit 0 ;;
 status)
     echo "UPS $UPS: $(var ups.status) (read: $(status)), battery $(var battery.charge)%, runtime $(var battery.runtime) s, load $(var ups.load)%"
     if [ -f $SAFE ]; then echo "Safe Mode: active ($(cat $SAFE))"; else echo "Safe Mode: no"; fi
@@ -366,6 +377,6 @@ nocomm)
 fsd) statelog fsd; safemode fsd ;;
 waittimeup) statelog waittimeup; safemode waittimeup ;;
 safemode-shutdowncmd) statelog shutdowncmd; safemode shutdowncmd ;;
-*) sed -n '2,25p' "$0" >&2; exit 2 ;;
+*) sed -n '2,27p' "$0" >&2; exit 2 ;;
 esac
 exit 0

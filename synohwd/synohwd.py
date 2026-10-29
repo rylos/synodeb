@@ -126,6 +126,8 @@ COMMAND_KEYS = ("power_button", "reset_button")
 UP_CMD = re.compile(r"(?:V\d\d|[2-9:;DRtuqpsrlk@AB])+")
 
 log = logging.getLogger("synohwd")
+DRIVETEMP = "/sys/module/drivetemp"
+NO_SENSOR_LOGGED = set()      # bays already logged as having no temperature sensor
 
 
 def notify(title, message="", priority="high", then=None):
@@ -465,6 +467,7 @@ def sensors(bays, last_disk=None):
     """Temperatures; a spun-down bay disk keeps its last known value (no wake-up)."""
     last_disk = {} if last_disk is None else last_disk
     s = {"cpu": None, "disk": {}, "nvme": {}, "nic": {}, "asleep": []}
+    nosensor = []
     for d in hwmon_by_name("k10temp"):
         t = hwmon_temp(d, "Tctl")
         s["cpu"] = hwmon_temp(d) if t is None else t
@@ -475,12 +478,26 @@ def sensors(bays, last_disk=None):
             if last_disk.get(key) is not None:
                 s["disk"][key] = last_disk[key]
             continue
-        s["disk"][key] = None                   # no drivetemp: no reading (fail-safe)
-        for d in glob.glob(f"{SYS_BLOCK}/{dev}/device/hwmon/hwmon*"):   # drivetemp
+        hw = glob.glob(f"{SYS_BLOCK}/{dev}/device/hwmon/hwmon*")       # drivetemp
+        if not hw and key not in last_disk:
+            nosensor.append(key)                # never had a sensor (SSD without SCT...)
+            continue
+        s["disk"][key] = None                   # sensor gone or unreadable (fail-safe)
+        for d in hw:
             t = hwmon_temp(d)
             s["disk"][key] = t
             if t is not None:
                 last_disk[key] = t
+    # a disk drivetemp does not support is left out (the other sensors drive the fans), but
+    # without the drivetemp module every awake disk counts as unread
+    if nosensor and not os.path.isdir(DRIVETEMP):
+        for key in nosensor:
+            s["disk"][key] = None
+    else:
+        for key in nosensor:
+            if key not in NO_SENSOR_LOGGED:
+                NO_SENSOR_LOGGED.add(key)
+                log.info("%s: no temperature sensor (drivetemp), not counted for the fans", key)
     nvme_hw = hwmon_by_name("nvme")
     for d in nvme_hw:
         dev = os.path.basename(os.path.realpath(f"{d}/device"))

@@ -3,4 +3,6 @@ set -e
 if [ "$1" = remove ]; then
     systemctl disable --now synohwd.service synodeb-nvme-power-limit.service synodeb-boot-ok.service \
         synodeb-nut-firewall.service || true
+    # for postinst: enable them again on a reinstall
+    mkdir -p /var/lib/synodeb && : > /var/lib/synodeb/removed || true
 fi
