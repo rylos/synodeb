@@ -2,6 +2,9 @@
 Description=Synology DS923+ hardware daemon (fan, LEDs, buttons, beep)
 After=systemd-modules-load.service systemd-udevd.service
 Wants=systemd-modules-load.service
+# /dev/synology-up (udev rule with TAG+="systemd" in 60-synology-ds923.rules)
+BindsTo=dev-synology\x2dup.device
+After=dev-synology\x2dup.device
 # microcontroller UART in the ACPI tables (absent in QEMU and on other machines)
 ConditionPathExists=/sys/bus/acpi/devices/AMDI0020:01
 # fans and LEDs also in UPS Safe Mode (synodeb-ups-safe.target)
@@ -12,8 +15,8 @@ Type=simple
 ExecStart=/usr/sbin/synohwd run
 Restart=always
 RestartSec=3
-# with the daemon stopped the fan stays at its last duty: better full speed
-ExecStopPost=/bin/sh -c 'stty -F /dev/synology-up 115200 raw -echo 2>/dev/null; printf V99 > /dev/synology-up || true'
+# the daemon sends V99 itself on exit; this covers SIGKILL. The uP talks 9600 8N1.
+ExecStopPost=/bin/sh -c 'stty -F /dev/synology-up 9600 raw -echo 2>/dev/null; printf V99 > /dev/synology-up || true'
 
 [Install]
 WantedBy=multi-user.target
