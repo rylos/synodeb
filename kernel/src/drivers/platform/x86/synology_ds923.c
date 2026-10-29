@@ -92,7 +92,12 @@ MODULE_PARM_DESC(power_empty_bays, "Also power bays with no disk detected");
 
 static unsigned int poll_ms = 200;
 module_param(poll_ms, uint, 0644);
-MODULE_PARM_DESC(poll_ms, "Presence polling interval in ms (3 equal reads = debounce)");
+MODULE_PARM_DESC(poll_ms, "Presence polling interval in ms, at least 50 (3 equal reads = debounce)");
+
+static unsigned int ds923_poll_ms(void)
+{
+	return max(READ_ONCE(poll_ms), 50U);
+}
 
 static bool usb_vbus = true;
 module_param(usb_vbus, bool, 0444);
@@ -179,7 +184,7 @@ static int bay_set_power(struct ds923 *ds, int bay, bool on)
 /* Same order and timing as DSM's ata_port_probe() spin-up groups. */
 static void ds923_spinup(struct ds923 *ds)
 {
-	unsigned int group[NUM_BAYS] = { 0 };
+	unsigned int group[NUM_BAYS] = { 0 }, sum = 0;
 	int ngroups = 0, bay = 0, g, i;
 	char *s, *buf, *tok;
 
@@ -190,13 +195,14 @@ static void ds923_spinup(struct ds923 *ds)
 
 		if (kstrtouint(tok, 10, &n) || !n)
 			continue;
+		n = min_t(unsigned int, n, NUM_BAYS);
 		group[ngroups++] = n;
+		sum += n;
 	}
 	kfree(buf);
-	if (!ngroups) {
-		group[0] = NUM_BAYS;
-		ngroups = 1;
-	}
+	/* bays beyond the configured groups: one more group, delayed like the others */
+	if (sum < NUM_BAYS)
+		group[ngroups++] = NUM_BAYS - sum;
 
 	for (g = 0; g < ngroups && bay < NUM_BAYS; g++) {
 		bool powered_any = false;
@@ -226,13 +232,6 @@ static void ds923_spinup(struct ds923 *ds)
 		if (powered_any && settle_ms)
 			msleep(settle_ms);
 	}
-	/* Bays beyond the configured groups. */
-	for (; bay < NUM_BAYS; bay++) {
-		ds->bay[bay].state = bay_present(ds, bay);
-		if (ds->bay[bay].power && !bay_powered(ds, bay) &&
-		    (ds->bay[bay].state || power_empty_bays))
-			bay_set_power(ds, bay, true);
-	}
 }
 
 static void ds923_bays_poll(struct ds923 *ds)
@@ -258,7 +257,7 @@ static void ds923_bays_poll(struct ds923 *ds)
 			b->stable = 1;
 			continue;
 		}
-		if (++b->stable < 3 || b->stable * poll_ms < 200)
+		if (++b->stable < 3 || b->stable * ds923_poll_ms() < 200)
 			continue;
 		if (present && hotplug && !power_empty_bays && b->power &&
 		    !bay_powered(ds, bay) && spinup_delay &&
@@ -310,10 +309,19 @@ static void ds923_poll(struct work_struct *work)
 
 	ds923_bays_poll(ds);
 	ds923_fans_poll(ds);
-	schedule_delayed_work(&ds->poll, msecs_to_jiffies(max(poll_ms, 50U)));
+	queue_delayed_work(system_freezable_wq, &ds->poll, msecs_to_jiffies(ds923_poll_ms()));
 }
 
 /* ---------------------------------------------------------------- microcontroller */
+
+/* Bounded busy wait for an LSR bit, in 10 us steps. */
+static void ds923_up_wait(void __iomem *p, u32 bit, unsigned int us)
+{
+	unsigned int i;
+
+	for (i = 0; i < us / 10 && !(readl(p + (UART_LSR << 2)) & bit); i++)
+		udelay(10);
+}
 
 /*
  * Polled write on the microcontroller UART, used only once user space is
@@ -324,19 +332,21 @@ static void ds923_up_write(struct ds923 *ds, u8 c)
 {
 	unsigned int div = DIV_ROUND_CLOSEST(UP_UART_CLK, 16 * UP_UART_BAUD);
 	void __iomem *p = ds->up;
-	int i;
 
 	if (!p)
 		return;
+	/*
+	 * Let whatever the tty layer queued go out first: changing the divisor
+	 * mid-character garbles it. A full 64-byte FIFO at 9600 is ~67 ms.
+	 */
+	ds923_up_wait(p, UART_LSR_TEMT, 100000);
 	writel(UART_LCR_DLAB | UART_LCR_WLEN8, p + (UART_LCR << 2));
 	writel(div & 0xff, p + (UART_DLL << 2));
 	writel(div >> 8, p + (UART_DLM << 2));
 	writel(UART_LCR_WLEN8, p + (UART_LCR << 2));
-	for (i = 0; i < 1000 && !(readl(p + (UART_LSR << 2)) & UART_LSR_THRE); i++)
-		udelay(10);
+	ds923_up_wait(p, UART_LSR_THRE, 10000);
 	writel(c, p + (UART_TX << 2));
-	for (i = 0; i < 1000 && !(readl(p + (UART_LSR << 2)) & UART_LSR_TEMT); i++)
-		udelay(10);
+	ds923_up_wait(p, UART_LSR_TEMT, 10000);
 	mdelay(20);
 }
 
@@ -748,7 +758,7 @@ static int ds923_probe(struct platform_device *pdev)
 		dev_warn(dev, "hwmon: %pe\n", hwmon);
 
 	INIT_DELAYED_WORK(&ds->poll, ds923_poll);
-	schedule_delayed_work(&ds->poll, msecs_to_jiffies(poll_ms));
+	queue_delayed_work(system_freezable_wq, &ds->poll, msecs_to_jiffies(ds923_poll_ms()));
 	dev_info(dev, "Synology DS923+ platform ready\n");
 	return 0;
 }
