@@ -149,7 +149,7 @@ mount_fs() { # device directory
 }
 
 do_mount() {
-    local want=("$@") line lines uuid level ndev name devs count md vgs vg lv dm t vol dir mds=()
+    local want=("$@") line lines uuid level ndev name devs count md vgs vg lv dm t vol dir try mds=() newmds=() newvgs=''
     { command -v mdadm && command -v lvm; } >/dev/null || die "mdadm and lvm2 are required"
     lines=$(scan_members | sort)
     [ -n "$lines" ] || die "no DSM array member (md 1.x superblock) found"
@@ -187,6 +187,7 @@ do_mount() {
             mdadm --assemble "$md" --config=none --readonly "${extra[@]}" --uuid="$uuid" "${devs[@]}"
             md=$(readlink -f "$md")
             record md "$md" "$uuid"
+            newmds+=("$md")
             if [ "$(md_state "$md")" != readonly ]; then
                 mdadm --stop "$md" || true
                 die "$md is not read-only ($(md_state "$md")): stopped"
@@ -200,6 +201,11 @@ do_mount() {
         blockdev --setro "$md"
         mds+=("$md")
     done
+    # VGs on the arrays assembled now: udev may be autoactivating their LVs
+    if [ ${#newmds[@]} -gt 0 ]; then
+        udevadm settle
+        newvgs=$(lvm pvs --devices "$(IFS=,; echo "${newmds[*]}")" --config "$LVM_RO" --noheadings -o vg_name 2>/dev/null | awk 'NF { printf "%s ", $1 }')
+    fi
     # LVM only on the DSM arrays, metadata read-only
     vgs=$(lvm pvs --devices "$(IFS=,; echo "${mds[*]}")" --config "$LVM_RO" --noheadings -o vg_name 2>/dev/null | awk 'NF' | sort -u)
     [ -n "$vgs" ] || die "no LVM volume group on arrays ${mds[*]}"
@@ -221,13 +227,30 @@ do_mount() {
         vol=volume${lv##*_}
         if [ ${#want[@]} -gt 0 ] && [[ " ${want[*]} " != *" $vol "* ]]; then continue; fi
         dm=/dev/$vg/$lv
-        if [ -e "$dm" ]; then
-            [ "$(blockdev --getro "$dm")" = 1 ] || die "$dm is already active read-write: touching nothing"
-        else
-            lvm lvchange -ay --devices "$devlist" --config "$cfg" "$vg/$lv"
-            record lv "$vg/$lv" "$devlist"
+        # lvm2 event autoactivation (udev) may activate, read-write and asynchronously, the LVs
+        # of an array assembled just now: only those are deactivated and activated again
+        # read-only; an LV that was active before stays untouched
+        if [ -e "$dm" ] && [ "$(blockdev --getro "$dm")" != 1 ]; then
+            [[ " $newvgs " == *" $vg "* ]] || die "$dm is already active read-write: touching nothing"
+            say "$vg/$lv activated read-write by udev when its array appeared: deactivating it"
+            lvm lvchange -an --devices "$devlist" --config "$LVM_RO" "$vg/$lv" || die "deactivating $vg/$lv failed"
             udevadm settle
-            [ "$(blockdev --getro "$dm")" = 1 ] || { lvm lvchange -an --devices "$devlist" --config "$LVM_RO" "$vg/$lv"; die "$dm is not read-only: deactivated"; }
+        fi
+        if [ -e "$dm" ]; then
+            # read-only; activated by udev now: deactivated by umount
+            [[ " $newvgs " != *" $vg "* ]] || record lv "$vg/$lv" "$devlist"
+        else
+            record lv "$vg/$lv" "$devlist"
+            for try in 1 2; do
+                lvm lvchange -ay --devices "$devlist" --config "$cfg" "$vg/$lv"
+                udevadm settle
+                [ "$(blockdev --getro "$dm")" != 1 ] || break
+                # autoactivation came first (lvchange found it active read-write)
+                lvm lvchange -an --devices "$devlist" --config "$LVM_RO" "$vg/$lv" ||
+                    die "$dm is active read-write and could not be deactivated"
+                udevadm settle
+                [ "$try" = 1 ] || die "$dm is not read-only: deactivated"
+            done
         fi
         dir=$MOUNT_BASE/$vol
         t=$(blkid -p -s TYPE -o value "$dm" 2>/dev/null || true)
