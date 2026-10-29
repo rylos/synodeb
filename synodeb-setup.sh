@@ -15,7 +15,9 @@
 #
 # install options: --yes (no questions), --network dsm|dhcp, --hostname NAME,
 #   --lang en|it|de|fr|es|nl|pt, --backup-dir DIR, --local DIR (installer files from DIR
-#   instead of the download), --repo URL (apt repository for the installed system).
+#   instead of the download), --repo URL (apt repository for the installed system),
+#   --replace-debian (if the DOM has no room for the installer next to an installed Debian,
+#   remove that Debian's kernels from the DOM instead of stopping).
 #
 # The DOM is the 128 MB USB flash module the DS923+ firmware always boots: synoboot1 (FAT,
 # Synology GRUB and its SynoBootLoader.conf) and synoboot2 (ext2, the DSM kernel). DSM does not
@@ -42,11 +44,17 @@ CONF_REL=EFI/boot/SynoBootLoader.conf
 BEGIN='### synodeb begin'
 END='### synodeb end'
 
-say() { printf '%s\n' "$*"; }
-die() { printf 'synodeb-setup: %s\n' "$*" >&2; exit 1; }
+# output never fails the script: after a dropped SSH session the terminal is gone
+say() { printf '%s\n' "$*" 2>/dev/null || true; }
+die() { printf 'synodeb-setup: %s\n' "$*" >&2 2>/dev/null || true; exit 1; }
 ask() { # question default -> answer
     if [ "$YES" = 1 ]; then echo "$2"; return; fi
     printf '%s [%s]: ' "$1" "$2" > /dev/tty
+    read -r a < /dev/tty || a=
+    echo "${a:-$2}"
+}
+ask_tty() { # question default -> answer, asked even with --yes (default without a terminal)
+    { printf '%s [%s]: ' "$1" "$2" > /dev/tty; } 2>/dev/null || { echo "$2"; return; }
     read -r a < /dev/tty || a=
     echo "${a:-$2}"
 }
@@ -55,9 +63,38 @@ bytes() { od -An -tx1 -j "$2" -N "$3" "$1" | tr -s ' \n' '  ' | sed 's/^ //; s/ 
 size_of() { # block device or file
     if [ -b "$1" ]; then blockdev --getsize64 "$1"; else stat -c %s "$1"; fi
 }
+# read a device from the device itself, not from the page cache (O_DIRECT if it works)
+DIRECT=0
+rd() {
+    if [ -b "$1" ]; then
+        blockdev --flushbufs "$1" 2>/dev/null || true
+        if [ "$DIRECT" = 1 ]; then dd if="$1" bs=64k iflag=direct 2>/dev/null; return; fi
+    fi
+    dd if="$1" bs=64k 2>/dev/null
+}
+rd_sha() { rd "$1" | sha256sum | cut -d' ' -f1; }
+valid_host() { # RFC 1123 label
+    [[ $1 =~ ^[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?$ ]]
+}
+valid_repo() { # goes into the GRUB config and a sed command of the installer: no quoting needed
+    re='^https?://[A-Za-z0-9._~:/@%+=,-]+$'
+    [[ $1 =~ $re ]]
+}
+
+# ---------------------------------------------------------------- signals
+# A signal while the DOM is written would leave it half written: during the writes HUP
+# (dropped SSH session), INT, TERM and PIPE are ignored, also by dd.
+CRIT=0
+traps() {
+    trap cleanup EXIT
+    trap 'exit 129' HUP; trap 'exit 130' INT; trap 'exit 143' TERM; trap - PIPE
+}
+critical() { CRIT=$((CRIT + 1)); trap '' HUP INT TERM PIPE; }
+uncritical() { CRIT=$((CRIT - 1)); [ "$CRIT" -gt 0 ] || { CRIT=0; traps; }; }
 
 # ---------------------------------------------------------------- checks
-preflight() {
+# enough to write a backup back: works on a damaged DOM
+preflight_dom() {
     [ "$(id -u)" = 0 ] || die "run as root: sudo bash $0"
     if [ "${SYNODEB_TEST:-0}" != 1 ]; then
         [ -f /etc.defaults/VERSION ] || die "this is not DSM: run this script on the NAS, under DSM"
@@ -67,9 +104,16 @@ preflight() {
     for t in dd od sha256sum mount umount blockdev sed awk mktemp; do
         command -v $t >/dev/null 2>&1 || die "missing tool: $t"
     done
+    [ -b "$DOM" ] || die "$DOM not found: is the DOM (synoboot) present?"
+    for p in "$DOM" "$P1" "$P2"; do
+        ! grep -q "^$p " /proc/mounts || die "$p is mounted: stopping"
+    done
+    if dd if="$DOM" of=/dev/null bs=64k count=1 iflag=direct 2>/dev/null; then DIRECT=1; fi
+}
+preflight() {
+    preflight_dom
     for p in "$P1" "$P2"; do
         [ -b "$p" ] || die "$p not found: is the DOM (synoboot) present?"
-        ! grep -q "^$p " /proc/mounts || die "$p is mounted: stopping"
     done
     [ "$(bytes "$P1" 39 4)" = "$FAT_ID" ] || [ "$(bytes "$P1" 67 4)" = "$FAT_ID" ] ||
         die "$P1 is not the Synology boot partition (FAT volume id 10EE-589C expected)"
@@ -84,22 +128,36 @@ cleanup() {
     [ -n "$T" ] || return 0
     umount "$T/m1" 2>/dev/null || true
     umount "$T/m2" 2>/dev/null || true
-    rm -rf "$T"
+    if grep -q " $T/" /proc/mounts; then
+        say "synodeb-setup: $T is still mounted, not removed" >&2
+        return 0
+    fi
+    rm -rf --one-file-system "$T" 2>/dev/null || rm -rf "$T"
+    T=
 }
-trap cleanup EXIT
-trap 'exit 130' INT TERM
+traps
 workdir() {
     T=$(mktemp -d "${TMPDIR:-/tmp}/synodeb.XXXXXX")
-    trap cleanup EXIT           # also inside the subshells of the menu
+    traps                       # also inside the subshells of the menu
     mkdir "$T/m1" "$T/m2"
     avail=$(df -Pk "$T" | awk 'NR == 2 { print $4 }')
-    [ "$avail" -ge 200000 ] || die "not enough space in ${TMPDIR:-/tmp} ($avail KB, 200 MB needed): set TMPDIR to a folder on a volume"
+    [ "$avail" -ge 250000 ] || die "not enough space in ${TMPDIR:-/tmp} ($avail KB, 250 MB needed): set TMPDIR to a folder on a volume"
 }
-# copy partition $1 to $T/<name>.img and mount the copy on $2 (fstype $3)
+# copy partition $1 to $T/<name>.img and mount the copy on $2 (fstype $3). The partition is
+# read twice; without a DOM backup of this run the second read is kept as <name>.img.orig, to
+# write it back if writing the partition fails.
+READONLY=0
 grab() {
     img=$T/$(basename "$1").img
     dd if="$1" of="$img" bs=64k 2>/dev/null || die "reading $1 failed"
-    [ "$(sha "$img")" = "$(dd if="$1" bs=64k 2>/dev/null | sha256sum | cut -d' ' -f1)" ] ||
+    if [ -z "$BACKUP" ] && [ "$READONLY" = 0 ]; then
+        rd "$1" > "$img.orig" || die "reading $1 failed"
+        second=$(sha "$img.orig")
+    else
+        second=$(rd_sha "$1")
+    fi
+    sha "$img" > "$img.sha"
+    [ "$(cat "$img.sha")" = "$second" ] ||
         die "reading $1 twice gave different data: the DOM may be failing, stopping"
     mount -t "$3" -o loop "$img" "$2" || die "mounting the copy of $1 failed"
 }
@@ -112,23 +170,49 @@ put() {
     vfat) if command -v fsck.vfat >/dev/null 2>&1; then fsck.vfat -n "$img" >/dev/null 2>&1 || die "the modified copy of $1 does not pass fsck.vfat: DOM unchanged"; fi ;;
     esac
     [ "$(size_of "$img")" = "$(size_of "$1")" ] || die "size of the copy of $1 changed: DOM unchanged"
+    [ "$(rd_sha "$1")" = "$(cat "$img.sha")" ] ||
+        die "$1 changed since it was read (is another program writing the DOM?): DOM unchanged"
+    critical
     dd if="$img" of="$1" bs=64k conv=fsync 2>/dev/null || write_failed "$1"
     sync
-    blockdev --flushbufs "$1" 2>/dev/null || true
-    [ "$(dd if="$1" bs=64k 2>/dev/null | sha256sum | cut -d' ' -f1)" = "$(sha "$img")" ] || write_failed "$1"
+    [ "$(rd_sha "$1")" = "$(sha "$img")" ] || write_failed "$1"
+    sha "$img" > "$img.sha"
+    uncritical
 }
+# the DOM backup of this run, else the copy of the partition read before the change
 write_failed() {
-    say "" "ERROR: writing $1 failed or it did not read back correctly." >&2
-    if [ -n "${BACKUP:-}" ]; then
-        say "Restoring the DOM backup $BACKUP ..." >&2
-        if dd if="$BACKUP" of="$DOM" bs=64k conv=fsync 2>/dev/null &&
-           [ "$(dd if="$DOM" bs=64k count=$(( $(size_of "$BACKUP") / 65536 )) 2>/dev/null | sha256sum | cut -d' ' -f1)" = "$(sha "$BACKUP")" ]; then
+    say "" >&2
+    say "ERROR: writing $1 failed or it did not read back correctly." >&2
+    if [ -n "$BACKUP" ]; then
+        src=$BACKUP dst=$DOM
+    else
+        src=$T/$(basename "$1").img.orig dst=$1
+    fi
+    if [ -f "$src" ]; then
+        say "Writing back $src ..." >&2
+        if dd if="$src" of="$dst" bs=64k conv=fsync 2>/dev/null && sync && [ "$(rd_sha "$dst")" = "$(sha "$src")" ]; then
             say "The DOM is back as it was. Nothing changed." >&2
-        else
-            say "RESTORE FAILED: do not reboot. Keep $BACKUP and ask for help." >&2
+            exit 1
         fi
     fi
+    say "RESTORE FAILED: do not reboot. Keep the DOM backup made by 'install' and write it back" >&2
+    say "with: sudo bash $0 restore <backup>" >&2
     exit 1
+}
+# whole DOM to BACKUP_DIR (or the current folder), read twice and compared -> BACKUP
+backup_dom() {
+    bdir=${BACKUP_DIR:-$PWD}
+    [ -d "$bdir" ] && [ -w "$bdir" ] || die "backup folder $bdir not writable"
+    need=$(( $(size_of "$DOM") / 1024 + 1024 ))
+    [ "$(df -Pk "$bdir" | awk 'NR == 2 { print $4 }')" -ge "$need" ] || die "not enough space in $bdir for the DOM backup ($need KB)"
+    b=$bdir/synodeb-dom-backup-$(date +%Y%m%d-%H%M%S).img
+    [ ! -e "$b" ] || b=${b%.img}-$$.img            # never overwrite an earlier backup
+    say "Backing up the DOM to $b ..."
+    ( umask 077; dd if="$DOM" of="$b" bs=64k 2>/dev/null ) || die "DOM backup failed"
+    [ "$(sha "$b")" = "$(rd_sha "$DOM")" ] || die "the DOM backup does not match a second read of the DOM: stopping"
+    ( umask 077; sha "$b" > "$b.sha256" )
+    chmod 600 "$b" "$b.sha256"
+    BACKUP=$b
 }
 
 # index of the menu entry titled $2 in conf $1 (GRUB counts from 0), empty if absent
@@ -150,24 +234,41 @@ strip_conf() {
         skip || drop { if (drop && /^}/) drop = 0; next }
         { print }' "$1" | sed -e :a -e '/^\n*$/{$d;N;ba' -e '}'
 }
+# conf without the INSTALLER entry (and without its marker block once empty); DEBIAN* stay
+drop_installer() {
+    awk -v b="$BEGIN" -v e="$END" '
+        index($0, b) == 1 { blk = 1; buf = ""; has = 0 }
+        /^menuentry "INSTALLER"/ { drop = 1 }
+        drop { if (/^}/) drop = 0; next }
+        blk { buf = buf $0 "\n"; if (/^menuentry /) has = 1
+              if (index($0, e) == 1) { blk = 0; if (has) printf "%s", buf }
+              next }
+        { print }' "$1"
+}
 check_conf() {
     [ -f "$1" ] || die "$CONF_REL missing on the DOM"
     grep -q '^set default=' "$1" || die "unexpected $CONF_REL (no 'set default')"
     grep -q 'syno_hw_version=DS923+' "$1" || die "unexpected $CONF_REL (not a DS923+ boot loader)"
     grep -q '^menuentry "SYNOLOGY_2"' "$1" || die "unexpected $CONF_REL (no SYNOLOGY_2 entry)"
 }
-# keep the original Synology conf as $1.dsm (once): verbatim if synodeb never touched it
+# the Synology lines of a conf, without the ones synodeb changes (default, fallback)
+syno_lines() { strip_conf "$1" | grep -v -e '^set default=' -e '^set fallback=' -e '^$'; }
+# keep the original Synology conf as $1.dsm: an earlier copy stays while the Synology lines
+# of the conf are the same, otherwise (e.g. DSM rewrote the conf) it is taken again from $1,
+# verbatim if synodeb never touched it
 save_original() {
-    if [ -f "$1.dsm" ] && grep -q 'syno_hw_version=DS923+' "$1.dsm"; then
+    check_conf "$1"
+    if [ -f "$1.dsm" ] && grep -q 'syno_hw_version=DS923+' "$1.dsm" &&
+       [ "$(syno_lines "$1" | sha256sum)" = "$(syno_lines "$1.dsm" | sha256sum)" ]; then
         check_conf "$1.dsm"
         return
     fi
-    check_conf "$1"
     if grep -q -e "^$BEGIN" -e '^menuentry "DEBIAN' -e '^menuentry "INSTALLER"' "$1"; then
         strip_conf "$1" > "$1.dsm"
     else
         cp "$1" "$1.dsm"
     fi
+    check_conf "$1.dsm"
 }
 show_status() { # conf mounted dir of synoboot2
     d=$(sed -n "s/^set default='\([0-9]*\)'.*/\1/p" "$1" | head -n 1)
@@ -184,7 +285,24 @@ show_status() { # conf mounted dir of synoboot2
 dsm_net() {
     IFACE=$(ip -4 route show default 2>/dev/null | awk '{ for (i = 1; i < NF; i++) if ($i == "dev") { print $(i + 1); exit } }')
     [ -n "$IFACE" ] || die "no default route on DSM: is the NAS on the network?"
+    # the port the installer uses (it knows nothing of DSM's bonds and Open vSwitch bridges)
+    DEV=$IFACE NETWARN=
     MAC=$(cat "/sys/class/net/$IFACE/address")
+    case "$IFACE" in
+    ovs_*)
+        [ ! -e "/sys/class/net/${IFACE#ovs_}" ] || DEV=${IFACE#ovs_}
+        MAC=$(cat "/sys/class/net/$DEV/address")
+        NETWARN="DSM uses Open vSwitch ($IFACE): the installer and Debian use the port $DEV directly." ;;
+    bond*)
+        s=$(awk '{ print $1 }' "/sys/class/net/$IFACE/bonding/slaves" 2>/dev/null)
+        if [ -n "$s" ]; then
+            DEV=$s
+            MAC=$(cat "/sys/class/net/$s/bonding_slave/perm_hwaddr" 2>/dev/null || cat "/sys/class/net/$s/address")
+        fi
+        NETWARN="DSM uses the bond $IFACE: the installer and Debian use the port $DEV only, without link
+aggregation. If the switch ports are set up for link aggregation (LACP), the installer may get
+no network: connect $DEV to a port without it, or remove the bond in DSM first." ;;
+    esac
     CIDR=$(ip -4 -o addr show dev "$IFACE" scope global | awk '{ print $4; exit }')
     IP=${CIDR%/*}; PREFIX=${CIDR#*/}
     GW=$(ip -4 route show default | awk '{ print $3; exit }')
@@ -192,25 +310,40 @@ dsm_net() {
     [ -n "$DNS" ] || DNS=$GW
     m=$(( 0xffffffff ^ ((1 << (32 - PREFIX)) - 1) ))
     MASK="$(( (m >> 24) & 255 )).$(( (m >> 16) & 255 )).$(( (m >> 8) & 255 )).$(( m & 255 ))"
+    # does DSM get its address from DHCP?
+    DSM_DHCP=0
+    for f in "/etc/sysconfig/network-scripts/ifcfg-$IFACE" "/etc/sysconfig/network-scripts/ifcfg-$DEV"; do
+        [ -f "$f" ] || continue
+        if grep -qi "^BOOTPROTO=[\"']*dhcp" "$f"; then DSM_DHCP=1; fi
+        break
+    done
 }
 
 # ---------------------------------------------------------------- commands
 cmd_install() {
     preflight
     dsm_net
-    HOST=${HOSTNAME_OPT:-$(hostname | tr 'A-Z_' 'a-z-' | tr -cd 'a-z0-9-')}
-    [ -n "$HOST" ] || HOST=debian
+    HOST=${HOSTNAME_OPT:-$(hostname | tr 'A-Z_' 'a-z-' | tr -cd 'a-z0-9-' | sed 's/^-*//; s/-*$//' | cut -c1-63)}
+    valid_host "$HOST" || HOST=debian
     say "synodeb $VERSION — Debian installer for the Synology DS923+"
     say ""
-    say "DSM network: $IFACE ($MAC) $CIDR, gateway $GW, DNS $DNS"
+    say "DSM network: $IFACE ($MAC) $CIDR, gateway $GW, DNS $DNS$([ "$DSM_DHCP" = 1 ] && echo ', from DHCP')"
+    [ -z "$NETWARN" ] || say "$NETWARN"
+    netdef=dsm
+    [ "$DSM_DHCP" = 0 ] || netdef=dhcp
     if [ -z "$NETWORK" ]; then
         say "Network for the installer:"
         say "  dsm   the same address DSM has now ($IP, static)"
         say "  dhcp  an address from your DHCP server"
-        NETWORK=$(ask "Choice" dsm)
+        [ "$DSM_DHCP" = 0 ] || say "DSM gets its address from DHCP: 'dhcp' is the default ('dsm' would make the"
+        [ "$DSM_DHCP" = 0 ] || say "current lease $IP a static address of Debian)."
+        NETWORK=$(ask "Choice" $netdef)
+    elif [ "$NETWORK" = dsm ] && [ "$DSM_DHCP" = 1 ]; then
+        say "Note: DSM gets $IP from DHCP; with --network dsm it becomes a static address of Debian."
     fi
     case "$NETWORK" in dsm|dhcp) ;; *) die "network: dsm or dhcp" ;; esac
     HOST=$(ask "Host name of the Debian system" "$HOST")
+    valid_host "$HOST" || die "host name '$HOST': letters, digits and '-' only (at most 63), not starting or ending with '-'"
     LANG_OPT=$(ask "Installer language (en it de fr es nl pt)" "${LANG_OPT:-en}")
     case "$LANG_OPT" in
     en) LOCALE=en_US.UTF-8 KEYMAP=us ;; it) LOCALE=it_IT.UTF-8 KEYMAP=it ;;
@@ -240,52 +373,63 @@ cmd_install() {
         [ "$(sha "$T/installer.img")" = "$SHA_INSTALLER" ] || die "installer.img: wrong checksum, download it again"
     fi
 
-    # backup of the whole DOM (once per run), read twice and compared
-    BDIR=${BACKUP_DIR:-$PWD}
-    [ -d "$BDIR" ] && [ -w "$BDIR" ] || die "backup folder $BDIR not writable"
-    need=$(( $(size_of "$DOM") / 1024 + 1024 ))
-    [ "$(df -Pk "$BDIR" | awk 'NR == 2 { print $4 }')" -ge "$need" ] || die "not enough space in $BDIR for the DOM backup ($need KB)"
-    BACKUP=$BDIR/synodeb-dom-backup-$(date +%Y%m%d-%H%M%S).img
-    say "Backing up the DOM to $BACKUP ..."
-    dd if="$DOM" of="$BACKUP" bs=64k 2>/dev/null || die "DOM backup failed"
-    [ "$(sha "$BACKUP")" = "$(dd if="$DOM" bs=64k 2>/dev/null | sha256sum | cut -d' ' -f1)" ] ||
-        die "the DOM backup does not match a second read of the DOM: stopping"
-    sha "$BACKUP" > "$BACKUP.sha256"
-    chmod 600 "$BACKUP" "$BACKUP.sha256"
+    backup_dom
 
-    # synoboot2: /synodeb with the installer kernel and initrd only
+    grab "$P1" "$T/m1" vfat
+    C=$T/m1/$CONF_REL
+    save_original "$C"
     grab "$P2" "$T/m2" ext2
     for f in zImage rd.gz; do
         [ -f "$T/m2/$f" ] || die "synoboot2 has no $f: unexpected DOM content, stopping"
     done
-    rm -rf "$T/m2/synodeb"
-    free=$(df -Pk "$T/m2" | awk 'NR == 2 { print $4 }')
-    need=$(( ( $(size_of "$T/vmlinuz") + $(size_of "$T/installer.img") ) / 1024 + 1024 ))
-    [ "$free" -ge "$need" ] || die "not enough space on synoboot2: $need KB needed, $free KB free (DOM unchanged)"
-    mkdir "$T/m2/synodeb"
-    cp "$T/vmlinuz" "$T/m2/synodeb/vmlinuz"
-    cp "$T/installer.img" "$T/m2/synodeb/installer.img"
-    sync
-    for f in vmlinuz installer.img; do
-        [ "$(sha "$T/m2/synodeb/$f")" = "$(sha "$T/$f")" ] || die "copy of $f on synoboot2 is wrong (DOM unchanged)"
-    done
 
-    # synoboot1: Synology entries untouched, INSTALLER added and made the default
-    grab "$P1" "$T/m1" vfat
-    C=$T/m1/$CONF_REL
-    save_original "$C"
+    # synoboot2: /synodeb/installer.vmlinuz and installer.img. The kernels of an installed
+    # Debian stay, so it still boots if this installation is cancelled or fails.
+    S=$T/m2/synodeb
+    keep=0
+    [ -z "$(entry "$C" DEBIAN)" ] || ! [ -f "$S/vmlinuz" ] || ! [ -f "$S/initrd.img" ] || keep=1
+    rm -f "$S/installer.img" "$S/installer.vmlinuz" "$S"/*.tmp 2>/dev/null || true
+    p2free() { df -Pk "$T/m2" | awk 'NR == 2 { print $4 }'; }
+    need=$(( ( $(size_of "$T/vmlinuz") + $(size_of "$T/installer.img") ) / 1024 + 1024 ))
+    if [ $keep = 1 ]; then
+        say "Debian is installed on this NAS: its kernel stays on the DOM next to the installer."
+        if [ "$(p2free)" -lt "$need" ] && [ -f "$S/vmlinuz.old" ]; then
+            say "Not enough space for both Debian kernels: the previous one (DEBIAN_OLD) is removed."
+            rm -f "$S/vmlinuz.old" "$S/initrd.img.old" "$S/VERSION.old"
+        fi
+        if [ "$(p2free)" -lt "$need" ]; then
+            say ""
+            say "The DOM has no room for the installer next to the Debian kernel ($need KB needed,"
+            say "$(p2free) KB free). Going on removes the installed Debian from the DOM: it cannot boot"
+            say "again until a new installation completes (the Debian disks are not touched)."
+            [ "$REPLACE" = 1 ] || [ "$(ask_tty "Remove the installed Debian from the DOM? (yes/no)" no)" = yes ] ||
+                die "nothing written (--replace-debian removes the installed Debian from the DOM)"
+            keep=0
+        fi
+    fi
+    [ $keep = 1 ] || rm -rf "$S"
+    [ "$(p2free)" -ge "$need" ] || die "not enough space on synoboot2: $need KB needed, $(p2free) KB free (DOM unchanged)"
+    mkdir -p "$S"
+    cp "$T/vmlinuz" "$S/installer.vmlinuz"
+    cp "$T/installer.img" "$S/installer.img"
+    sync
+    [ "$(sha "$S/installer.vmlinuz")" = "$(sha "$T/vmlinuz")" ] || die "copy of vmlinuz on synoboot2 is wrong (DOM unchanged)"
+    [ "$(sha "$S/installer.img")" = "$(sha "$T/installer.img")" ] || die "copy of installer.img on synoboot2 is wrong (DOM unchanged)"
+
+    # synoboot1: Synology entries (and the Debian ones, if kept) untouched, INSTALLER added
+    # and made the default
     if [ "$NETWORK" = dsm ]; then
         net="netcfg/choose_interface=$MAC netcfg/disable_autoconfig=true netcfg/get_ipaddress=$IP netcfg/get_netmask=$MASK netcfg/get_gateway=$GW netcfg/get_nameservers=$DNS netcfg/confirm_static=true"
     else
         net="netcfg/choose_interface=$MAC"
     fi
     {
-        strip_conf "$C.dsm"
+        if [ $keep = 1 ]; then drop_installer "$C"; else strip_conf "$C.dsm"; fi
         echo "$BEGIN (written by synodeb-setup.sh)"
         cat <<EOT
 menuentry "INSTALLER" {
         search --fs-uuid --no-floppy --set=root $P2UUID
-        linux /synodeb/vmlinuz console=tty0 console=uart8250,mmio32,0xfedc9000,115200n8 debian-installer/locale=$LOCALE keyboard-configuration/xkb-keymap=$KEYMAP netcfg/get_hostname=$HOST netcfg/hostname=$HOST $net network-console/password=$PW network-console/password-again=$PW${REPO:+ synodeb.repo=$REPO}
+        linux /synodeb/installer.vmlinuz console=tty0 console=uart8250,mmio32,0xfedc9000,115200n8 debian-installer/locale=$LOCALE keyboard-configuration/xkb-keymap=$KEYMAP netcfg/get_hostname=$HOST netcfg/hostname=$HOST $net network-console/password=$PW network-console/password-again=$PW${REPO:+ synodeb.repo=$REPO}
         initrd /synodeb/installer.img
 }
 EOT
@@ -293,14 +437,17 @@ EOT
     } > "$C.new"
     set_default "$C.new" INSTALLER
     mv "$C.new" "$C"
+    rm -f "$T/m1/EFI/boot/synodeb-trial"
 
     say ""
     say "About to write the DOM:"
-    say "  synoboot2: /synodeb/vmlinuz and /synodeb/installer.img"
-    say "  synoboot1: boot entry INSTALLER, made the default (Synology entries unchanged)"
+    say "  synoboot2: /synodeb/installer.vmlinuz and /synodeb/installer.img$([ $keep = 1 ] && echo ' (the Debian kernel stays)')"
+    say "  synoboot1: boot entry INSTALLER, made the default (Synology$([ $keep = 1 ] && echo ' and Debian') entries unchanged)"
     [ "$(ask "Write the DOM now? (yes/no)" no)" = yes ] || [ "$YES" = 1 ] || die "nothing written"
+    critical
     put "$P2" "$T/m2" ext2
     put "$P1" "$T/m1" vfat
+    uncritical
     say ""
     say "Done. The DOM is written and verified."
     say ""
@@ -319,6 +466,7 @@ EOT
     say "     Password:         $PW   (one-time, valid only for this installation)"
     say "  4. Follow the Debian installer. Choose the disks for Debian in the partitioning step:"
     say "     keep the DSM disks untouched to keep DSM, or erase them to use them for Debian."
+    say "     The DOM (128 MB, 'synoboot') is locked in the partitioner: never change it."
     if [ "$NETWORK" = dsm ]; then
         say "  5. At the end the NAS reboots into Debian: ssh <your user>@$IP"
     else
@@ -329,6 +477,10 @@ EOT
     say "If there is no beep within 20 minutes (no network), the NAS reboots into DSM by itself."
     say "The installer switches the DOM back to DSM as soon as it starts: until the installation"
     say "completes, any reboot brings DSM back."
+    if [ $keep = 1 ]; then
+        say "To boot the installed Debian again instead: sudo bash synodeb-setup.sh cancel, then"
+        say "sudo bash synodeb-setup.sh boot debian."
+    fi
 }
 
 cmd_boot() {
@@ -340,7 +492,7 @@ cmd_boot() {
     [ -f "$C" ] || die "$CONF_REL missing on the DOM"
     if [ $t = DEBIAN ]; then
         [ -n "$(entry "$C" DEBIAN)" ] || die "no Debian installed on this NAS (no DEBIAN boot entry)"
-        grab "$P2" "$T/m2" ext2
+        READONLY=1 grab "$P2" "$T/m2" ext2
         [ -f "$T/m2/synodeb/vmlinuz" ] && [ -f "$T/m2/synodeb/initrd.img" ] ||
             die "the Debian kernel is missing on the DOM: boot Debian is not possible"
         umount "$T/m2"
@@ -357,22 +509,29 @@ cmd_cancel() {
     grab "$P1" "$T/m1" vfat
     C=$T/m1/$CONF_REL
     check_conf "$C"
-    { strip_conf "$C"; } > "$C.new"
-    if [ -n "$(entry "$C" DEBIAN)" ]; then
+    deb=$(entry "$C" DEBIAN)
+    if [ -n "$deb" ]; then
         # keep an installed Debian: only the INSTALLER entry goes
-        awk '/^menuentry "INSTALLER"/ { drop = 1 } drop { if (/^}/) drop = 0; next } { print }' "$C" > "$C.new"
+        drop_installer "$C" > "$C.new"
+    else
+        strip_conf "$C" > "$C.new"
     fi
     set_default "$C.new" SYNOLOGY_2
     mv "$C.new" "$C"
     put "$P1" "$T/m1" vfat
     grab "$P2" "$T/m2" ext2
-    if [ -n "$(entry "$C" DEBIAN)" ]; then
-        rm -f "$T/m2/synodeb/installer.img"
+    if [ -n "$deb" ]; then
+        rm -f "$T/m2/synodeb/installer.img" "$T/m2/synodeb/installer.vmlinuz"
     else
         rm -rf "$T/m2/synodeb"
     fi
     put "$P2" "$T/m2" ext2
-    say "Installer removed, DSM is the default boot entry."
+    if [ -n "$deb" ]; then
+        say "Installer removed, DSM is the default boot entry. The installed Debian stays:"
+        say "sudo bash $0 boot debian makes it the default again."
+    else
+        say "Installer removed, DSM is the default boot entry."
+    fi
 }
 
 cmd_uninstall() {
@@ -384,11 +543,7 @@ cmd_uninstall() {
     say "For a byte-identical DOM use instead: $0 restore <backup>"
     [ "$(ask "Remove Debian from the DOM? (yes/no)" no)" = yes ] || [ "$YES" = 1 ] || die "nothing written"
     workdir
-    BACKUP_DIR=${BACKUP_DIR:-$PWD}
-    BACKUP=$BACKUP_DIR/synodeb-dom-backup-$(date +%Y%m%d-%H%M%S).img
-    dd if="$DOM" of="$BACKUP" bs=64k 2>/dev/null || die "DOM backup failed"
-    sha "$BACKUP" > "$BACKUP.sha256"
-    chmod 600 "$BACKUP" "$BACKUP.sha256"
+    backup_dom
     say "DOM backup (before uninstall): $BACKUP"
     grab "$P1" "$T/m1" vfat
     C=$T/m1/$CONF_REL
@@ -401,44 +556,68 @@ cmd_uninstall() {
     fi
     grep -q '^set default=' "$C" || die "unexpected conf"
     rm -f "$C.dsm" "$C.tmp" "$C.new" "$T/m1/EFI/boot/synodeb-trial" "$T/m1/EFI/boot/synodeb-pending"
-    put "$P1" "$T/m1" vfat
     grab "$P2" "$T/m2" ext2
     rm -rf "$T/m2/synodeb"
+    critical
+    put "$P1" "$T/m1" vfat
     put "$P2" "$T/m2" ext2
+    uncritical
     say "Done: the DOM boots DSM with its original configuration, no synodeb file is left."
 }
 
 cmd_status() {
     preflight
     workdir
+    READONLY=1
     grab "$P1" "$T/m1" vfat
     grab "$P2" "$T/m2" ext2
     show_status "$T/m1/$CONF_REL" "$T/m2"
 }
 
+# byte offset of partition 1 in a DOM image (GPT or MBR), empty if there is none
+img_p1_off() {
+    if [ "$(bytes "$1" 450 1)" = ee ]; then
+        [ "$(bytes "$1" 512 8)" = "45 46 49 20 50 41 52 54" ] || return 0    # "EFI PART"
+        o=1056          # GPT: first entry at LBA 2, its starting LBA (low 32 bits)
+    else
+        o=454           # MBR: starting LBA of the first entry
+    fi
+    read -r a b c d <<< "$(bytes "$1" $o 4)"
+    [ -n "$d" ] || return 0
+    lba=$(( 0x$d$c$b$a ))
+    [ "$lba" = 0 ] || echo $(( lba * 512 ))
+}
 cmd_restore() {
-    preflight
+    preflight_dom                       # not preflight: the DOM may be damaged
     f=${1:-}
-    [ -f "$f" ] || die "usage: $0 restore synodeb-dom-backup-<date>.img"
-    [ "$(size_of "$f")" -le "$(size_of "$DOM")" ] || die "$f is larger than the DOM"
+    [ -n "$f" ] && [ -f "$f" ] || die "usage: $0 restore synodeb-dom-backup-<date>.img"
+    fs=$(size_of "$f") ds=$(size_of "$DOM")
+    [ "$fs" = "$ds" ] || die "$f ($fs bytes) is not the size of the DOM ($ds bytes): not a backup of this DOM"
+    off=$(img_p1_off "$f")
+    [ -n "$off" ] && [ "$off" -lt "$fs" ] || die "$f has no partition table: not a DOM backup"
+    [ "$(bytes "$f" $((off + 39)) 4)" = "$FAT_ID" ] || [ "$(bytes "$f" $((off + 67)) 4)" = "$FAT_ID" ] ||
+        die "$f is not a DOM backup (no Synology boot partition in it)"
     if [ -f "$f.sha256" ]; then
         [ "$(sha "$f")" = "$(cat "$f.sha256")" ] || die "$f does not match $f.sha256: damaged backup"
     fi
     say "This writes $f back to the whole DOM ($DOM)."
     [ "$(ask "Continue? (yes/no)" no)" = yes ] || [ "$YES" = 1 ] || die "nothing written"
-    dd if="$f" of="$DOM" bs=64k conv=fsync 2>/dev/null || die "writing the DOM failed"
+    critical
+    dd if="$f" of="$DOM" bs=64k conv=fsync 2>/dev/null || die "writing the DOM failed: try again, do not reboot"
     sync
-    [ "$(dd if="$DOM" bs=64k count=$(( $(size_of "$f") / 65536 )) 2>/dev/null | sha256sum | cut -d' ' -f1)" = "$(sha "$f")" ] ||
+    [ "$(rd_sha "$DOM")" = "$(sha "$f")" ] ||
         die "the DOM does not read back as the backup: try again, do not reboot"
+    uncritical
     say "DOM restored and verified."
 }
 
 # ---------------------------------------------------------------- main
-YES=0 NETWORK='' HOSTNAME_OPT='' LANG_OPT='' BACKUP_DIR='' LOCAL='' REPO='' BACKUP=''
+YES=0 REPLACE=0 NETWORK='' HOSTNAME_OPT='' LANG_OPT='' BACKUP_DIR='' LOCAL='' REPO='' BACKUP=''
 
 # one line about the DOM for the menu header
 summary() {
     ( workdir
+      READONLY=1
       grab "$P1" "$T/m1" vfat
       C=$T/m1/$CONF_REL
       d=$(sed -n "s/^set default='\([0-9]*\)'.*/\1/p" "$C" | head -n 1)
@@ -450,6 +629,14 @@ summary() {
         echo "DOM state unknown"
 }
 
+# menu: a command runs in a subshell; when it fails or is declined the menu stays
+run() {
+    set +e
+    ( set -e; "$@" )
+    rc=$?
+    set -e
+    [ $rc = 0 ] || say "(not completed)"
+}
 menu() {
     preflight
     if [ -t 1 ]; then B=$'\e[1m' D=$'\e[2m' C=$'\e[36m' N=$'\e[0m'; else B='' D='' C='' N=''; fi
@@ -470,45 +657,58 @@ menu() {
         read -r -p "Choice: " c < /dev/tty || exit 0
         say ""
         case "$c" in
-        1) ( cmd_install ) ;;
-        2) ( cmd_boot debian ) ;;
-        3) ( cmd_boot dsm ) ;;
-        4) ( cmd_status ) ;;
-        5) ( cmd_cancel ) ;;
-        6) read -r -p "Backup file: " f < /dev/tty; ( cmd_restore "$f" ) ;;
-        7) ( cmd_uninstall ) ;;
+        1) run cmd_install ;;
+        2) run cmd_boot debian ;;
+        3) run cmd_boot dsm ;;
+        4) run cmd_status ;;
+        5) run cmd_cancel ;;
+        6) read -r -p "Backup file: " f < /dev/tty || f=; run cmd_restore "$f" ;;
+        7) run cmd_uninstall ;;
         q|Q|"") exit 0 ;;
         *) say "?" ;;
         esac
     done
 }
-cmd=${1:-menu}
-[ $# = 0 ] || shift
-args=
+
+# options anywhere on the command line, before or after the command
+optval() { # option value
+    [ $# -ge 2 ] && [ -n "$2" ] || die "option $1 needs a value"
+    case "$2" in -*) die "option $1 needs a value (got $2)" ;; esac
+}
+cmd='' args=()
 while [ $# -gt 0 ]; do
     case "$1" in
     --yes|-y) YES=1 ;;
-    --network) NETWORK=${2:-}; shift ;;
-    --hostname) HOSTNAME_OPT=${2:-}; shift ;;
-    --lang) LANG_OPT=${2:-}; shift ;;
-    --backup-dir) BACKUP_DIR=${2:-}; shift ;;
-    --local) LOCAL=${2:-}; shift ;;
-    --repo) REPO=${2:-}; shift ;;
+    --replace-debian) REPLACE=1 ;;
+    --network|--hostname|--lang|--backup-dir|--local|--repo)
+        optval "$@"
+        case "$1" in
+        --network) NETWORK=$2 ;;
+        --hostname) HOSTNAME_OPT=$2
+            valid_host "$2" || die "--hostname $2: letters, digits and '-' only (at most 63), not starting or ending with '-'" ;;
+        --lang) LANG_OPT=$2 ;;
+        --backup-dir) BACKUP_DIR=$2 ;;
+        --local) LOCAL=$2 ;;
+        --repo) REPO=$2
+            valid_repo "$2" || die "--repo $2: an http:// or https:// URL without spaces, quotes or shell characters" ;;
+        esac
+        shift ;;
+    -h|--help) cmd=help ;;
     -*) die "unknown option $1" ;;
-    *) args="$args $1" ;;
+    *) if [ -z "$cmd" ]; then cmd=$1; else args+=("$1"); fi ;;
     esac
     shift
 done
-# shellcheck disable=SC2086
-set -- $args
-case "$cmd" in
-menu) menu ;;
-install) cmd_install ;;
-boot) cmd_boot "$@" ;;
-cancel) cmd_cancel ;;
-status) cmd_status ;;
-restore) cmd_restore "$@" ;;
-uninstall) cmd_uninstall ;;
--h|--help|help) sed -n '2,20p' "$0" ;;
+set -- "${args[@]+"${args[@]}"}"
+noargs() { [ $# = 0 ] || die "unexpected argument: $1"; }
+case "${cmd:-menu}" in
+menu) noargs "$@"; menu ;;
+install) noargs "$@"; cmd_install ;;
+boot) [ $# -le 1 ] || die "usage: $0 boot debian|dsm"; cmd_boot "$@" ;;
+cancel) noargs "$@"; cmd_cancel ;;
+status) noargs "$@"; cmd_status ;;
+restore) [ $# -le 1 ] || die "usage: $0 restore FILE"; cmd_restore "$@" ;;
+uninstall) noargs "$@"; cmd_uninstall ;;
+help) sed -n '2,20p' "$0" ;;
 *) die "unknown command $cmd (install, boot, cancel, status, restore, uninstall)" ;;
 esac
