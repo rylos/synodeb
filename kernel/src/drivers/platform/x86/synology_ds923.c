@@ -804,8 +804,8 @@ static struct platform_driver ds923_driver = {
 static const struct dmi_system_id ds923_dmi[] = {
 	{
 		.matches = {
-			DMI_MATCH(DMI_SYS_VENDOR, "Synology Inc."),
-			DMI_MATCH(DMI_PRODUCT_NAME, "DS923+"),
+			DMI_EXACT_MATCH(DMI_SYS_VENDOR, "Synology Inc."),
+			DMI_EXACT_MATCH(DMI_PRODUCT_NAME, "DS923+"),
 		},
 	},
 	{ }

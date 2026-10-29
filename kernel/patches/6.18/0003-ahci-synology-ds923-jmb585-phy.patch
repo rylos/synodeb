@@ -21,8 +21,8 @@ index d287c84..6307b45 100644
 +static const struct dmi_system_id synology_ds923_dmi[] = {
 +	{
 +		.matches = {
-+			DMI_MATCH(DMI_SYS_VENDOR, "Synology Inc."),
-+			DMI_MATCH(DMI_PRODUCT_NAME, "DS923+"),
++			DMI_EXACT_MATCH(DMI_SYS_VENDOR, "Synology Inc."),
++			DMI_EXACT_MATCH(DMI_PRODUCT_NAME, "DS923+"),
 +		},
 +	},
 +	{ }
