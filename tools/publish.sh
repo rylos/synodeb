@@ -176,7 +176,12 @@ fi
 if [ "$SKIP_INSTALLER" != 1 ]; then
     rm -rf $P/installer/$KREL; mkdir -p $P/installer/$KREL
     cp /work/build/out/installer/{vmlinuz,installer.img,SHA256SUMS,VERSION} $P/installer/$KREL/
-    ls $P/installer | sort -V | head -n -2 | while read -r d; do rm -rf "$P/installer/$d"; done
+    # kept: this installer and the one synodeb-setup.sh pointed to so far (copies of the old
+    # script still download it); the others go
+    for d in "$P"/installer/*/; do
+        d=$(basename "$d")
+        [ "$d" = "$KREL" ] || [ "installer/$d" = "$PREV_INSTALLER" ] || rm -rf "${P:?}/installer/$d"
+    done
 fi
 touch $P/.nojekyll
 chown -R $HOSTUID:$HOSTUID $P $NEW
@@ -184,6 +189,7 @@ chown -R $HOSTUID:$HOSTUID $P $NEW
 docker run --rm -v "$ROOT":/work -v "$GNUPG":/gnupg:ro -e KREL="$KREL" -e PKGVER="$PKGVER" \
     -e PKGCOMMIT="$PKGCOMMIT" -e PKGEPOCH="$PKGEPOCH" -e PKGYEARS="$PKGYEARS" \
     -e KEY="$KEY" -e ARCHIVE_KEY="$ARCHIVE_KEY" \
+    -e PREV_INSTALLER="$(sed -n 's/^INSTALLER_DIR=//p' "$ROOT/synodeb-setup.sh")" \
     -e KDEBVER="$KPKGVER" -e SERIES="$SERIES" -e HOSTUID="$(id -u)" -e SKIP_INSTALLER="${SKIP_INSTALLER:-0}" \
     debian:trixie bash -euo pipefail -c "$SCRIPT"
 rm -f "$ROOT/build/synology-ds923.tar"
