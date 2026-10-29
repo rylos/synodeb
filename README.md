@@ -42,7 +42,7 @@ ideas go to the [discussions](https://github.com/rylos/synodeb/discussions).
 | **M.2** | both NVMe slots, with the DSM power limit and APST power saving |
 | **Network** | both onboard 1 GbE ports; the optional E10G22-T1-Mini 10 GbE card |
 | **Front panel** | power and status LEDs, beeper, power button (clean shutdown), reset button |
-| **Fans** | the DSM fan curves (temperature of CPU and disks), speed monitoring, fan failure alerts |
+| **Fans** | the DSM fan curves (temperatures of CPU, disks, NVMe drives and network controllers), speed monitoring, fan failure alerts |
 | **Power** | power off and reboot through the microcontroller, power on after an AC loss, scheduled power on (RTC alarm) |
 | **UPS** | USB UPS through NUT, with a DSM-like Safe Mode and automatic restart when power is back; optional network UPS server |
 | **Watchdog** | hardware watchdog (ACPI WDAT); automatic reboot after a kernel panic |
@@ -74,7 +74,7 @@ administrator account. The installer downloads Debian from the internet.
 4. **Connect** with the command and password the script printed:
 
    ```sh
-   ssh installer@192.168.1.20
+   ssh installer@192.0.2.20
    ```
 
    Choose *Start installer* and follow the Debian installer. In *Partition disks* select
@@ -94,9 +94,13 @@ DSM lives on its own disks (a small RAID1 system partition on every DSM disk) an
 synodeb never changes DSM: it only adds its boot entries and files to the DOM.
 
 To keep DSM, install Debian **on a disk DSM does not use**: an empty disk in a free bay, or an
-NVMe drive that is not part of a DSM volume. In the installer's *Partition disks* step choose
-*Manual* or *Guided – use entire disk* on that disk only, and leave the DSM disks as they are.
-The installer never assembles the DSM RAID arrays, so they cannot be changed by accident.
+NVMe drive that is not part of a DSM volume. An NVMe drive used as an **SSD cache** in DSM is
+part of a volume too: remove the cache in DSM first (*Storage Manager*), because a read-write
+cache holds data of the volume that is lost when the drive is erased. In the installer's
+*Partition disks* step choose *Manual* or *Guided – use entire disk* on that disk only, and
+leave the DSM disks as they are. The installer does not assemble the DSM RAID arrays, but it
+still lists the DSM disks: check the size and model of the disk you pick, because whatever is
+selected there is erased.
 
 To use the DSM disks for Debian instead, just select them in the partitioner and let it erase
 them: DSM and its data on those disks are gone.
@@ -145,7 +149,7 @@ and compared. If a write fails, the DOM backup is written back automatically.
 
 | command | |
 |---|---|
-| `synohwd status` | temperatures, fans, bays, LEDs |
+| `synohwd status` | fan duty and speeds, temperatures, bays, recent events |
 | `synodeb-dom status` | boot entries and kernels on the DOM |
 | `synodeb-dom default debian\|debian-old\|dsm` | default boot entry |
 | `synodeb-ups status` | UPS and Safe Mode |
@@ -153,7 +157,8 @@ and compared. If a write fails, the DOM backup is written back automatically.
 
 Configuration:
 
-- `/etc/synohwd.toml`: fan curves, beeper, power on after AC loss, Wake-on-LAN.
+- `/etc/synohwd.toml`: fan mode (the DSM quiet or cool curve, or full speed) and minimum fan
+  duty, beeper, disk LEDs, power on after AC loss, Wake-on-LAN. The curves themselves are fixed.
 - `/etc/synodeb/notify.conf`: notifications (SMTP, Telegram, ntfy). Nothing is sent until a
   channel is configured.
 - `/etc/synodeb/ups.conf`: UPS behaviour, see [UPS](#ups).
@@ -170,7 +175,7 @@ and reboots by itself when mains power is back.
   addresses in `/etc/synodeb/ups.conf`, set the password of the NUT user `monuser` and apply:
 
   ```sh
-  sudo nano /etc/synodeb/ups.conf          # NETWORK_CLIENTS="192.168.1.10 192.168.1.11"
+  sudo nano /etc/synodeb/ups.conf          # NETWORK_CLIENTS="192.0.2.10 192.0.2.11"
   sudo synodeb-ups passwd                  # password of monuser (e.g. the one DSM used)
   sudo synodeb-ups setup --keep-password
   sudo systemctl restart synodeb-nut-firewall nut-server
@@ -197,7 +202,7 @@ signatures are checked but not enforced, so modules built locally load.
 
 | Metapackage | Series | |
 |---|---|---|
-| `linux-image-ds923-longterm` | longterm (6.18.y), fixes until December 2028 | **default**, also installed as `linux-image-ds923` |
+| `linux-image-ds923-longterm` | longterm (6.18.y), projected end of life December 2028 | **default**, also installed as `linux-image-ds923` |
 | `linux-image-ds923-stable` | the newest stable branch (7.3.y, then 7.4.y…) | newer features, each branch maintained for a few months only |
 
 To follow the stable series: `sudo apt install linux-image-ds923-stable` (plus
@@ -251,13 +256,19 @@ tests/run-test-setup.sh DOM.img   # synodeb-setup.sh against a copy of a DOM ima
 
 Each series has its `kernel/<series>/VERSION` (upstream version and ABI); patches and Debian
 configuration are per branch, in `kernel/patches/<x.y>` and `kernel/config-debian-<x.y>`.
+`tools/publish.sh` builds `synology-ds923` from the committed tree (`git archive HEAD`), not
+from the working tree: a change to `pkg/synology-ds923` is published only with a new `Version`
+in its `DEBIAN/control`, and a version already in the repository with a different content is
+refused.
 
 The GitHub workflow [`kernel`](.github/workflows/kernel.yml) checks kernel.org every day for both
 series: when a new release of a branch is out it bumps the version and ABI, builds the kernel,
 adds it to the signed apt repository and commits the new `VERSION`. When kernel.org has a newer
 branch (a new longterm, or the next stable x.y) it only warns: moving to it means porting the
 patches. It can also be started by hand (one series or both, rebuild with a new ABI, rebuild the
-installer, or build only).
+installer, or build only). The workflow [`test`](.github/workflows/test.yml) runs on every push
+and pull request: the synohwd tests, a check that the packaged `synohwd` is the same as
+`synohwd/synohwd.py`, and shellcheck on the shell scripts.
 
 ## Known limitations
 
