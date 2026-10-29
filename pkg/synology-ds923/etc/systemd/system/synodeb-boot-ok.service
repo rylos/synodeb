@@ -1,12 +1,19 @@
 [Unit]
 Description=synodeb: boot succeeded (network and ssh up), Debian becomes the default DOM entry again
+# no default dependencies: multi-user.target would wait for this oneshot (up to 5 minutes
+# without network); the ones it needs are below
+DefaultDependencies=no
+Requires=sysinit.target
 Wants=network-online.target
-After=network-online.target ssh.service ssh.socket
+After=sysinit.target basic.target network-online.target ssh.service ssh.socket
+Conflicts=shutdown.target
+Before=shutdown.target
 
 [Service]
 Type=oneshot
 RemainAfterExit=yes
-# waits up to 5 minutes for network and ssh; if they do not come up, DSM stays for the next boot
+# waits up to 5 minutes for network and ssh; if they do not come up a kernel on trial is not
+# confirmed (DEBIAN_OLD stays the default for the next boot)
 ExecStart=/usr/sbin/synodeb-dom boot-ok --wait
 # "boot completed" notification (also reports if the previous boot ended badly); on a clean
 # shutdown removes the marker /var/lib/synodeb/running

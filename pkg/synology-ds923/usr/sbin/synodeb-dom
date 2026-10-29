@@ -12,24 +12,37 @@
 #   synodeb-dom status
 #
 # The DOM is written only when the kernel or initrd changes (sync), by setup and by the
-# kernel trial below; a normal boot never writes it.
+# kernel trial below; a normal boot never writes it. sync never removes the DEBIAN kernel:
+# it is replaced file by file, and if the new one does not fit nothing is changed.
 #
-# Kernel trial: when sync installs a new kernel as DEBIAN and keeps the previous one as
-# DEBIAN_OLD it leaves EFI/boot/synodeb-trial on synoboot1. The initramfs of the next
-# DEBIAN boot sees the marker and makes DEBIAN_OLD the default, so a kernel that hangs,
-# panics (panic=30) or cannot find its root falls back to the old one on the next boot;
-# boot-ok then makes DEBIAN the default again and removes the marker.
+# Kernel trial: when sync changes the DEBIAN kernel or initrd and DEBIAN_OLD holds the
+# previous kernel, it leaves EFI/boot/synodeb-trial ("armed") on synoboot1. The initramfs of
+# the next DEBIAN boot sees the marker, makes DEBIAN_OLD the default and marks it "trying",
+# so a kernel that hangs, panics (panic=30; softlockup_panic=1, and during the trial
+# hung_task_panic) or cannot find its root falls back to the old one on the next boot;
+# boot-ok then makes DEBIAN the default again and removes the marker. boot-ok also turns
+# softlockup_panic and hung_task_panic off once the boot is over. A kernel that hangs before
+# its initramfs runs, without a soft lockup, is not caught: the Synology GRUB has no one-shot
+# boot entry.
 set -eu
 P1=10EE-589C                               # synoboot1, FAT: EFI/boot/SynoBootLoader.conf
 P2=45e5b07d-4783-4867-a369-f99c0cd1e610    # synoboot2, ext2: DSM zImage/rd.gz + /synodeb
 M=/run/synodeb-dom
 CONF=$M/EFI/boot/SynoBootLoader.conf
 TRIAL=$M/EFI/boot/synodeb-trial
+NEWCONF=/run/synodeb-dom.conf.new
 DEFAULTS=/etc/default/synodeb
+NOTIFY=/usr/lib/synodeb/notify
 BEGIN='### synodeb begin'
 END='### synodeb end'
+FAIL_NOTIFY=                               # notification title for a failure (sync)
 
-die() { echo "synodeb-dom: $*" >&2; exit 1; }
+notify() { [ ! -x $NOTIFY ] || $NOTIFY "$@" >/dev/null 2>&1 || true; }
+die() {
+    echo "synodeb-dom: $*" >&2
+    [ -z "$FAIL_NOTIFY" ] || notify -p high "$FAIL_NOTIFY" "$*"
+    exit 1
+}
 withmount() { # uuid fstype [options]
     dev=$(blkid -U "$1" 2>/dev/null) || die "DOM partition $1 not found"
     mkdir -p $M
@@ -40,6 +53,10 @@ withmount() { # uuid fstype [options]
     trap 'umount $M 2>/dev/null; exit 1' INT TERM HUP PIPE
 }
 unmount() { sync; umount $M; trap - EXIT INT TERM HUP PIPE; }
+lock() { # one synodeb-dom at a time (boot-ok at boot, sync from apt)
+    exec 9>/run/synodeb-dom.lock
+    flock -w 300 9 || die "another synodeb-dom is running"
+}
 kb() { echo $(( ($(stat -L -c %s "$1") + 1023) / 1024 )); }
 avail() { df -Pk $M | awk 'NR == 2 { print $4 }'; }
 # atomic replace of a file on the DOM with the content of stdin, only if it differs
@@ -48,17 +65,46 @@ put() { # file
     if cmp -s "$1.tmp" "$1"; then rm -f "$1.tmp"; return 0; fi
     mv -f "$1.tmp" "$1" || die "renaming $1.tmp failed"
 }
-# index of the menu entry titled $1 in the conf (GRUB counts from 0), empty if absent
-entry() {
-    awk -v t="$1" '/^[[:space:]]*menuentry /{ if (index($0, "\"" t "\"")) { print n; exit } n++ }' "$CONF"
+# Menu entries as GRUB numbers them (from 0): the lines whose first word is "menuentry";
+# the title is the first double-quoted string. synodeb-trial (initramfs) uses the same rule.
+entry() { # title [conf]: index of the entry, empty if absent
+    awk -v t="$1" '/^[ \t]*menuentry / { s = $0; sub(/^[^"]*"/, "", s); sub(/".*/, "", s)
+        if (s == t) { print n + 0; exit } n++ }' "${2:-$CONF}"
 }
-set_default() { # entry title
+title_at() { # index [conf]: title of the entry, empty if absent
+    awk -v d="$1" '/^[ \t]*menuentry / { if (n++ == d) { sub(/^[^"]*"/, ""); sub(/".*/, ""); print; exit } }' "${2:-$CONF}"
+}
+cur_default() { sed -n "s/^set default='\([0-9]*\)'.*/\1/p" "${1:-$CONF}" | head -n 1; }
+default_title() { title_at "$(cur_default)" 2>/dev/null || true; }
+# Make the entry titled $1 the default. The fallback list (GRUB uses it when a file of the
+# default entry is missing) is the other Debian entry, then DSM: SYNOLOGY_2, SYNOLOGY_1.
+set_default() { # title
     n=$(entry "$1")
     [ -n "$n" ] || die "no $1 entry in $CONF"
-    sed "s/^set default='[0-9]*'/set default='$n'/" "$CONF" | put "$CONF"
-    grep -q "^set default='$n'" "$CONF" || die "no 'set default' line in $CONF"
+    case $1 in DEBIAN) o=DEBIAN_OLD ;; DEBIAN_OLD) o=DEBIAN ;; *) o= ;; esac
+    fb=
+    for t in ${o:+$o SYNOLOGY_2 SYNOLOGY_1}; do
+        i=$(entry "$t"); [ -z "$i" ] || fb="${fb:+$fb }$i"
+    done
+    fbx='s/^set fallback=.*/&/'
+    [ -z "$fb" ] || fbx="s/^set fallback=.*/set fallback='$fb'/"
+    sed -e "s/^set default='[0-9]*'/set default='$n'/" -e "$fbx" "$CONF" > $NEWCONF ||
+        die "writing $NEWCONF failed"
+    # check what GRUB will read before writing it
+    if [ "$(cur_default $NEWCONF)" != "$n" ] || [ "$(title_at "$n" $NEWCONF)" != "$1" ]; then
+        rm -f $NEWCONF; die "could not make $1 the default in $CONF (no 'set default' line?)"
+    fi
+    put "$CONF" < $NEWCONF
+    rm -f $NEWCONF
 }
-cur_default() { sed -n "s/^set default='\([0-9]*\)'.*/\1/p" "$CONF" | head -n 1; }
+trial_state() { # none | armed | trying
+    [ -f "$TRIAL" ] || { echo none; return 0; }
+    case "$(head -n 1 "$TRIAL" 2>/dev/null)" in trying*) echo trying ;; *) echo armed ;; esac
+}
+running_entry() { sed -n 's/.*synodeb\.entry=\([A-Z_]*\).*/\1/p' /proc/cmdline 2>/dev/null || true; }
+# entries written before softlockup_panic/raid=noautodetect: setup rewrites them
+outdated() { grep -q "^$BEGIN" "$CONF" && ! grep -q '^[[:space:]]*linux /synodeb/vmlinuz .*raid=noautodetect' "$CONF"; }
+OUTDATED_MSG="the DEBIAN entries lack softlockup_panic=1 raid=noautodetect: rewrite them with 'synodeb-dom setup' (DEBIAN becomes the default)"
 
 same() { cmp -s "/boot/$1-$2" "$S/$1$3"; }            # file version suffix
 pair_same() { same vmlinuz "$1" "$2" && same initrd.img "$1" "$2"; }
@@ -67,20 +113,39 @@ pair_need() { # KB needed to copy the pair (only the files that differ) + margin
     for f in vmlinuz initrd.img; do same $f "$1" "$2" || n=$(( n + $(kb "/boot/$f-$1") )); done
     echo $n
 }
+old_kb() { # KB freed by removing DEBIAN_OLD (a hard link to DEBIAN frees nothing)
+    k=0
+    for f in "$S/vmlinuz.old" "$S/initrd.img.old"; do
+        if [ -f "$f" ] && [ "$(stat -c %h "$f")" = 1 ]; then k=$(( k + $(du -k "$f" | cut -f1) )); fi
+    done
+    echo $k
+}
 drop() { rm -f "$S/vmlinuz$1" "$S/initrd.img$1"; }
-pair() { # version suffix — changed files copied to .tmp, then renamed together
+# Copy a pair: the changed files go to .tmp, then are renamed one right after the other
+# (vmlinuz and initrd.img are two files: GRUB cannot switch them in one step).
+# Returns 1 if the copy failed (nothing replaced), 2 if a rename failed.
+pair() { # version suffix
     for f in vmlinuz initrd.img; do
         same $f "$1" "$2" && continue
-        cp "/boot/$f-$1" "$S/$f$2.tmp" || { rm -f "$S"/*.tmp; die "copying /boot/$f-$1 failed"; }
+        cp "/boot/$f-$1" "$S/$f$2.tmp" ||
+            { echo "synodeb-dom: copying /boot/$f-$1 failed" >&2; rm -f "$S"/*.tmp; return 1; }
     done
     sync
     for f in vmlinuz initrd.img; do
-        [ ! -f "$S/$f$2.tmp" ] || mv -f "$S/$f$2.tmp" "$S/$f$2" || die "rename in $S failed"
+        [ ! -f "$S/$f$2.tmp" ] || mv -f "$S/$f$2.tmp" "$S/$f$2" || { rm -f "$S"/*.tmp; return 2; }
     done
+    sync
 }
 ready() { # network with a global address and ssh running
     systemctl is-active -q ssh.service ssh.socket 2>/dev/null &&
         [ -n "$(ip -o addr show scope global 2>/dev/null)" ]
+}
+# the kernel command line (softlockup_panic=1) and synodeb-trial (hung_task_panic=1) make
+# hangs panic while booting; once the boot is over they only go to the log again
+relax_panics() {
+    for p in softlockup_panic hung_task_panic; do
+        [ ! -w /proc/sys/kernel/$p ] || echo 0 > /proc/sys/kernel/$p 2>/dev/null || true
+    done
 }
 root_spec() {
     ROOT=
@@ -95,8 +160,11 @@ root_spec() {
     [ -n "$ROOT" ] || die "root device unknown: set ROOT in $DEFAULTS"
 }
 # the synodeb block of the conf: DEBIAN and DEBIAN_OLD entries
+#  softlockup_panic=1   a kernel stuck in a soft lockup panics and reboots (panic=30)
+#                       instead of hanging: on a trial boot that is the fallback to DEBIAN_OLD
+#  raid=noautodetect    the kernel never assembles md arrays by itself (DSM's 0.90 md0/md1)
 block() {
-    opts="root=$ROOT ro panic=30 console=tty0 console=uart8250,mmio32,0xfedc9000,115200n8${CMDLINE:+ $CMDLINE}"
+    opts="root=$ROOT ro panic=30 softlockup_panic=1 raid=noautodetect console=tty0 console=uart8250,mmio32,0xfedc9000,115200n8${CMDLINE:+ $CMDLINE}"
     echo "$BEGIN (written by synodeb-dom setup; settings in $DEFAULTS)"
     for e in DEBIAN:vmlinuz:initrd.img DEBIAN_OLD:vmlinuz.old:initrd.img.old; do
         IFS=: read -r title k i <<EOT
@@ -113,69 +181,123 @@ EOT
     echo "$END"
 }
 
-# one synodeb-dom at a time (boot-ok at boot, sync from apt)
-exec 9>/run/synodeb-dom.lock
-flock -w 300 9 || die "another synodeb-dom is running"
+cmd=${1:-status}
+# boot-ok --wait takes the lock only once the network is up: apt (sync) is not held up
+[ "$cmd" = boot-ok ] || lock
 
-case "${1:-status}" in
+case "$cmd" in
 sync)
+    FAIL_NOTIFY="DOM update failed"
     cd /boot
     new=$(readlink vmlinuz 2>/dev/null | sed 's/^vmlinuz-//') || true
     [ -n "$new" ] || die "/boot/vmlinuz is not a symlink to vmlinuz-<version>"
     old=$(readlink vmlinuz.old 2>/dev/null | sed 's/^vmlinuz-//') || true
     [ -n "$old" ] || old=$new
     for f in "vmlinuz-$new" "initrd.img-$new"; do [ -f "$f" ] || die "/boot/$f missing"; done
+    [ -f "vmlinuz-$old" ] && [ -f "initrd.img-$old" ] || {
+        echo "synodeb-dom: previous kernel $old incomplete in /boot: no DEBIAN_OLD" >&2
+        old=$new; }
+    # boot state, read before anything is written
+    withmount $P1 vfat ro
+    d=$(default_title)
+    st=$(trial_state)
+    block=0; ! grep -q "^$BEGIN" "$CONF" 2>/dev/null || block=1
+    ! outdated 2>/dev/null || echo "synodeb-dom: $OUTDATED_MSG" >&2
+    unmount
+
     withmount $P2 ext2
     S=$M/synodeb
     mkdir -p $S
     rm -f $S/*.tmp                       # leftovers of an interrupted copy
-    [ -f "vmlinuz-$old" ] && [ -f "initrd.img-$old" ] || {
-        echo "synodeb-dom: previous kernel $old incomplete in /boot: no DEBIAN_OLD" >&2
-        old=$new; }
-    newkernel=0
-    same vmlinuz "$new" "" || newkernel=1
-    # kernel upgrade: DEBIAN already holds the kernel that becomes DEBIAN_OLD, rename it
-    # instead of copying it again (fewer writes, less space)
-    if [ "$old" != "$new" ] && ! pair_same "$new" "" && pair_same "$old" ""; then
-        drop .old
-        { mv -f $S/vmlinuz $S/vmlinuz.old && mv -f $S/initrd.img $S/initrd.img.old; } || die "rename in $S failed"
-    fi
-    # DEBIAN (current kernel) comes first: if space is short DEBIAN_OLD is dropped
+    changed=0; pair_same "$new" "" || changed=1
+    # .old already holds the kernel that stays DEBIAN_OLD
+    keep=0
+    if [ "$old" != "$new" ] && [ -f $S/vmlinuz.old ] && pair_same "$old" .old; then keep=1; fi
+    # kernel upgrade: DEBIAN holds the kernel that becomes DEBIAN_OLD: hard links, no copy
+    link=0
+    if [ "$old" != "$new" ] && [ $changed = 1 ] && [ $keep = 0 ] && pair_same "$old" ""; then link=1; fi
+    # space, before anything changes: DEBIAN (the new kernel) comes first; a stale .old is
+    # dropped anyway; the kernel kept as DEBIAN_OLD only if it is not the default entry
     need=$(pair_need "$new" "")
-    if [ "$(avail)" -lt "$need" ] && [ -f $S/vmlinuz.old ]; then
-        echo "synodeb-dom: not enough space, dropping DEBIAN_OLD to make room for $new" >&2
-        drop .old; old=$new
+    free=$(avail)
+    stale=0; [ $keep = 1 ] || stale=$(old_kb)
+    if [ "$free" -ge "$need" ] || [ $((free + stale)) -ge "$need" ]; then
+        :
+    elif [ $keep = 1 ] && [ "$d" != DEBIAN_OLD ] && [ $((free + $(old_kb))) -ge "$need" ]; then
+        echo "synodeb-dom: not enough space, dropping DEBIAN_OLD ($old) to make room for $new" >&2
+        keep=0; old=$new
+    else
+        why=; [ $keep = 0 ] || [ "$d" != DEBIAN_OLD ] || why=" (kept: it is the default entry)"
+        die "not enough space on synoboot2 for $new: $need KB needed, $free KB free," \
+            "$(old_kb) KB in DEBIAN_OLD$why; DOM unchanged"
     fi
-    [ "$(avail)" -ge "$need" ] ||
-        die "not enough space on synoboot2: $need KB needed, $(avail) KB free (DOM unchanged)"
-    pair "$new" ""
+    [ $keep = 1 ] || drop .old
+    if [ $link = 1 ]; then
+        { ln -f $S/vmlinuz $S/vmlinuz.old && ln -f $S/initrd.img $S/initrd.img.old; } ||
+            { drop .old; die "linking DEBIAN as DEBIAN_OLD in $S failed; DEBIAN unchanged"; }
+    fi
+    rc=0; pair "$new" "" || rc=$?
+    [ $rc != 1 ] || die "copying $new to $S failed; DEBIAN unchanged"
+    [ $rc = 0 ] || die "renaming in $S failed: DEBIAN may be inconsistent, check 'synodeb-dom status'"
     if [ "$old" = "$new" ]; then
         drop .old                        # one kernel only: no DEBIAN_OLD
-    elif ! pair_same "$old" .old; then
-        drop .old
+    elif [ $keep = 0 ] && [ $link = 0 ]; then
         need=$(pair_need "$old" .old)
-        if [ "$(avail)" -ge "$need" ]; then
-            pair "$old" .old
-        else
+        if [ "$(avail)" -lt "$need" ]; then
             echo "synodeb-dom: not enough space for DEBIAN_OLD ($old): $need KB needed, $(avail) KB free" >&2
+        elif ! pair "$old" .old; then
+            drop .old; echo "synodeb-dom: copying DEBIAN_OLD ($old) failed: no DEBIAN_OLD" >&2
         fi
     fi
     kv() { pv=$(dpkg-query -W -f='${Version}' "linux-image-$1" 2>/dev/null || true); echo "$1${pv:+ $pv}"; }
     kv "$new" | put $S/VERSION
-    if [ -f $S/vmlinuz.old ]; then kv "$old" | put $S/VERSION.old; else rm -f $S/VERSION.old; fi
-    trial=0
-    [ $newkernel = 1 ] && [ -f $S/vmlinuz.old ] && trial=1
+    hasold=0
+    if [ -f $S/vmlinuz.old ]; then hasold=1; kv "$old" | put $S/VERSION.old; else rm -f $S/VERSION.old; fi
     sync
     ls -la $S; df -h $M | tail -1
     unmount
-    if [ $trial = 1 ]; then
-        withmount $P1 vfat
-        if grep -q "^$BEGIN" "$CONF" && [ "$(cur_default)" = "$(entry DEBIAN)" ]; then
-            echo armed | put "$TRIAL"
-            echo "synodeb-dom: new kernel $new: if its first boot fails, DEBIAN_OLD ($old) starts"
-        fi
-        unmount
+
+    # what the new DOM content means for the boot entries
+    act=
+    if [ $hasold = 0 ] && [ "$d" = DEBIAN_OLD ]; then
+        act=debian                       # the default entry has no kernel any more
+    elif [ $changed = 1 ] && [ $block = 1 ]; then
+        case "$d" in
+        DEBIAN) [ $hasold = 0 ] || act=arm ;;
+        DEBIAN_OLD)
+            # a trial boot in progress (this one): the new DEBIAN gets its own trial
+            act=untried
+            if [ "$st" != none ] && [ "$(running_entry)" = DEBIAN ]; then act=rearm; fi ;;
+        *) act=other ;;
+        esac
     fi
+    case $act in
+    debian|arm|rearm)
+        withmount $P1 vfat
+        case $act in
+        debian)
+            set_default DEBIAN
+            rm -f "$TRIAL"
+            echo "synodeb-dom: DEBIAN_OLD is gone: DEBIAN ($new) is the default again" >&2
+            notify -p high "DEBIAN is the default boot entry again" \
+                "DEBIAN_OLD was the default but holds no kernel any more: DEBIAN ($new) boots, without a fallback kernel." ;;
+        arm)
+            echo armed | put "$TRIAL"
+            echo "synodeb-dom: new kernel or initrd $new: if its first boot fails, DEBIAN_OLD ($old) starts" ;;
+        rearm)
+            echo armed | put "$TRIAL"
+            set_default DEBIAN
+            echo "synodeb-dom: DEBIAN changed during a kernel trial: $new is tried at the next boot" ;;
+        esac
+        unmount ;;
+    untried)
+        echo "synodeb-dom: DEBIAN_OLD is the default boot entry: the new DEBIAN ($new) is not tried;" \
+             "to try it: synodeb-dom default debian" >&2
+        notify -p normal "New kernel not tried" \
+            "DEBIAN ($new) was updated, but DEBIAN_OLD is the default boot entry (after a failed kernel trial or 'synodeb-dom default debian-old'), so it is not booted. To try it: synodeb-dom default debian && reboot" ;;
+    other)
+        echo "synodeb-dom: $d is the default boot entry: DEBIAN ($new) starts after 'synodeb-dom default debian'" >&2 ;;
+    esac
     ;;
 setup)
     [ "${2:-}" != --root ] || [ -n "${3:-}" ] || die "usage: synodeb-dom setup [--root SPEC]"
@@ -195,12 +317,7 @@ setup)
             { print }' "$CONF" | sed -e :a -e '/^\n*$/{$d;N;ba' -e '}'
         block
     } | put "$CONF"
-    set_default DEBIAN
-    # fallback: DEBIAN_OLD, then the Synology entries (GRUB tries them if a file is missing)
-    fb="$(entry DEBIAN_OLD) 1 0"
-    if grep -q '^set fallback=' "$CONF"; then
-        sed "s/^set fallback=.*/set fallback='$fb'/" "$CONF" | put "$CONF"
-    fi
+    set_default DEBIAN                   # fallback: DEBIAN_OLD, then the Synology entries
     rm -f "$TRIAL"
     grep -E "^set (default|fallback)" "$CONF"
     unmount
@@ -217,24 +334,32 @@ default)
     withmount $P1 vfat
     set_default $t
     rm -f "$TRIAL"            # explicit choice: no kernel trial in progress
-    grep "^set default" "$CONF"
+    grep -E "^set (default|fallback)" "$CONF"
     unmount
     ;;
 boot-ok)
-    if [ "${2:-}" = --wait ]; then
-        i=0
-        until ready; do
-            [ $i -lt 60 ] || die "network or ssh not up after 5 minutes: boot not confirmed"
-            sleep 5; i=$((i + 1))
-        done
-    else
-        ready || die "network or ssh not up: boot not confirmed"
-    fi
-    entry_now=$(sed -n 's/.*synodeb\.entry=\([A-Z_]*\).*/\1/p' /proc/cmdline)
+    i=0
+    until ready; do
+        if [ "${2:-}" != --wait ] || [ $i -ge 60 ]; then
+            relax_panics
+            die "network or ssh not up${2:+ after 5 minutes}: boot not confirmed"
+        fi
+        sleep 5; i=$((i + 1))
+    done
+    relax_panics
+    lock
+    entry_now=$(running_entry)
     withmount $P1 vfat ro
-    armed=0; [ -f "$TRIAL" ] && armed=1
+    st=$(trial_state)
+    d=$(default_title)
     unmount
-    [ $armed = 1 ] || exit 0            # nothing to confirm: the DOM is not written
+    case $st in
+    none) exit 0 ;;                     # nothing to confirm: the DOM is not written
+    armed)
+        # armed after this boot started: the trial is at the next boot. Armed with DEBIAN_OLD
+        # the default and DEBIAN running: a trial started by an older synodeb-trial.
+        [ "$d" = DEBIAN_OLD ] && [ "$entry_now" = DEBIAN ] || exit 0 ;;
+    esac
     withmount $P1 vfat
     case "$entry_now" in
     DEBIAN)
@@ -243,19 +368,23 @@ boot-ok)
     *)
         echo "synodeb-dom: the new kernel did not boot, running $(uname -r) ($entry_now);" \
              "DEBIAN_OLD stays the default (retry with: synodeb-dom default debian)" >&2
-        [ ! -x /usr/lib/synodeb/notify ] || /usr/lib/synodeb/notify -p high "New kernel failed to boot" \
-            "The DOM fell back to DEBIAN_OLD ($(uname -r)). Retry with: synodeb-dom default debian" || true ;;
+        notify -p high "New kernel failed to boot" \
+            "The DOM fell back to DEBIAN_OLD ($(uname -r)), which stays the default: newer kernels are installed as DEBIAN but not booted until: synodeb-dom default debian" ;;
     esac
     rm -f "$TRIAL"
-    grep "^set default" "$CONF"
+    grep -E "^set (default|fallback)" "$CONF"
     unmount
     ;;
 status)
     withmount $P1 vfat ro
-    d=$(cur_default)
-    echo "default entry: $(awk -v d="$d" '/^[[:space:]]*menuentry /{ if (n++ == d) { sub(/^[^"]*"/, ""); sub(/".*/, ""); print } }' "$CONF") ($d)"
-    [ ! -f "$TRIAL" ] || echo "kernel trial in progress: DEBIAN_OLD starts if the new kernel fails"
+    echo "default entry: $(default_title) ($(cur_default))"
+    sed -n "s/^set fallback='\(.*\)'.*/fallback entries: \1/p" "$CONF"
+    case $(trial_state) in
+    armed) echo "kernel trial armed: if the next DEBIAN boot fails, DEBIAN_OLD starts" ;;
+    trying) echo "kernel trial in progress: DEBIAN_OLD starts if the new kernel fails" ;;
+    esac
     sed -n 's/^ *linux \/synodeb\/vmlinuz \(root=[^ ]*\).*/DEBIAN boots with \1/p' "$CONF"
+    ! outdated || echo "note: $OUTDATED_MSG"
     unmount
     withmount $P2 ext2 ro
     echo "DEBIAN:     $(cat $M/synodeb/VERSION 2>/dev/null || echo '?')"

@@ -3,5 +3,6 @@
 #
 # Root filesystem for the kernel command line (root=...). Empty: taken from /etc/fstab.
 ROOT=""
-# Extra kernel parameters, e.g. "synology_ds923.spinup_delay=8".
+# Extra kernel parameters, e.g. "synology_ds923.spinup_delay=8". Always present: root= ro
+# panic=30 softlockup_panic=1 raid=noautodetect and the consoles (see synodeb-dom).
 CMDLINE=""

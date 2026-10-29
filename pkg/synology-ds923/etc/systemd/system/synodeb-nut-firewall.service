@@ -1,6 +1,14 @@
 [Unit]
 Description=synodeb: upsd reachable only from localhost and NETWORK_CLIENTS (nftables table inet synodeb_nut)
 DefaultDependencies=no
+# after nftables.service, whose "flush ruleset" deletes this table too: stopped, restarted
+# and reloaded with it. With NETWORK_CLIENTS nut-server is bound to this unit (BindsTo=,
+# drop-in written by 'synodeb-ups setup'): if it fails or stops, upsd stops.
+# Without nft the unit fails only if upsd listens on the network (no ConditionPathExists:
+# a skipped unit would hide it).
+After=nftables.service
+PartOf=nftables.service
+ReloadPropagatedFrom=nftables.service
 Before=network-pre.target nut-server.service shutdown.target
 Wants=network-pre.target
 Conflicts=shutdown.target
@@ -11,6 +19,7 @@ IgnoreOnIsolate=yes
 Type=oneshot
 RemainAfterExit=yes
 ExecStart=/usr/sbin/synodeb-ups firewall
+ExecReload=/usr/sbin/synodeb-ups firewall
 ExecStop=-/usr/sbin/nft delete table inet synodeb_nut
 
 [Install]

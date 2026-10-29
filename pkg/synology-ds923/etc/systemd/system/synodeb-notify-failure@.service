@@ -1,7 +1,12 @@
 [Unit]
 Description=synodeb: notify the failure of %i
 DefaultDependencies=no
+Wants=network-online.target
 After=network-online.target
+# not while shutting down: without network the notification could not go out anyway and
+# would only delay the shutdown
+Conflicts=shutdown.target
+Before=shutdown.target
 
 [Service]
 Type=oneshot

@@ -2,9 +2,9 @@
 # synodeb-ups — UPS handling like DSM 7.4.1: when the battery runs low the NAS enters
 # "Safe Mode" instead of powering off.
 #
-#   synodeb-ups setup [--keep-password]   install the NUT configuration (/etc/nut) from the
-#                                         templates in /usr/share/synodeb/nut; random monuser
-#                                         password (or the one already set, with --keep-password)
+#   synodeb-ups setup [--keep-password] [--no-stop]   NUT configuration (/etc/nut) from the
+#                                         templates in /usr/share/synodeb/nut; random monuser password
+#                                         (--keep-password: the one set); no USB UPS: NUT disabled
 #   synodeb-ups passwd                    ask for the monuser password (e.g. Home Assistant: the
 #                                         same as DSM) and write it to upsd.users and upsmon.conf
 #   synodeb-ups status                    UPS and Safe Mode status
@@ -23,7 +23,9 @@
 #   microcontroller turns the NAS back on ('q', restore after power loss, sent by synohwd).
 #
 # Configuration: /etc/synodeb/ups.conf (DRYRUN, NOCOMM_SAFEMODE, SAFESHUTDOWN, UPS,
-# NETWORK_CLIENTS). Without NETWORK_CLIENTS upsd only listens on localhost.
+# NETWORK_CLIENTS). Without NETWORK_CLIENTS upsd only listens on localhost; with it upsd
+# listens on the network and runs only while the nftables rules of synodeb-nut-firewall are
+# loaded (BindsTo= in the drop-in written by setup): no firewall, no upsd.
 set -u
 PATH=/usr/sbin:/usr/bin:/sbin:/bin
 CONF=${SYNODEB_UPS_CONF:-/etc/synodeb/ups.conf}
@@ -37,6 +39,7 @@ REBOOTING=$RUN/rebooting
 # /usr/lib/systemd/system-shutdown/nutshutdown powers the UPS off (upsdrvctl shutdown). DSM does
 # not (ups_safeshutdown=no) and this model has no shutdown.return: always remove it.
 KILLPOWER=/run/nut/killpower
+NETBIND=/etc/systemd/system/nut-server.service.d/synodeb-network-clients.conf
 
 UPS=ups@localhost
 DRYRUN=0                    # 1: log what would be done, no isolate/umount/standby/reboot
@@ -63,6 +66,7 @@ status() {
     esac
 }
 var() { upsc "$UPS" "$1" 2>/dev/null; }
+fsd() { case " $(var ups.status) " in *" FSD "*) return 0 ;; esac; return 1; }  # forced shutdown
 statelog() {
     log "$1: status=$(var ups.status) charge=$(var battery.charge)% runtime=$(var battery.runtime)s load=$(var ups.load)%"
 }
@@ -78,7 +82,8 @@ safemode() { # $1 = reason
     while [ "$(systemctl is-system-running 2>/dev/null)" = starting ] && [ $i -lt 150 ]; do
         sleep 2; i=$((i + 1))
     done
-    if [ "$(status)" = OL ]; then
+    # FSD (forced shutdown, e.g. "OL FSD" after 'upsmon -c fsd'): Safe Mode even on mains power
+    if [ "$(status)" = OL ] && ! fsd; then
         log "UPS back online: no Safe Mode ($1)"
         return 0
     fi
@@ -185,19 +190,40 @@ current_password() {
 }
 
 setup() {
+    keep='' nostop=''
+    for a in "$@"; do
+        case $a in
+        --keep-password) keep=1 ;;
+        --no-stop) nostop=1 ;;
+        *) echo "usage: synodeb-ups setup [--keep-password] [--no-stop]" >&2; exit 2 ;;
+        esac
+    done
     [ -d /etc/nut ] || { echo "/etc/nut missing: install nut-server and nut-client" >&2; exit 1; }
+    cl=$(clients) || exit 1
+    if [ -n "$cl" ] && ! command -v nft >/dev/null; then
+        echo "synodeb-ups: NETWORK_CLIENTS needs nftables (apt install nftables): /etc/nut not changed" >&2
+        exit 1
+    fi
     pw=
-    [ "${1:-}" = --keep-password ] && pw=$(current_password)
+    [ -z "$keep" ] || pw=$(current_password)
     case $pw in ''|__PASSWORD__) pw=$(head -c 18 /dev/urandom | base64 | tr -d '/+=') ;; esac
     [ -f /etc/nut/.synodeb-orig.tar ] || tar -C /etc/nut -cf /etc/nut/.synodeb-orig.tar . 2>/dev/null || true
     for f in nut.conf ups.conf upsd.conf upssched.conf; do
         install -m 640 -o root -g nut "$TPL/$f" "/etc/nut/$f" 2>/dev/null || install -m 640 "$TPL/$f" "/etc/nut/$f"
     done
     subst_password "$pw"
-    # network clients (NETWORK_CLIENTS): upsd listens on all addresses, nftables does the filtering
-    if [ -n "$NETWORK_CLIENTS" ]; then
+    # network clients (NETWORK_CLIENTS): upsd listens on all addresses, nftables does the
+    # filtering, and nut-server is bound to the firewall unit (fail closed)
+    if [ -n "$cl" ]; then
+        mkdir -p "${NETBIND%/*}"
+        printf '%s\n' "# written by 'synodeb-ups setup' (NETWORK_CLIENTS in $CONF): upsd listens on" \
+            "# the network, so it runs only while the nftables rules of synodeb-nut-firewall are loaded" \
+            '[Unit]' 'BindsTo=synodeb-nut-firewall.service' 'After=synodeb-nut-firewall.service' > "$NETBIND"
         printf '%s\n' 'LISTEN 0.0.0.0 3493' 'LISTEN :: 3493' >> /etc/nut/upsd.conf
+    else
+        rm -f "$NETBIND"
     fi
+    [ ! -d /run/systemd/system ] || systemctl daemon-reload || true
     echo "NUT configuration installed in /etc/nut (originals in /etc/nut/.synodeb-orig.tar)"
     if u=$(usb_ups); then
         systemctl enable nut.target nut-driver.target nut-server.service nut-monitor.service \
@@ -208,7 +234,7 @@ setup() {
         # without a UPS the NUT driver would fail and restart forever (and notify each time)
         systemctl disable nut.target nut-driver.target nut-server.service nut-monitor.service \
             nut-driver-enumerator.path nut-driver-enumerator.service >/dev/null 2>&1 || true
-        [ ! -d /run/systemd/system ] || systemctl stop nut.target nut-driver.target 'nut-driver@*' \
+        [ -n "$nostop" ] || [ ! -d /run/systemd/system ] || systemctl stop nut.target nut-driver.target 'nut-driver@*' \
             nut-server.service nut-monitor.service >/dev/null 2>&1 || true
         echo "no USB UPS connected: NUT stays off; connect the UPS and run 'synodeb-ups setup --keep-password'"
     fi
@@ -229,13 +255,49 @@ usb_ups() {
     return 1
 }
 
+# NETWORK_CLIENTS checked: "4 ADDRESS" / "6 ADDRESS" lines (an address or a network),
+# failure with a message for anything else
+clients() {
+    set -f
+    # shellcheck disable=SC2086
+    python3 -I -c '
+import ipaddress, sys
+for a in sys.argv[1:]:
+    try:
+        n = ipaddress.ip_network(a, strict=False)
+    except ValueError:
+        sys.exit("synodeb-ups: invalid address in NETWORK_CLIENTS: " + a)
+    print(n.version, n.network_address if n.num_addresses == 1 else n)
+' $NETWORK_CLIENTS
+    r=$?
+    set +f
+    return $r
+}
+# upsd.conf has a LISTEN on an address other than localhost
+listens_network() {
+    awk '$1 == "LISTEN" && $2 != "127.0.0.1" && $2 != "::1" && $2 != "localhost" { f = 1 } END { exit !f }' \
+        /etc/nut/upsd.conf 2>/dev/null
+}
+
 # nftables rules: upsd (3493) only from localhost and NETWORK_CLIENTS. Separate table,
-# does not touch Docker's rules or /etc/nftables.conf.
+# does not touch Docker's rules or /etc/nftables.conf. Fails (and upsd, bound to this
+# unit with NETWORK_CLIENTS, does not run) on an invalid NETWORK_CLIENTS or without nft
+# while upsd listens on the network; upsd on localhost only and no nft: nothing to filter.
 firewall() {
+    cl=$(clients) || return 1
+    if ! command -v nft >/dev/null; then
+        if [ -n "$cl" ] || listens_network; then
+            echo "synodeb-ups: nft missing (apt install nftables): upsd must not listen on the network unfiltered" >&2
+            return 1
+        fi
+        return 0
+    fi
     v4=127.0.0.1 v6=::1
-    for ip in $NETWORK_CLIENTS; do
-        case $ip in *:*) v6="$v6, $ip" ;; *) v4="$v4, $ip" ;; esac
-    done
+    while read -r fam ip; do
+        case $fam in 6) v6="$v6, $ip" ;; 4) v4="$v4, $ip" ;; esac
+    done <<EOT
+$cl
+EOT
     nft -f - <<EOT
 table inet synodeb_nut
 delete table inet synodeb_nut
@@ -254,7 +316,8 @@ passwd_cmd() {
     printf 'monuser password (the same as the network clients, e.g. the one used under DSM): ' >&2
     stty -echo 2>/dev/null; read -r pw; stty echo 2>/dev/null; echo >&2
     [ -n "$pw" ] || { echo "empty password" >&2; exit 1; }
-    case $pw in *[[:space:]\"]*) echo "spaces and quotes not allowed" >&2; exit 1 ;; esac
+    # upsd.users / upsmon.conf: '#' starts a comment, a backslash escapes, blanks split
+    case $pw in *[[:space:]\"\\#]*) echo "spaces, quotes, '#' and backslashes not allowed" >&2; exit 1 ;; esac
     subst_password "$pw"
     systemctl try-restart nut-server.service nut-monitor.service || true
     echo "password updated in /etc/nut/upsd.users and /etc/nut/upsmon.conf"

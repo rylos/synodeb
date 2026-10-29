@@ -21,9 +21,28 @@ while getopts p:f o; do
 done
 shift $((OPTIND - 1))
 [ $# -ge 1 ] || { sed -n '3,6p' "$0" >&2; exit 2; }
-title=$1
+# valid UTF-8 only (a cut multibyte character at the end is dropped): Telegram rejects the rest
+utf8() { if command -v iconv >/dev/null; then iconv -c -f UTF-8 -t UTF-8 2>/dev/null; else cat; fi; }
+# the title goes into a mail header: one line
+title=$(printf '%s' "$1" | tr '\r\n\t' '   ' | head -c 200 | utf8)
 msg=${2:-}
-[ "$msg" != - ] || msg=$(head -c 3500)
+if [ "$msg" = - ]; then msg=$(head -c 3500 | utf8); else msg=$(printf '%s' "$msg" | head -c 3500 | utf8); fi
+
+# a header value: RFC 2047 encoded-words if it is not plain ASCII
+hdr() {
+    if printf '%s' "$1" | LC_ALL=C grep -q '[^ -~]'; then
+        python3 -I -c 'import sys; from email.header import Header; print(Header(sys.argv[1], "utf-8").encode())' "$1" 2>/dev/null ||
+            printf '%s' "$1"
+    else
+        printf '%s' "$1"
+    fi
+}
+# a double-quoted curl config value: secrets (tokens, URLs with a token) go to curl on
+# stdin (-K -), not on its command line, which every user can read in /proc
+cq() {
+    printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' -e 's/\r/\\r/g' -e 's/\t/\\t/g' |
+        awk 'NR > 1 { printf "\\n" } { printf "%s", $0 }'
+}
 
 rank() { case $1 in low) echo 1 ;; high) echo 3 ;; urgent) echo 4 ;; *) echo 2 ;; esac; }
 
@@ -68,7 +87,7 @@ if [ -n "$EMAIL_TO" ] && [ -n "$SMTP_HOST" ]; then
     fi
     # shellcheck disable=SC2086
     if printf 'From: %s\nTo: %s\nSubject: %s\nX-Priority: %s\nContent-Type: text/plain; charset=UTF-8\n\n%s\n\n-- \nsynodeb %s\n' \
-        "${EMAIL_FROM:-root@$host}" "$EMAIL_TO" "$subject" "$prio" "$msg" "$(date '+%F %T')" |
+        "${EMAIL_FROM:-root@$host}" "$EMAIL_TO" "$(hdr "$subject")" "$prio" "$msg" "$(date '+%F %T')" |
         msmtp "$@" -- $EMAIL_TO; then
         ok=1
     else
@@ -78,7 +97,8 @@ fi
 
 if [ -n "$TELEGRAM_TOKEN" ] && [ -n "$TELEGRAM_CHAT_ID" ]; then
     tried=1
-    if curl -fsS --max-time 20 -o /dev/null "https://api.telegram.org/bot$TELEGRAM_TOKEN/sendMessage" \
+    if printf 'url = "%s"\n' "$(cq "https://api.telegram.org/bot$TELEGRAM_TOKEN/sendMessage")" |
+        curl -K - -fsS --max-time 20 -o /dev/null \
         --data-urlencode "chat_id=$TELEGRAM_CHAT_ID" \
         --data-urlencode "text=$subject${msg:+
 $msg}" \
@@ -92,16 +112,20 @@ fi
 if [ -n "$NTFY_URL" ]; then
     tried=1
     np=$(case $prio in low) echo 2 ;; high) echo 4 ;; urgent) echo 5 ;; *) echo 3 ;; esac)
-    # title and priority as URL parameters: HTTP headers do not handle UTF-8
-    if printf '%s' "${msg:-$title}" | curl -fsS --max-time 20 -o /dev/null \
-        --url-query "title=$subject" --url-query "priority=$np" --url-query "tags=synodeb" \
-        ${NTFY_TOKEN:+-H "Authorization: Bearer $NTFY_TOKEN"} \
-        --data-binary @- "$NTFY_URL"; then
+    # title and priority as URL parameters: HTTP headers do not handle UTF-8. The URL (the
+    # topic name is the secret of a public server), the token and the message go in the config.
+    if {
+        printf 'url = "%s"\n' "$(cq "$NTFY_URL")"
+        [ -z "$NTFY_TOKEN" ] || printf 'header = "%s"\n' "$(cq "Authorization: Bearer $NTFY_TOKEN")"
+        printf 'data-raw = "%s"\n' "$(cq "${msg:-$title}")"
+    } | curl -K - -fsS --max-time 20 -o /dev/null \
+        --url-query "title=$subject" --url-query "priority=$np" --url-query "tags=synodeb"; then
         ok=1
     else
         logger -t synodeb-notify -- "ntfy failed" 2>/dev/null || true
     fi
 fi
 
-[ "$ok" = 1 ] && : > "$STATE/$key" 2>/dev/null
+# touch, not ": >": a failed redirection of a special builtin would exit the shell
+[ "$ok" = 0 ] || touch "$STATE/$key" 2>/dev/null || true
 [ "$tried" = 0 ] || [ "$ok" = 1 ]

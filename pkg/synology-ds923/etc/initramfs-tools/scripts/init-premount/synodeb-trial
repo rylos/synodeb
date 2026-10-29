@@ -1,9 +1,10 @@
 #!/bin/sh
 # Kernel trial (see synodeb-dom): when the DEBIAN entry boots while EFI/boot/synodeb-trial
-# is on the DOM, DEBIAN_OLD becomes the default before anything can go wrong. If this boot
-# hangs or panics (panic=30) the next one starts the previous kernel; if it succeeds
-# synodeb-boot-ok.service makes DEBIAN the default again. A normal boot reads the DOM
-# only, and an error here never stops the boot.
+# is on the DOM, DEBIAN_OLD becomes the default (fallback DEBIAN, then DSM) and the marker
+# says "trying" before anything can go wrong; for this boot a task hung for 2 minutes
+# panics too. If this boot hangs or panics (panic=30) the next one starts the previous
+# kernel; if it succeeds synodeb-boot-ok.service makes DEBIAN the default again. A normal
+# boot reads the DOM only, and an error here never stops the boot.
 PREREQ="udev"
 prereqs() { echo "$PREREQ"; }
 case "$1" in prereqs) prereqs; exit 0 ;; esac
@@ -17,15 +18,29 @@ TRIAL=$MNT/EFI/boot/synodeb-trial
 
 modprobe vfat 2>/dev/null; modprobe nls_cp437 2>/dev/null; modprobe nls_ascii 2>/dev/null
 
-# index of the DEBIAN_OLD menu entry (GRUB counts from 0)
-old_index() {
+# Menu entries as GRUB numbers them (from 0): the lines whose first word is "menuentry";
+# the title is the first double-quoted string. Same rule as entry() in synodeb-dom
+# ("read" without IFS= drops the leading blanks).
+index_of() { # title conf: index of the entry, empty if absent
     n=0
-    while IFS= read -r l; do
+    while read -r l; do
         case "$l" in
-        *menuentry\ \"DEBIAN_OLD\"*) echo $n; return ;;
-        *menuentry\ *) n=$((n + 1)) ;;
+        menuentry\ *)
+            t=${l#*\"}; t=${t%%\"*}
+            [ "$t" = "$1" ] && { echo $n; return 0; }
+            n=$((n + 1)) ;;
         esac
-    done < "$CONF"
+    done < "$2"
+}
+title_at() { # index conf
+    n=0
+    while read -r l; do
+        case "$l" in
+        menuentry\ *)
+            [ $n = "$1" ] && { t=${l#*\"}; echo "${t%%\"*}"; return 0; }
+            n=$((n + 1)) ;;
+        esac
+    done < "$2"
 }
 
 i=0
@@ -41,12 +56,20 @@ if [ ! -f "$TRIAL" ]; then
     umount $MNT
     exit 0
 fi
-n=$(old_index)
 umount $MNT
-[ -n "$n" ] || exit 0
 mount -t vfat "$dev" $MNT 2>/dev/null || exit 0
-if sed "s/^set default='[0-9]*'/set default='$n'/" "$CONF" > "$CONF.tmp" &&
-   grep -q "^set default='$n'" "$CONF.tmp" && mv -f "$CONF.tmp" "$CONF"; then
+o=$(index_of DEBIAN_OLD "$CONF")
+fb=
+for t in DEBIAN SYNOLOGY_2 SYNOLOGY_1; do
+    x=$(index_of $t "$CONF"); [ -z "$x" ] || fb="${fb:+$fb }$x"
+done
+fbx='s/^set fallback=.*/&/'
+[ -z "$fb" ] || fbx="s/^set fallback=.*/set fallback='$fb'/"
+# the new conf is checked (default index, title of that entry) before it replaces the old one
+if [ -n "$o" ] && sed -e "s/^set default='[0-9]*'/set default='$o'/" -e "$fbx" "$CONF" > "$CONF.tmp" &&
+   grep -q "^set default='$o'" "$CONF.tmp" && [ "$(title_at "$o" "$CONF.tmp")" = DEBIAN_OLD ] &&
+   mv -f "$CONF.tmp" "$CONF" && echo trying > "$TRIAL"; then
+    [ ! -w /proc/sys/kernel/hung_task_panic ] || echo 1 > /proc/sys/kernel/hung_task_panic
     log_success_msg "synodeb: new kernel on trial, DEBIAN_OLD is the default until the boot is confirmed"
 else
     log_warning_msg "synodeb: could not arm the kernel trial on the DOM"
