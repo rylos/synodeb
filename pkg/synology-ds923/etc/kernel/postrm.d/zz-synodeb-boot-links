@@ -5,6 +5,7 @@
 # the system follows (longterm or stable) and the previous one.
 # No set -e: a missing file must not stop the rest (symlinks and copy to the DOM).
 set -u
+[ -x /usr/lib/synodeb/boot-kernels ] || exit 0     # package removed, this conffile left
 cd /boot || exit 0
 sel=$(/usr/lib/synodeb/boot-kernels)
 new=${sel% *}

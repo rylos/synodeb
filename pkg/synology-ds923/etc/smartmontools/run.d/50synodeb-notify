@@ -2,6 +2,7 @@
 # smartd -M exec /usr/share/smartmontools/smartd-runner (Debian default in /etc/smartd.conf)
 # runs the scripts in this directory: $1 = file with the full message, SMART_* variables.
 # Works for SATA disks and NVMe drives (DEVICESCAN finds both).
+[ -x /usr/lib/synodeb/notify ] || exit 0     # package removed, this conffile left
 case "${SMART_FAILTYPE:-}" in
 EmailTest) prio=low ;;
 Health|FailedHealthCheck|CurrentPendingSector|OfflineUncorrectableSector|FailedReadSmartData) prio=urgent ;;

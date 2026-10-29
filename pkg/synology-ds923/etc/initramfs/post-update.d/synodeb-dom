@@ -3,6 +3,7 @@
 # If it is the kernel of a DOM entry (/boot/vmlinuz or /boot/vmlinuz.old), copy it to the DOM again.
 # Never makes update-initramfs fail.
 ver=${1:-}
+[ -x /usr/sbin/synodeb-dom ] || exit 0     # package removed, this conffile left
 ischroot -t 2>/dev/null && exit 0
 blkid -U 45e5b07d-4783-4867-a369-f99c0cd1e610 >/dev/null 2>&1 || exit 0
 cur=$(readlink /boot/vmlinuz 2>/dev/null | sed 's/^vmlinuz-//')

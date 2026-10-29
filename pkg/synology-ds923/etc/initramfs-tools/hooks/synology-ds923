@@ -44,7 +44,10 @@ rm -f "$DESTDIR/etc/mdadm/mdadm.conf.tmp"
 # every disk: the initramfs ("mdadm --assemble --scan") would then also assemble arrays of
 # another system, such as DSM's, in read-write mode. The system file is used instead: the
 # installer writes ARRAY lines for this system's arrays plus "AUTO -all".
-if [ -f /etc/mdadm/mdadm.conf ] && [ -d "$DESTDIR/etc/mdadm" ]; then
-    cp /etc/mdadm/mdadm.conf "$DESTDIR/etc/mdadm/mdadm.conf"
+if [ -d "$DESTDIR/etc/mdadm" ]; then
+    # neither ARRAY lines nor "AUTO -all": every array found would be assembled
+    grep -q -e '^[[:space:]]*ARRAY[[:space:]]' -e '^[[:space:]]*AUTO[[:space:]].*-all' /etc/mdadm/mdadm.conf 2>/dev/null ||
+        echo "W: synodeb: /etc/mdadm/mdadm.conf has no ARRAY line: the initramfs may assemble the arrays of other systems (DSM) too" >&2
+    [ ! -f /etc/mdadm/mdadm.conf ] || cp /etc/mdadm/mdadm.conf "$DESTDIR/etc/mdadm/mdadm.conf"
 fi
 exit 0
