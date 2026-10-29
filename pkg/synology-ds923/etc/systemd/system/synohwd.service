@@ -2,9 +2,9 @@
 Description=Synology DS923+ hardware daemon (fan, LEDs, buttons, beep)
 After=systemd-modules-load.service systemd-udevd.service
 Wants=systemd-modules-load.service
-# /dev/synology-up (udev rule with TAG+="systemd" in 60-synology-ds923.rules)
-BindsTo=dev-synology\x2dup.device
-After=dev-synology\x2dup.device
+# no dependency on dev-synology\x2dup.device: without the microcontroller (another machine,
+# driver not loaded) the device job would hold up the boot for 90 s and fail the unit;
+# Restart=always covers a /dev/synology-up that shows up late
 # microcontroller UART in the ACPI tables (absent in QEMU and on other machines)
 ConditionPathExists=/sys/bus/acpi/devices/AMDI0020:01
 # fans and LEDs also in UPS Safe Mode (synodeb-ups-safe.target)
