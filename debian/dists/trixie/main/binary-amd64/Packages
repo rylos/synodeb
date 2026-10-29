@@ -18,6 +18,26 @@ Description: Linux kernel headers for 6.18.59-1-ds923 on amd64
  .
  This is useful for people who need to build external modules
 
+Package: linux-headers-6.18.59-2-ds923
+Architecture: amd64
+Version: 6.18.59-2
+Priority: optional
+Section: kernel
+Source: linux-upstream
+Maintainer: synodeb <synodeb@synodeb>
+Installed-Size: 55383
+Filename: pool/main/linux-headers-6.18.59-2-ds923_6.18.59-2_amd64.deb
+Size: 9448180
+MD5sum: f284658e58bbc8adf57bb0d52f3f243b
+SHA1: 5db2903e18bf9b495123802d8e0374a5e4391ba7
+SHA256: b02f8e1082f56b1ea9a98ee680117810535dc2eb2574057fb5750bfecfdfc6a1
+SHA512: 0c4665369912f161cab16ff0b1edab013c0c5018cbee99904917c242fcfbdca6d4e96611bdda7e76b1a62d5f39e0ed7aebec4469deedc1e17ef702b71c201eba
+Homepage: https://www.kernel.org/
+Description: Linux kernel headers for 6.18.59-2-ds923 on amd64
+ This package provides kernel header files for 6.18.59-2-ds923 on amd64
+ .
+ This is useful for people who need to build external modules
+
 Package: linux-headers-7.3.0-1-ds923
 Architecture: amd64
 Version: 7.3.0-1
@@ -60,17 +80,17 @@ Description: Linux kernel headers for 7.3.0-2-ds923 on amd64
 
 Package: linux-headers-ds923-longterm
 Architecture: amd64
-Version: 6.18.59-1
+Version: 6.18.59-2
 Priority: optional
 Section: kernel
 Maintainer: Marco Ziliani <508111+rylos@users.noreply.github.com>
-Depends: linux-headers-6.18.59-1-ds923 (= 6.18.59-1)
-Filename: pool/main/linux-headers-ds923-longterm_6.18.59-1_amd64.deb
-Size: 816
-MD5sum: 065009d51bfac5c41f5feb6ebd8593a5
-SHA1: 2e320b441920ec182b287ca3787c3796a2304bbc
-SHA256: 13c652fd0437206cba2398a798c69b0dda1d419ac809cf6ca66524262c708858
-SHA512: a49e71cbfb700d17f9b24ff3c509bbfbbfad5e16486889767ac82f89d5bb7d274e37f813da1ea67bc4d317ad04b228d146fc3143a326491685569ca734c9139e
+Depends: linux-headers-6.18.59-2-ds923 (= 6.18.59-2)
+Filename: pool/main/linux-headers-ds923-longterm_6.18.59-2_amd64.deb
+Size: 820
+MD5sum: 70752f6a134c709a13dc5d1d5bb26948
+SHA1: bf89b8bfc65ed5195d64db5ab164e6274a731b61
+SHA256: 24b31acaa9900061e0f41e4c8dc9e6b2c7b0f3dd2e5c475603718ba9646ca796
+SHA512: 592d06eb322ad83131301ad419b8e7e29e45fe340044b148cd46e2c1774bb49c897b921bffbbb4259c82ae29563d60d171801a4aacf2dad628432125e7cf5957
 Description: Linux kernel for the Synology DS923+ (headers, longterm series)
  Depends on the latest synodeb kernel headers package of the longterm series (6.18).
 
@@ -92,17 +112,17 @@ Description: Linux kernel for the Synology DS923+ (headers, stable series)
 
 Package: linux-headers-ds923
 Architecture: amd64
-Version: 1:6.18.59-1
+Version: 1:6.18.59-2
 Priority: optional
 Section: kernel
 Maintainer: Marco Ziliani <508111+rylos@users.noreply.github.com>
-Depends: linux-headers-ds923-longterm (= 6.18.59-1)
-Filename: pool/main/linux-headers-ds923_6.18.59-1_amd64.deb
+Depends: linux-headers-ds923-longterm (= 6.18.59-2)
+Filename: pool/main/linux-headers-ds923_6.18.59-2_amd64.deb
 Size: 832
-MD5sum: fed83e840cdd5d50f5f5c6586b462a33
-SHA1: 9a851e0800aff154340bcefc6146f8166b7c2a43
-SHA256: 4a27e12463c474f5d48c2cc0b942f6c2aa16db7318fbefa2a7b7116ff51b4745
-SHA512: d19ad340062db5d8998d0c74ded24e5f8ec4eb9f94d7c0a872269c80827af5a464586e5a3ef03fa635bba642b9b0530ff514a487a35a81a91729207186a6e2a6
+MD5sum: fad6e80ff85a9f49785f8eaa68791ddf
+SHA1: 1dbc4cbea6ce93cc367b9e9a85948cf039903c33
+SHA256: 627871590ffe2ad185bad7fb610788b495b107fbc8e2569de918955cdb5b56d8
+SHA512: 1085e0c90fe50930bde7862a5f33fc532149b07be3cf81159cb9f11e7e6a7247e41b83b969edb26bdc673c3a9b4235e50021cca73d08a86819ca459029451c6f
 Description: Linux kernel for the Synology DS923+ (headers, default)
  Depends on the synodeb kernel of the longterm series. For the newest stable series
  install linux-headers-ds923-stable instead.
@@ -125,6 +145,25 @@ Homepage: https://www.kernel.org/
 Description: Linux kernel, version 6.18.59-1-ds923
  This package contains the Linux kernel, modules and corresponding other
  files, version: 6.18.59-1-ds923.
+
+Package: linux-image-6.18.59-2-ds923
+Architecture: amd64
+Version: 6.18.59-2
+Priority: optional
+Section: kernel
+Source: linux-upstream
+Maintainer: synodeb <synodeb@synodeb>
+Installed-Size: 58597
+Filename: pool/main/linux-image-6.18.59-2-ds923_6.18.59-2_amd64.deb
+Size: 49101948
+MD5sum: b2aecadc8c58ddefad07129790f33c2a
+SHA1: 6c8bb8f9d7bdde328501c10ff9a5f963f19dd10f
+SHA256: cbe3dc29b35fe80f28730d9501ec07d31ca091e3fbcf0854cd0fa742b369ef0c
+SHA512: 54fc50cc059ec5d2a94a41ccdfc2432a6881dbcff7d01e2223a15d288595dd1be5523dd9417246568d32d5641712b7a0abbdde2683d8332390075291a77a3adc
+Homepage: https://www.kernel.org/
+Description: Linux kernel, version 6.18.59-2-ds923
+ This package contains the Linux kernel, modules and corresponding other
+ files, version: 6.18.59-2-ds923.
 
 Package: linux-image-7.3.0-1-ds923
 Architecture: amd64
@@ -166,17 +205,17 @@ Description: Linux kernel, version 7.3.0-2-ds923
 
 Package: linux-image-ds923-longterm
 Architecture: amd64
-Version: 6.18.59-1
+Version: 6.18.59-2
 Priority: optional
 Section: kernel
 Maintainer: Marco Ziliani <508111+rylos@users.noreply.github.com>
-Depends: linux-image-6.18.59-1-ds923 (= 6.18.59-1)
-Filename: pool/main/linux-image-ds923-longterm_6.18.59-1_amd64.deb
+Depends: linux-image-6.18.59-2-ds923 (= 6.18.59-2)
+Filename: pool/main/linux-image-ds923-longterm_6.18.59-2_amd64.deb
 Size: 944
-MD5sum: 6115e50e15b7bb3073f4d72b07bd1c7c
-SHA1: d2c72c7cda5dc257c9ec858724d2badb2cc0ac88
-SHA256: 6cebc835215747cf0b5fdc5864709dedca8d003fefcbdc1d769cec9d0c877f37
-SHA512: 805c2ac82fea90ef42385e10cdf59078f0e57c3a3bb52b4853a36d1d0d63fad6f636b44ef8024f01b9b95d2375cb17a44e44eb01d1886d8233d5a357f8903618
+MD5sum: f1c28e42bc6f17ccc53dc0e53e7d4496
+SHA1: 9f6a691df94d4907a9e7b45eedf0b0c3cf9b6fd5
+SHA256: 6d745b541953f5f1a3464df480f6cafb380b5d02cb890b9f1e58cbcdfa735773
+SHA512: 1c0d0daa6f979f8fe6b2211352a18c97078caf53c15c6b9cb36bedcbf232d5fc3bc533d28a6c85ed99f1fa88dbe879401173704e7f6630a8331d4ef54e564950
 Description: Linux kernel for the Synology DS923+ (image, longterm series)
  Depends on the latest synodeb kernel image package of the longterm series (6.18).
 
@@ -198,48 +237,20 @@ Description: Linux kernel for the Synology DS923+ (image, stable series)
 
 Package: linux-image-ds923
 Architecture: amd64
-Version: 1:6.18.59-1
+Version: 1:6.18.59-2
 Priority: optional
 Section: kernel
 Maintainer: Marco Ziliani <508111+rylos@users.noreply.github.com>
-Depends: linux-image-ds923-longterm (= 6.18.59-1)
-Filename: pool/main/linux-image-ds923_6.18.59-1_amd64.deb
+Depends: linux-image-ds923-longterm (= 6.18.59-2)
+Filename: pool/main/linux-image-ds923_6.18.59-2_amd64.deb
 Size: 832
-MD5sum: 01ac9b95014cae34681e3542ce8ec96c
-SHA1: 6239dcdf5ebda9d5076899004f79491066440949
-SHA256: 9851eaae6d26af42670ddfb7976efcd5e386a41246c496742cd7b6ae847ce79c
-SHA512: 1358a0f68018b9846455d20f249910547e3447ba92ff5da7c87aea1b38b8f854dc5f26c7f5d2691c230dca4c67a1ef3737140d42d3a45a0fbaf9b492058d2bbf
+MD5sum: 602992103ea08b974a19eca4fa2af9f4
+SHA1: 83020857f9f5bd607fc346d21804fd51366402b1
+SHA256: 920237d585b37b5cf5d952d1195873a183f04ab8d948f3b62bb561d56ab445c0
+SHA512: 6f8dee2913abb55686b81275f4465c24cedb56c237c9ed4aa1f2b46a8befc48e43c1bf69b29c31d5db7a7e8122a20885e78f06dc5bc52f89d0b0630f87babf02
 Description: Linux kernel for the Synology DS923+ (image, default)
  Depends on the synodeb kernel of the longterm series. For the newest stable series
  install linux-image-ds923-stable instead.
-
-Package: synology-ds923
-Architecture: all
-Version: 3.0
-Priority: optional
-Section: kernel
-Maintainer: synodeb <synodeb@users.noreply.github.com>
-Depends: linux-image-ds923, python3 (>= 3.11), hdparm, nvme-cli, ethtool, util-linux, iproute2, initramfs-tools, systemd, coreutils, xz-utils, mawk | gawk
-Recommends: nut-server, nut-client, nftables, smartmontools, lm-sensors, mdadm, lvm2, cryptsetup-bin, btrfs-progs, zstd, curl, msmtp, unattended-upgrades
-Conflicts: systemd-boot
-Filename: pool/main/synology-ds923_3.0_all.deb
-Size: 37884
-MD5sum: e40fdb99789f29808f0829a4d03bca02
-SHA1: e8f41bb2efe99cc4b0c7dbb24d584f215232fc1d
-SHA256: 7da849aa3b3043141b96e35adcbabd0b44dc36a4626857b6bebfb402c6028551
-SHA512: 9d33508ed4c410087e3f5687a59c01c8fb40b73debb80a627225def9be3019f1516ada9216495c296c2a3a88b6b3a5f6142d889a53f108586b3ed555e96f8266
-Homepage: https://github.com/rylos/synodeb
-Description: Debian on the Synology DS923+: hardware support
- The platform drivers (bay power with DSM-style staggered spin-up and hot-plug,
- USB VBUS, fan hwmon, ATmega1608 disk LEDs, S-35390A RTC) are built into the
- linux-image-ds923 kernel. This package adds synohwd, the daemon for the
- front-panel microcontroller (fans, LEDs, buttons, beeper, power-on after an
- AC loss, scheduled power-on), udev and systemd configuration, the hardware
- watchdog, the DSM NVMe power limit, synodeb-dom (kernel and boot entries on
- the Synology DOM, with automatic fallback to the previous kernel),
- notifications (e-mail, Telegram, ntfy) for SMART, RAID, fans, shutdowns and
- failed units, UPS support with NUT and a DSM-like Safe Mode (synodeb-ups),
- and synodeb-dsm to read DSM data volumes read-only.
 
 Package: synology-ds923
 Architecture: all
@@ -256,6 +267,34 @@ MD5sum: 50956c5b10e7578245157a71a2f25b79
 SHA1: 898abd9e5a5a6bc2e69d53f569410b516a2d387f
 SHA256: 41917cd1251a8091bb05763b47aa4b961ce7f7b568047f2fd0f05eb32bedd360
 SHA512: 24435e79f8857819064588bf72f236199593c379dfd322157b2c4c598b354facbef4cb6f93ac85d48b7d1f8dcaf4513a70e14bc772280d139d261c2193bf1104
+Homepage: https://github.com/rylos/synodeb
+Description: Debian on the Synology DS923+: hardware support
+ The platform drivers (bay power with DSM-style staggered spin-up and hot-plug,
+ USB VBUS, fan hwmon, ATmega1608 disk LEDs, S-35390A RTC) are built into the
+ synodeb kernel (linux-image-ds923-longterm or linux-image-ds923-stable). This package adds synohwd, the daemon for the
+ front-panel microcontroller (fans, LEDs, buttons, beeper, power-on after an
+ AC loss, scheduled power-on), udev and systemd configuration, the hardware
+ watchdog, the DSM NVMe power limit, synodeb-dom (kernel and boot entries on
+ the Synology DOM, with automatic fallback to the previous kernel),
+ notifications (e-mail, Telegram, ntfy) for SMART, RAID, fans, shutdowns and
+ failed units, UPS support with NUT and a DSM-like Safe Mode (synodeb-ups),
+ and synodeb-dsm to read DSM data volumes read-only.
+
+Package: synology-ds923
+Architecture: all
+Version: 3.2
+Priority: optional
+Section: admin
+Maintainer: Marco Ziliani <508111+rylos@users.noreply.github.com>
+Depends: linux-image-ds923-longterm | linux-image-ds923-stable | linux-image-ds923, python3 (>= 3.11), hdparm, nvme-cli, ethtool, util-linux, iproute2, initramfs-tools, systemd, coreutils, xz-utils, mawk | gawk
+Recommends: nut-server, nut-client, nftables, smartmontools, lm-sensors, mdadm, lvm2, cryptsetup-bin, btrfs-progs, zstd, curl, msmtp, unattended-upgrades
+Conflicts: systemd-boot
+Filename: pool/main/synology-ds923_3.2_all.deb
+Size: 47968
+MD5sum: fad33dce03b75c6f8c708be8459108ff
+SHA1: d10476c6249be44ff8236edd39d4f673b81cbc8d
+SHA256: 933a5a38ca43aec772ffeddea7ce781863128bb9c7172f4b662126666fcc4711
+SHA512: 70b579440f8460d04da565a2e026ec998ef7ae3698ec26f0e20f65ad05c7688474b5c5d002ec53310a958699bd323d44df88e23ff354c0843391b5a7924b596a
 Homepage: https://github.com/rylos/synodeb
 Description: Debian on the Synology DS923+: hardware support
  The platform drivers (bay power with DSM-style staggered spin-up and hot-plug,
