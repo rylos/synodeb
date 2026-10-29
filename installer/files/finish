@@ -5,14 +5,20 @@
 #  2. linux-image-ds923 + synology-ds923 (+ openssh-server);
 #  3. mdadm.conf: this system's arrays + "AUTO -all" (arrays of other systems, such as
 #     DSM's, are never assembled), then a new initramfs;
-#  4. synodeb-dom sync + setup: kernel and initrd on the DOM, DEBIAN entry with root=...
-#     as the default, installer entry and files removed.
+#  4. the DOM is unlocked (early mounted it read-only on /hd-media), the installer files
+#     are removed from it (room for the kernel), then synodeb-dom sync + setup: kernel and
+#     initrd on the DOM, DEBIAN entry with root=... as the default, INSTALLER entry (with
+#     the SSH password of the installer) removed.
 # Any failure stops here with an error in the installer and the DOM keeps booting DSM.
 set -e
 . /usr/lib/synodeb-installer/lib.sh
 T=/target
-step() { log "$*"; }
-fail() { log "FAILED: $*"; up ':' 3 3; exit 1; }
+STEP=start
+step() { STEP=$*; log "$*"; }
+fail() { trap - EXIT; log "FAILED: $*"; up ':' 3 3; exit 1; }
+# errors outside an explicit check (set -e) say where they happened
+on_exit() { [ "$1" = 0 ] || fail "unexpected error (exit $1) in step: $STEP"; }
+trap 'on_exit $?' EXIT
 # clean environment: with the installer's DEBIAN_HAS_FRONTEND & co. debconf in the chroot
 # would send its questions to the installer frontend, where nobody answers them
 chroot_run() {
@@ -21,6 +27,12 @@ chroot_run() {
 }
 
 repo=$(sed -n 's/.*synodeb\.repo=\([^ ]*\).*/\1/p' /proc/cmdline)
+# goes into a sed command below: a plain URL only (synodeb-setup.sh checks it too)
+case "$repo" in
+"") ;;
+http://*|https://*) case "$repo" in *[!A-Za-z0-9._~:/@%+=,-]*) fail "synodeb.repo has unexpected characters: $repo" ;; esac ;;
+*) fail "synodeb.repo is not an http(s) URL: $repo" ;;
+esac
 step "apt repository ${repo:-https://rylos.github.io/synodeb/debian}"
 install -D -m 644 /usr/lib/synodeb-installer/synodeb-archive-keyring.gpg $T/usr/share/keyrings/synodeb-archive-keyring.gpg
 sed "s|^URIs: .*|URIs: ${repo:-https://rylos.github.io/synodeb/debian}|" /usr/lib/synodeb-installer/synodeb.sources \
@@ -28,6 +40,7 @@ sed "s|^URIs: .*|URIs: ${repo:-https://rylos.github.io/synodeb/debian}|" /usr/li
 install -D -m 644 /usr/lib/synodeb-installer/synodeb-no-debian-kernel $T/etc/apt/preferences.d/synodeb-no-debian-kernel
 
 # the DOM is reached from the chroot (blkid, mount): /dev, /proc, /sys, /run
+step "bind mounts for the chroot"
 bound=
 for m in dev proc sys run; do
     grep -q " $T/$m " /proc/mounts || { mount --bind /$m $T/$m && bound="$T/$m $bound"; }
@@ -41,18 +54,33 @@ chroot_run apt-get -y -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--fo
     fail "installing linux-image-ds923 synology-ds923"
 
 if [ -x $T/sbin/mdadm ] || [ -x $T/usr/sbin/mdadm ]; then
-    step "mdadm.conf: $(mdadm --detail --scan 2>/dev/null | wc -l) array(s)"
+    step "mdadm.conf"
+    # mdadm of the installer (partman-md) if loaded, else the one of the new system
+    if command -v mdadm >/dev/null 2>&1; then
+        arrays=$(mdadm --detail --scan 2>/dev/null || true)
+    else
+        arrays=$(chroot_run mdadm --detail --scan 2>/dev/null || true)
+    fi
+    log "mdadm.conf: $(printf '%s\n' "$arrays" | grep -c '^ARRAY' || true) array(s)"
     {
-        echo "# synodeb: arrays of this system; arrays of other systems (DSM) are never assembled"
+        echo "# synodeb: arrays of this system; arrays of other systems (DSM) are never assembled."
+        echo "# An array created later is assembled at boot once it is listed here:"
+        echo "#   mdadm --detail --scan  (copy its ARRAY line here), then update-initramfs -u"
         echo "HOMEHOST <system>"
         echo "MAILADDR root"
         echo "AUTO -all"
-        mdadm --detail --scan 2>/dev/null
+        [ -z "$arrays" ] || printf '%s\n' "$arrays"
     } > $T/etc/mdadm/mdadm.conf
 fi
+step "update-initramfs"
 chroot_run update-initramfs -u -k all >> $LOG 2>&1 || fail "update-initramfs"
 
 step "DOM: kernel, initrd and boot entry"
+dom_unprotect || fail "could not unmount the DOM from $DOM_LOCK"
+if dom_mount $DOM_P2 ext2; then
+    rm -f $DOM_MNT/synodeb/installer.img $DOM_MNT/synodeb/installer.vmlinuz
+    dom_umount || fail "could not unmount the DOM"
+fi
 chroot_run synodeb-dom sync >> $LOG 2>&1 || fail "synodeb-dom sync"
 chroot_run synodeb-dom setup >> $LOG 2>&1 || fail "synodeb-dom setup"
 chroot_run synodeb-dom status >> $LOG 2>&1 || true

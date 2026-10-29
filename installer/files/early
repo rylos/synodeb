@@ -4,10 +4,14 @@
 #  - power LED on, status LED green blinking, fans at a fixed 50 %;
 #  - the DOM default goes back to the Synology entry right away, so any failure or reboot
 #    before the end of the installation starts DSM again (finish makes DEBIAN the default);
+#    if that fails: status LED orange and three short beeps, and no automatic reboot below
+#    (it would start the installer again);
+#  - the DOM is mounted read-only on /hd-media, so the partitioner does not offer it;
 #  - mdadm never assembles arrays found on the disks (DSM's included): only the ones
 #    created in the partitioner exist in the installer;
 #  - one long beep when SSH is ready; no SSH within 20 minutes (no network): three beeps
-#    and a reboot into DSM.
+#    and a reboot into DSM (five short beeps and no reboot if the DOM still boots the
+#    installer).
 # The background part must not keep any descriptor of the installer open (debconf talks on
 # fd 3): the installer would wait for it forever.
 . /usr/lib/synodeb-installer/lib.sh
@@ -18,8 +22,16 @@ mkdir -p /etc/mdadm
 printf '%s\n' '# synodeb installer: never assemble arrays found on the disks' 'AUTO -all' > /etc/mdadm/mdadm.conf
 (
     up V50 4 9
-    i=0
-    while [ $i -lt 30 ] && ! dom_default SYNOLOGY_2; do sleep 2; i=$((i + 1)); done
+    i=0; dsm=0
+    while [ $i -lt 30 ]; do
+        if dom_default SYNOLOGY_2; then dsm=1; break; fi
+        sleep 2; i=$((i + 1))
+    done
+    if [ $dsm = 0 ]; then
+        log "the DOM still starts the installer: no reboot into DSM without SSH"
+        up ':' 2 2 2
+    fi
+    dom_protect
     i=0
     while [ $i -lt 600 ]; do
         if pidof sshd >/dev/null 2>&1 || pidof sshd-session >/dev/null 2>&1; then
@@ -29,6 +41,11 @@ printf '%s\n' '# synodeb installer: never assemble arrays found on the disks' 'A
         fi
         sleep 2; i=$((i + 1))
     done
+    if [ $dsm = 0 ]; then
+        log "no SSH after 20 minutes, the DOM still starts the installer: not rebooting"
+        up 2 2 2 2 2
+        exit 0
+    fi
     log "no SSH after 20 minutes: rebooting into DSM"
     up 3 2 3 2 3
     sleep 5
