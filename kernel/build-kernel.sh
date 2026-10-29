@@ -49,10 +49,19 @@ cd "$SRC"
 STAMP=$(cat "$PATCHES"/*.patch | sha256sum | cut -d' ' -f1)
 if [ "$(cat .synodeb-patches 2>/dev/null)" != "$STAMP" ]; then
     echo "patches changed: touched files reset to vanilla"
+    # no stamp until every patch is in: a failed run must not look applied next time
+    rm -f .synodeb-patches
     git checkout -q -- .
+    # strict: no fuzz and no offsets, a patch that does not apply exactly must be refreshed
     for p in "$PATCHES"/*.patch; do
         echo "patch $(basename "$p")"
-        patch -p1 --forward --no-backup-if-mismatch < "$p"
+        out=$(patch -p1 --forward --fuzz=0 --no-backup-if-mismatch < "$p") ||
+            { echo "$out"; echo "$p does not apply" >&2; exit 1; }
+        echo "$out"
+        if grep -q '^Hunk #[0-9]* succeeded' <<<"$out"; then
+            echo "$p applies only with an offset: refresh it" >&2
+            exit 1
+        fi
     done
     echo "$STAMP" > .synodeb-patches
 else
