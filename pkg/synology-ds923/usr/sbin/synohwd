@@ -11,24 +11,27 @@ uP protocol (9600 8N1, ASCII):
                '7' status off  '8' green  '9' green blink  ':' orange  ';' orange blink
                '2' short beep  '3' long beep
                'V%02d' fan duty in %
-               'D' read the system current sensor -> reply 'D<digits>X'
-                   (DSM "system current sensor", value*16 + value*13/100, unit unknown:
-                   it is NOT the fan speed, the kernel measures that on GPIO 68/69)
+               'D' read a current sensor -> reply 'D<digits>X'; '*' reads as '0'.
+                   synohwd reports raw * 16.13 (unit unknown). It is NOT the fan
+                   speed: the kernel measures that on GPIO 68/69.
                'R' microP id  -> reply framed '+<n><n bytes>'
                't' / 'u' disable / enable fan-fail check
-               'q' / 'p' power back on / stay off after an AC loss (DSM RCPower)
+               'q' / 'p' power back on / stay off after an AC loss
                's' / 'r' enable / disable scheduled power-on (RTC alarm)
                'l' / 'k' keep / drop NIC power in S5 for Wake-on-LAN
                '@' 'A' 'B' USB LED on / blink / off
                'C' reboot, '1' HARD POWER OFF: sent by the kernel at the very end of
-                   reboot/poweroff, like DSM. This daemon refuses any command with a
-                   '1' outside the V<nn> argument (so LA1 & co. are refused too).
+                   reboot/poweroff, like DSM. The daemon never sends them and
+                   'synohwd send' only accepts a sequence of the commands above
+                   (V<nn> with exactly two digits), so 'VV11' or 'LA1' are refused.
   uP -> host   '0' power button   'a' reset button   '`' USB copy button
                'f' fan failure    'g' CPU fan failure
 
 Fans: hwmon "synology" (platform device synology-ds923) exposes fan1_input /
 fan2_input (rpm measured by the kernel), fan1_alarm / fan2_alarm (1 = stopped)
 and pwm1, which this daemon keeps in sync with the duty it sends.
+Fail-safe: fans at 99% when the CPU or a present disk/NVMe has no temperature
+reading, while a fan has failed, and whenever the daemon exits or crashes.
 
 Sub-commands:
   synohwd run            the daemon (systemd)
@@ -70,6 +73,8 @@ FAN_EVENT_HOLD = 60             # s a uP 'f'/'g' event keeps fan_fail set
 REPLY_TIMEOUT = 0.5             # s for a 'D' / '+' reply to complete
 D_MAX = 8                       # max digits in a 'D...X' reply
 FRAME_MAX = 16                  # max length of a '+' frame
+SEND_TRIES = 3                  # attempts for a uP write failing with EIO/EAGAIN
+NVME_CLASS = "/sys/class/nvme"
 
 # Same fan curves as DSM 7.4 for the DS923+, as
 # (threshold °C, duty %); the last threshold of each list is the shutdown one.
@@ -94,20 +99,31 @@ BAYS = {1: ("00:01.5", 0), 2: ("00:01.5", 1), 3: ("00:08.2", 0), 4: ("00:08.2", 
 
 DEFAULTS = {
     "fan_mode": "low",          # low (quiet, DSM default) | high (cool) | full
-    "fan_period": 20,           # s between fan adjustments (DSM period)
-    "fan_min_duty": 0,          # floor for the duty from the tables
-    "hysteresis": 3,            # °C a sensor must drop below a step to slow down
+    "fan_period": 20,           # s between fan adjustments (DSM period), 5..300
+    "fan_min_duty": 0,          # floor for the duty from the tables, 0..99
+    "hysteresis": 3,            # °C a sensor must drop below a step to slow down, 0..20
     "thermal_shutdown": True,   # power off at the DSM shutdown thresholds
-    "power_button": "poweroff", # poweroff | ignore | command:<shell>
-    "reset_button": "log",      # log | command:<shell>
+    "power_button": "poweroff", # poweroff | ignore | log | command:<shell>
+    "reset_button": "log",      # log | ignore | command:<shell>
     "beep_on_start": True,
     "beep_on_error": True,
     "disk_leds": True,          # green = disk present, blinks off on I/O (kernel trigger ataN)
     "led_brightness": 255,      # 1..254 dims the disk LEDs through PWM A
-    "disk_standby_minutes": 0,  # >0: spin the bay disks down after this idle time (hdparm -S)
+    "disk_standby_minutes": 0,  # >0: spin the bay disks down after this idle time (hdparm -S), max 330
     "wol": False,               # Wake-on-LAN (magic packet) on all lan* ports
-    "ac_recovery": True,        # power back on after an AC loss (DSM enableRCPower=yes)
+    "ac_recovery": True,        # power back on after an AC loss (DSM default)
 }
+
+# Integer settings: (min, max), out of range values are clamped.
+RANGES = {"fan_period": (5, 300), "fan_min_duty": (0, 99), "hysteresis": (0, 20),
+          "led_brightness": (1, 255), "disk_standby_minutes": (0, 330)}
+# String settings: allowed values; the buttons also take "command:<shell>".
+CHOICES = {"fan_mode": ("low", "high", "full"),
+           "power_button": ("poweroff", "ignore", "log"), "reset_button": ("log", "ignore")}
+COMMAND_KEYS = ("power_button", "reset_button")
+
+# uP commands 'synohwd send' and the daemon may send ('1' and 'C' never)
+UP_CMD = re.compile(r"(?:V\d\d|[2-9:;DRtuqpsrlk@AB])+")
 
 log = logging.getLogger("synohwd")
 
@@ -124,7 +140,10 @@ def notify(title, message="", priority="high", then=None):
             except (OSError, subprocess.SubprocessError) as e:
                 log.warning("notify: %s", e)
         if then:
-            subprocess.Popen(then)
+            try:
+                subprocess.Popen(then)
+            except OSError as e:
+                log.error("%s: %s", " ".join(then), e)
     threading.Thread(target=run, daemon=True).start()
 
 
@@ -146,24 +165,56 @@ def write(path, value):
         return False
 
 
-def load_conf():
+def validate_conf(raw):
+    """DEFAULTS overridden by the valid values of `raw`; anything else is logged."""
     conf = dict(DEFAULTS)
-    try:
-        with open(CONF_PATH, "rb") as f:
-            conf.update(tomllib.load(f))
-    except FileNotFoundError:
-        pass
-    except tomllib.TOMLDecodeError as e:
-        log.error("%s: %s — using defaults", CONF_PATH, e)
+    for k, v in raw.items():
+        if k == "led_activity_hz":
+            log.info("led_activity_hz is ignored: the kernel trigger ataN blinks the LEDs")
+            continue
+        if k not in DEFAULTS:
+            log.warning("%s: unknown setting %r ignored", CONF_PATH, k)
+            continue
+        d = DEFAULTS[k]
+        if type(v) is not type(d):                  # also refuses true for an integer
+            log.error("%s: %s = %r, %s expected, using %r", CONF_PATH, k, v,
+                      type(d).__name__, d)
+            continue
+        if k in RANGES:
+            lo, hi = RANGES[k]
+            if not lo <= v <= hi:
+                c = min(hi, max(lo, v))
+                log.error("%s: %s = %r outside %d..%d, using %d", CONF_PATH, k, v, lo, hi, c)
+                v = c
+        elif k in CHOICES and v not in CHOICES[k] \
+                and not (k in COMMAND_KEYS and v.startswith("command:") and v[8:].strip()):
+            log.error("%s: %s = %r not one of %s, using %r", CONF_PATH, k, v,
+                      "|".join(CHOICES[k] + (("command:<shell>",) if k in COMMAND_KEYS else ())), d)
+            continue
+        conf[k] = v
     return conf
 
 
+def load_conf():
+    try:
+        with open(CONF_PATH, "rb") as f:
+            return validate_conf(tomllib.load(f))
+    except FileNotFoundError:
+        pass
+    except (OSError, tomllib.TOMLDecodeError, UnicodeDecodeError) as e:
+        log.error("%s: %s — using defaults", CONF_PATH, e)
+    return dict(DEFAULTS)
+
+
 def check_cmd(cmd):
-    """Refuse '1' (uP hard power-off) anywhere except as a digit of V<nn>."""
+    """Accept only a sequence of known uP commands: never '1' (hard power-off) or 'C'."""
     if not cmd:
         raise ValueError("empty command")
+    if UP_CMD.fullmatch(cmd):
+        return
     if "1" in re.sub(r"V\d\d", "", cmd):
         raise ValueError(f"{cmd!r}: '1' is the uP hard power-off, refused")
+    raise ValueError(f"{cmd!r}: not a sequence of uP commands (V<nn> or one of 2-9:;DRtuqpsrlk@AB)")
 
 
 def up_tty():
@@ -273,9 +324,30 @@ class MicroP:
 
     def send(self, cmd):
         check_cmd(cmd)
+        data = cmd.encode()
         with self.wlock:
-            os.write(self.fd, cmd.encode())
+            for attempt in range(1, SEND_TRIES + 1):
+                try:
+                    while data:
+                        data = data[os.write(self.fd, data):]
+                    break
+                except OSError as e:
+                    if e.errno not in (errno.EIO, errno.EAGAIN, errno.EINTR) \
+                            or attempt == SEND_TRIES:
+                        log.error("uP write %r: %s", cmd, e.strerror)
+                        raise
+                    log.warning("uP write %r: %s, retrying", cmd, e.strerror)
+                    time.sleep(0.1 * attempt)
             time.sleep(0.05)
+
+    def fail_safe(self):
+        """Fans at full speed, without the write lock (may be called from a dying thread).
+        A single short write() on a tty is not interleaved with another one."""
+        try:
+            os.write(self.fd, b"V99")
+            log.info("fan duty 99% (fail-safe)")
+        except OSError as e:
+            log.error("uP write 'V99' (fail-safe): %s", e.strerror)
 
     def query(self, cmd, timeout=1.0):
         with self.qlock:
@@ -394,7 +466,8 @@ def sensors(bays, last_disk=None):
     last_disk = {} if last_disk is None else last_disk
     s = {"cpu": None, "disk": {}, "nvme": {}, "nic": {}, "asleep": []}
     for d in hwmon_by_name("k10temp"):
-        s["cpu"] = hwmon_temp(d, "Tctl") or hwmon_temp(d)
+        t = hwmon_temp(d, "Tctl")
+        s["cpu"] = hwmon_temp(d) if t is None else t
     for bay, dev in bays.items():
         key = f"bay{bay}"
         if disk_asleep(dev):
@@ -402,14 +475,21 @@ def sensors(bays, last_disk=None):
             if last_disk.get(key) is not None:
                 s["disk"][key] = last_disk[key]
             continue
-        for d in glob.glob(f"/sys/block/{dev}/device/hwmon/hwmon*"):   # drivetemp
+        s["disk"][key] = None                   # no drivetemp: no reading (fail-safe)
+        for d in glob.glob(f"{SYS_BLOCK}/{dev}/device/hwmon/hwmon*"):   # drivetemp
             t = hwmon_temp(d)
             s["disk"][key] = t
             if t is not None:
                 last_disk[key] = t
-    for d in hwmon_by_name("nvme"):
+    nvme_hw = hwmon_by_name("nvme")
+    for d in nvme_hw:
         dev = os.path.basename(os.path.realpath(f"{d}/device"))
-        s["nvme"][dev] = hwmon_temp(d, "Composite") or hwmon_temp(d)
+        t = hwmon_temp(d, "Composite")
+        s["nvme"][dev] = hwmon_temp(d) if t is None else t
+    # a controller without its hwmon has no reading (fail-safe)
+    ctrls = sorted(os.path.basename(c) for c in glob.glob(f"{NVME_CLASS}/nvme*"))
+    for c in [c for c in ctrls if c not in s["nvme"]][:max(0, len(ctrls) - len(nvme_hw))]:
+        s["nvme"][c] = None
     for name in ("atlantic", "aqc", "r8169"):
         for d in hwmon_by_name(name):
             dev = os.path.basename(os.path.realpath(f"{d}/device"))
@@ -423,6 +503,8 @@ class Fan:
     def __init__(self, conf):
         self.conf = conf
         self.level = {}   # sensor class -> current step index (for hysteresis)
+        self.missing = frozenset()   # sensors without a reading, logged on change
+        self.failed = False
 
     def step(self, cls, temp, table):
         idx = 0
@@ -439,9 +521,9 @@ class Fan:
         self.level[cls] = idx
         return table[idx][1]
 
-    def duty(self, s):
-        if self.conf["fan_mode"] == "full":
-            return 99, None
+    def duty(self, s, fan_fail=False):
+        """(duty %, critical reason or None). 99 in "full" mode, while a fan has failed
+        and when the CPU or a present disk/NVMe has no reading."""
         t = FAN_TABLES.get(self.conf["fan_mode"], FAN_TABLES["low"])
         duty, critical = self.conf["fan_min_duty"], None
         groups = {
@@ -457,6 +539,21 @@ class Fan:
             duty = max(duty, self.step(cls, hot, t[cls]))
             if hot >= t[f"{cls}_shutdown"]:
                 critical = f"{cls} {hot:.0f}°C >= {t[cls + '_shutdown']}°C"
+        missing = frozenset((["cpu"] if s["cpu"] is None else [])
+                            + [f"{cls} {k}" for cls in ("disk", "nvme")
+                               for k, v in s[cls].items() if v is None])
+        if missing != self.missing:
+            if missing:
+                log.warning("no temperature reading from %s: fans at 99%%",
+                            ", ".join(sorted(missing)))
+            else:
+                log.info("all temperature sensors readable again")
+            self.missing = missing
+        if fan_fail and not self.failed:
+            log.warning("fan failure: fans at 99% while it lasts")
+        self.failed = fan_fail
+        if self.conf["fan_mode"] == "full" or missing or fan_fail:
+            duty = 99
         return min(duty, 99), critical
 
 
@@ -472,7 +569,8 @@ class Thermal:
 
 
 class FanHealth:
-    """fan_fail from the kernel alarms (2 cycles in a row) and the uP 'f'/'g' events."""
+    """fan_fail from the kernel alarms (2 cycles in a row; None = unreadable tach counts
+    too) and the uP 'f'/'g' events."""
 
     def __init__(self):
         self.streak = 0
@@ -482,7 +580,7 @@ class FanHealth:
         self.last_event = now
 
     def update(self, alarms, now):
-        self.streak = self.streak + 1 if any(a == 1 for a in alarms) else 0
+        self.streak = self.streak + 1 if any(a != 0 for a in alarms) else 0
         recent = self.last_event is not None and now - self.last_event < FAN_EVENT_HOLD
         return self.streak >= FAN_ALARM_CYCLES or recent
 
@@ -493,6 +591,15 @@ def synology_hwmon():
 
 def int_or_none(v):
     return int(v) if v is not None and v.lstrip("-").isdigit() else None
+
+
+def fans_of(hwmons):
+    """Both fans of each hwmon dir, always: an unreadable tach (attribute missing = no
+    tach GPIO/IRQ, ENODATA = not measured yet after probe) gives alarm None, which
+    FanHealth counts as a failure only once it lasts FAN_ALARM_CYCLES cycles."""
+    return [{"fan": n, "rpm": int_or_none(read(f"{d}/fan{n}_input")),
+             "alarm": int_or_none(read(f"{d}/fan{n}_alarm"))}
+            for d in hwmons for n in (1, 2)]
 
 
 class Daemon:
@@ -539,7 +646,10 @@ class Daemon:
         if action == "ignore" or action == "log":
             return
         if action.startswith("command:"):
-            subprocess.Popen(action[8:], shell=True)
+            try:
+                subprocess.Popen(action[8:], shell=True)
+            except OSError as e:
+                log.error("%s: %s", action, e)
         elif default_cmd:
             self.up.send("3")          # long beep, as DSM on the power button
             self.up.send("5")          # power LED blinks while shutting down
@@ -567,19 +677,12 @@ class Daemon:
 
     def read_fans(self):
         """[{fan, rpm, alarm}] from hwmon "synology" (tach GPIO 68/69, measured by the kernel)."""
-        fans = []
-        for d in synology_hwmon():
-            for n in (1, 2):
-                rpm = int_or_none(read(f"{d}/fan{n}_input"))
-                alarm = int_or_none(read(f"{d}/fan{n}_alarm"))
-                if rpm is not None or alarm is not None:
-                    fans.append({"fan": n, "rpm": rpm, "alarm": alarm})
-        return fans
+        return fans_of(synology_hwmon())
 
     def read_current(self):
         r = self.up.query("D")
         if r and r.isdigit():
-            # DSM system current sensor: value * 16 + value * 13 / 100 (unit unknown)
+            # raw * 16.13, unit unknown
             v = int(r)
             self.state["up_current"] = 16 * v + 13 * v // 100
 
@@ -589,9 +692,10 @@ class Daemon:
         was = self.state["fan_fail"]
         fail = self.fan_health.update([f["alarm"] for f in fans], time.monotonic())
         if fail and not was:
-            self.note("fan stopped (hwmon alarm)")
-            notify("fan failure", "fan stopped (hwmon alarm): "
-                   + ", ".join(f"fan{f['fan']} {f['rpm']} rpm" for f in fans), "urgent")
+            self.note("fan stopped or unreadable (hwmon)")
+            notify("fan failure", "fan stopped or unreadable (hwmon): "
+                   + ", ".join(f"fan{f['fan']} {'?' if f['rpm'] is None else f['rpm']} rpm"
+                               for f in fans), "urgent")
             if self.conf["beep_on_error"]:
                 self.up.send("3")
         elif was and not fail:
@@ -603,14 +707,14 @@ class Daemon:
         while not self.stop.is_set():
             self.bays = bay_block_devices()
             s = sensors(self.bays, self.last_disk)
-            duty, critical = self.fan.duty(s)
+            self.update_fan_fail()
+            duty, critical = self.fan.duty(s, self.state["fan_fail"])
             if duty != self.state["fan_duty"]:
                 self.up.send(f"V{duty:02d}")
                 log.info("fan duty %d%%", duty)
                 self.state["fan_duty"] = duty
             self.publish_pwm()
             self.read_current()
-            self.update_fan_fail()
             problem = self.state["fan_fail"] or self.raid_degraded()
             self.set_status(";" if problem else "8")
             if critical:
@@ -644,13 +748,14 @@ class Daemon:
         # hdparm -S: 1..240 = n*5 s, 241..251 = (n-240)*30 min
         val = min(240, minutes * 12) if minutes <= 20 else min(251, 240 + -(-minutes // 30))
         for dev in bay_block_devices().values():
-            subprocess.run(["hdparm", "-q", "-S", str(val), f"/dev/{dev}"], check=False)
-            log.info("standby %s after %d min", dev, minutes)
+            if run_quiet(["hdparm", "-q", "-S", str(val), f"/dev/{dev}"]):
+                log.info("standby %s after %d min", dev, minutes)
 
     def apply_wol(self):
+        """WOL on or off on every lan* port: off too, the firmware may leave it on."""
         mode = "g" if self.conf["wol"] else "d"
         for n in glob.glob("/sys/class/net/lan*"):
-            subprocess.run(["ethtool", "-s", os.path.basename(n), "wol", mode], check=False)
+            run_quiet(["ethtool", "-s", os.path.basename(n), "wol", mode])
 
     def ac_recovery_cmd(self):
         return "q" if self.conf["ac_recovery"] else "p"
@@ -698,9 +803,7 @@ class Daemon:
 
     def led_loop(self):
         """Disk LEDs at 1 Hz: the I/O blinking is done by the kernel (trigger ataN)."""
-        on = max(1, min(255, int(self.conf["led_brightness"])))
-        if "led_activity_hz" in self.conf:
-            log.info("led_activity_hz is ignored: the kernel trigger ataN blinks the LEDs")
+        on = self.conf["led_brightness"]
         shown = {}
         while not self.stop.is_set():
             self.led_step(shown, on)
@@ -739,41 +842,68 @@ class Daemon:
             except BaseException:
                 log.exception("thread %s died, exiting so that systemd restarts the daemon",
                               target.__name__)
+                self.up.fail_safe()          # os._exit skips the finally of run()
                 remove_status()
                 logging.shutdown()
                 os._exit(1)
         threading.Thread(target=run, name=target.__name__, daemon=True).start()
 
+    def on_signal(self, signum, _frame):
+        log.info("%s: stopping", signal.Signals(signum).name)
+        self.stop.set()
+
     def run(self):
         os.makedirs(RUN_DIR, exist_ok=True)
-        signal.signal(signal.SIGTERM, lambda *_: self.stop.set())
-        self.start_thread(self.up.reader, self.event)
-        mpid = self.up.query("R")
-        log.info("microP id %r", mpid)
-        # boot finished, like DSM: fan check on, power LED steady, status green, long beep
-        self.up.send("u")
-        self.up.send("4")
-        self.set_status("8")
-        if self.conf["beep_on_start"]:
-            self.up.send("3")
-        self.up.send(self.ac_recovery_cmd())   # DSM RCPower.service
-        self.apply_standby()
-        self.apply_wol()
-        self.start_thread(self.cmd_loop)
-        if self.conf["disk_leds"]:
-            self.start_thread(self.led_loop)
+        for sig in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+            signal.signal(sig, self.on_signal)
         try:
+            self.start_thread(self.up.reader, self.event)
+            mpid = self.up.query("R")
+            log.info("microP id %r", mpid)
+            # boot finished, like DSM: fan check on, power LED steady, status green, long beep
+            self.up.send("u")
+            self.up.send("4")
+            self.set_status("8")
+            if self.conf["beep_on_start"]:
+                self.up.send("3")
+            self.up.send(self.ac_recovery_cmd())
+            self.apply_standby()
+            self.apply_wol()
+            self.start_thread(self.cmd_loop)
+            if self.conf["disk_leds"]:
+                self.start_thread(self.led_loop)
             self.control_loop()
         finally:
-            # 'C' (reboot) and '1' (power off) are sent by the kernel at the very end
-            self.prepare_poweroff()
-            self.up.send("t")        # fan-fail check off (DSM SynoDisableFanCheck)
-            self.up.send("5")        # shutting down: power LED blinks
-            self.up.send("7")
-            for bay in range(1, 5):
-                self.led(bay, "green", 0)        # 0 also detaches the ataN trigger
-                self.led(bay, "orange", 0)
-            remove_status()
+            self.shutdown()
+
+    def shutdown(self):
+        """On every exit, also a crash: fans at full speed first, then the power-off setup.
+        'C' (reboot) and '1' (power off) are sent by the kernel at the very end."""
+        self.up.fail_safe()
+        for step in (self.prepare_poweroff,
+                     lambda: self.up.send("t"),   # fan-fail check off: fans stop at power-off
+                     lambda: self.up.send("5"),   # shutting down: power LED blinks
+                     lambda: self.up.send("7")):
+            try:
+                step()
+            except OSError as e:
+                log.error("shutdown: %s", e)
+        for bay in range(1, 5):
+            self.led(bay, "green", 0)            # 0 also detaches the ataN trigger
+            self.led(bay, "orange", 0)
+        remove_status()
+
+
+def run_quiet(argv):
+    """Run a helper (hdparm, ethtool); False with a log line if it is missing or fails."""
+    try:
+        r = subprocess.run(argv, stdin=subprocess.DEVNULL, check=False, timeout=30)
+    except (OSError, subprocess.SubprocessError) as e:
+        log.warning("%s: %s", argv[0], e)
+        return False
+    if r.returncode:
+        log.warning("%s: exit status %d", " ".join(argv), r.returncode)
+    return r.returncode == 0
 
 
 def remove_status():
@@ -790,6 +920,19 @@ def status():
             d = json.load(f)
     except OSError:
         raise SystemExit("synohwd is not running (no /run/synohwd/status.json)")
+    except ValueError as e:                     # JSONDecodeError, bad UTF-8
+        raise SystemExit(f"{STATUS}: unreadable ({e})")
+    try:
+        print_status(d)
+    except (KeyError, TypeError, AttributeError, ValueError) as e:
+        raise SystemExit(f"{STATUS}: unexpected content ({e!r})")
+
+
+def deg(v):
+    return "?" if v is None else f"{v} °C"
+
+
+def print_status(d):
     s = d["sensors"]
     age = time.time() - d.get("epoch", time.time())
     stale = "  (STALE: the daemon is not updating)" if age > 3 * d.get("period", 20) + 10 else ""
@@ -800,17 +943,17 @@ def status():
               f"{'  STOPPED' if f['alarm'] == 1 else ''}")
     if d.get("up_current") is not None:
         print(f"uP current   {d['up_current']} (unit unknown)")
-    print(f"CPU          {s['cpu']} °C")
+    print(f"CPU          {deg(s['cpu'])}")
     for k, v in s["nvme"].items():
-        print(f"NVMe {k:7} {v} °C")
+        print(f"NVMe {k:7} {deg(v)}")
     for k, v in s["nic"].items():
-        print(f"NIC {k}  {v} °C")
+        print(f"NIC {k}  {deg(v)}")
     for n, b in d["bays"].items():
         t = s["disk"].get(f"bay{n}")
         sleep = "  standby" if f"bay{n}" in s.get("asleep", []) else ""
         print(f"bay {n}        {'disk' if b['present'] else 'empty'}  "
               f"power {'on' if b['power'] else 'off'}  {b['device'] or ''}  "
-              f"{'' if t is None else f'{t} °C'}{sleep}")
+              f"{deg(t) if b['device'] else ''}{sleep}")
     for when, what in d["events"][-5:]:
         print(f"event        {when} {what}")
 
@@ -830,6 +973,10 @@ def send(cmd):
         raise SystemExit(f"{CMD_FIFO}: {e.strerror}")
     try:
         os.write(fd, (cmd + "\n").encode())
+    except BlockingIOError:
+        raise SystemExit("synohwd is busy (command FIFO full), try again")
+    except OSError as e:
+        raise SystemExit(f"{CMD_FIFO}: {e.strerror}")
     finally:
         os.close(fd)
 

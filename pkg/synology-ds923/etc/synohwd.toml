@@ -1,7 +1,7 @@
 # synohwd — configuration (defaults shown commented out)
 # fan_mode = "low"          # low = DSM quiet mode, high = cool mode, full = 99%
-# fan_period = 20           # seconds between adjustments
-# fan_min_duty = 0
+# fan_period = 20           # seconds between adjustments (5..300)
+# fan_min_duty = 0          # 0..99; invalid values are logged and replaced by the default
 # hysteresis = 3
 # thermal_shutdown = true   # power off at the DSM thresholds (disks 61°C, NVMe 70°C, CPU 95°C)
 # power_button = "poweroff" # poweroff | ignore | "command:/path/to/script"
@@ -13,5 +13,5 @@
 # (led_activity_hz no longer exists: the kernel does the blinking, the daemon checks the LEDs at 1 Hz)
 # disk_standby_minutes = 0  # e.g. 20: spin the disks down after 20 minutes of inactivity
 # wol = false              # Wake-on-LAN on all lan* ports
-# ac_recovery = true       # power back on after a power failure (like DSM, enableRCPower=yes)
+# ac_recovery = true       # power back on after a power failure (like the DSM default)
 # scheduled power-on: rtcwake -d rtc0 -m no -t <epoch>  (the daemon informs the microcontroller at shutdown)

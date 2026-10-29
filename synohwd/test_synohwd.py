@@ -1,5 +1,5 @@
 #!/usr/bin/python3 -I
-"""Offline tests for synohwd (no hardware needed): python3 -I synohwd/test_synohwd.py"""
+"""Offline tests for synohwd (no hardware needed): python3 -I synohwd/test_synohwd.py (or pytest)"""
 import importlib.util
 import os
 import stat
@@ -234,7 +234,167 @@ with tempfile.TemporaryDirectory() as d:
     check("send with reader", send("V50"), "ok")
     check("send read back", os.read(rd, 64), b"V50\n")
     check("send '1' refused", send("1").startswith("refused"), True)
+
+    try:
+        real_write, m.os.write = m.os.write, lambda *_: (_ for _ in ()).throw(BlockingIOError())
+        check("send FIFO full", "busy" in send("2"), True)
+    finally:
+        m.os.write = real_write
     os.close(rd)
 
-print("ALL OK" if not failures else f"{failures} FAILED")
-raise SystemExit(1 if failures else 0)
+# --- malformed uP commands ---
+for cmd in ("VV11", "V", "V9", "VX1", "C", "2C", "LA1", "x", "V10 ", "V1a", "VVV"):
+    try:
+        m.check_cmd(cmd); got = True
+    except ValueError:
+        got = False
+    check(f"check_cmd refuses {cmd!r}", got, False)
+for cmd in ("D", "R", "t", "u", "@", "AB", ":;", "V0099"):
+    try:
+        m.check_cmd(cmd); got = True
+    except ValueError:
+        got = False
+    check(f"check_cmd accepts {cmd!r}", got, True)
+
+# --- duty fail-safe ---
+OK = {"cpu": 40.0, "disk": {"bay1": 30.0}, "nvme": {"nvme0": 35.0}, "nic": {}}
+
+
+def duty_of(s, fan_fail=False, **conf):
+    return m.Fan(m.validate_conf(conf)).duty(s, fan_fail)
+
+
+check("duty all cool", duty_of(OK), (50, None))
+check("duty no sensors at all", duty_of({"cpu": None, "disk": {}, "nvme": {}, "nic": {}})[0], 99)
+check("duty CPU missing", duty_of({**OK, "cpu": None})[0], 99)
+check("duty disk without reading", duty_of({**OK, "disk": {"bay1": 30.0, "bay2": None}})[0], 99)
+check("duty NVMe without reading", duty_of({**OK, "nvme": {"nvme0": None}})[0], 99)
+check("duty NIC without reading is fine", duty_of({**OK, "nic": {"eth": None}})[0], 50)
+check("duty fan failure", duty_of(OK, fan_fail=True), (99, None))
+check("duty full mode keeps the critical reason",
+      duty_of({**OK, "cpu": 96.0}, fan_mode="full"), (99, "cpu 96°C >= 95°C"))
+check("duty 0.0 °C is a reading", duty_of({**OK, "cpu": 0.0, "disk": {"bay1": 0.0}}), (50, None))
+fan = m.Fan(dict(m.DEFAULTS))
+check("duty recovers after the sensor returns",
+      [fan.duty(x)[0] for x in ({**OK, "cpu": None}, OK)], [99, 50])
+
+# --- 0.0 °C readings in sensors() (fake hwmon / sysfs) ---
+with tempfile.TemporaryDirectory() as d:
+    real_by_name, real_path = m.hwmon_by_name, os.environ["PATH"]
+    hw = {}
+    for name, files in (("k10temp", {"temp1_input": "0", "temp1_label": "Tctl",
+                                     "temp2_input": "50000"}),
+                        ("nvme", {"temp1_input": "0", "temp1_label": "Composite",
+                                  "temp2_input": "60000"})):
+        os.makedirs(f"{d}/{name}")
+        for fn, v in files.items():
+            with open(f"{d}/{name}/{fn}", "w") as fh:
+                fh.write(v)
+        hw[name] = [f"{d}/{name}"]
+    os.makedirs(f"{d}/ctrl/nvme0"); os.makedirs(f"{d}/ctrl/nvme1")
+    os.makedirs(f"{d}/block/sda/device/hwmon/hwmon9"); os.makedirs(f"{d}/block/sdb/device")
+    with open(f"{d}/block/sda/device/hwmon/hwmon9/temp1_input", "w") as fh:
+        fh.write("0")
+    m.hwmon_by_name = lambda n: hw.get(n, [])
+    m.SYS_BLOCK, m.NVME_CLASS = f"{d}/block", f"{d}/ctrl"
+    os.environ["PATH"] = "/nonexistent"                       # no hdparm
+    try:
+        s = m.sensors({1: "sda", 2: "sdb"})
+    finally:
+        m.hwmon_by_name, os.environ["PATH"] = real_by_name, real_path
+    check("sensors: Tctl 0.0 °C kept", s["cpu"], 0.0)
+    check("sensors: disk 0.0 °C kept, disk without drivetemp = None", s["disk"],
+          {"bay1": 0.0, "bay2": None})
+    check("sensors: NVMe Composite 0.0 °C kept, controller without hwmon = None",
+          sorted(s["nvme"].values(), key=str), [0.0, None])
+
+# --- fans: unreadable tach with the platform hwmon present ---
+with tempfile.TemporaryDirectory() as d:
+    for fn, v in (("fan1_input", "1200"), ("fan1_alarm", "0")):     # fan2 attributes missing
+        with open(f"{d}/{fn}", "w") as fh:
+            fh.write(v)
+    fans = m.fans_of([d])
+    check("fans_of lists both fans", fans,
+          [{"fan": 1, "rpm": 1200, "alarm": 0}, {"fan": 2, "rpm": None, "alarm": None}])
+    fh_ = m.FanHealth()
+    check("unreadable tach: 1 cycle tolerated (ENODATA after probe)",
+          fh_.update([f["alarm"] for f in fans], 0), False)
+    check("unreadable tach: 2 cycles = failure", fh_.update([f["alarm"] for f in fans], 20), True)
+    check("no platform hwmon: no fans", m.fans_of([]), [])
+
+# --- config validation ---
+check("conf defaults", m.validate_conf({}), m.DEFAULTS)
+bad = {"power_button": True, "fan_period": 0, "fan_min_duty": 12.5, "hysteresis": -1,
+       "fan_mode": "turbo", "led_brightness": 1000, "disk_standby_minutes": "20",
+       "reset_button": "command:", "wol": 1, "nonsense": 3, "led_activity_hz": 4}
+c = m.validate_conf(bad)
+check("conf bool for a string -> default", c["power_button"], "poweroff")
+check("conf fan_period 0 -> clamped to 5", c["fan_period"], 5)
+check("conf float duty -> default", c["fan_min_duty"], 0)
+check("conf hysteresis -1 -> 0", c["hysteresis"], 0)
+check("conf unknown fan_mode -> default", c["fan_mode"], "low")
+check("conf led_brightness 1000 -> 255", c["led_brightness"], 255)
+check("conf string minutes -> default", c["disk_standby_minutes"], 0)
+check("conf empty command -> default", c["reset_button"], "log")
+check("conf int for a bool -> default", c["wol"], False)
+check("conf unknown keys dropped", ("nonsense" in c, "led_activity_hz" in c), (False, False))
+good = {"power_button": "command:/usr/local/bin/x", "fan_period": 60, "fan_min_duty": 70,
+        "fan_mode": "high", "wol": True, "reset_button": "ignore"}
+check("conf valid values kept", {k: m.validate_conf(good)[k] for k in good}, good)
+check("conf only DEFAULTS keys", set(c), set(m.DEFAULTS))
+
+# --- uP writes: EIO retried, then raised; fail-safe never raises ---
+r, w = os.pipe()
+up3 = m.MicroP.__new__(m.MicroP); up3.init_common(); up3.fd = w
+calls = []
+
+
+def flaky(fd, data, real=os.write):
+    calls.append(data)
+    if len(calls) == 1:
+        raise OSError(m.errno.EIO, "Input/output error")
+    return real(fd, data)
+
+
+real_write, m.os.write = m.os.write, flaky
+try:
+    up3.send("V50")
+finally:
+    m.os.write = real_write
+check("send: EIO retried", (len(calls), os.read(r, 16)), (2, b"V50"))
+m.os.write = lambda *_: (_ for _ in ()).throw(OSError(m.errno.EIO, "Input/output error"))
+try:
+    try:
+        up3.send("V50"); raised = False
+    except OSError:
+        raised = True
+    check("send: persistent EIO raised", raised, True)
+    up3.fail_safe()
+    check("fail_safe swallows the error", True, True)
+finally:
+    m.os.write = real_write
+up3.fail_safe()
+check("fail_safe writes V99", os.read(r, 16), b"V99")
+os.close(r); os.close(w)
+
+# --- status file: broken JSON / missing keys ---
+with tempfile.TemporaryDirectory() as d:
+    m.STATUS = f"{d}/status.json"
+    for content, want in (("{not json", "unreadable"), ('{"time": 1}', "unexpected content")):
+        with open(m.STATUS, "w") as fh:
+            fh.write(content)
+        try:
+            m.status(); got = "ok"
+        except SystemExit as e:
+            got = str(e)
+        check(f"status with {content!r}", want in got, True)
+
+
+def test_all():
+    """pytest entry point: the checks above run at import time."""
+    assert failures == 0, f"{failures} FAILED"
+
+
+if __name__ == "__main__":
+    print("ALL OK" if not failures else f"{failures} FAILED")
+    raise SystemExit(1 if failures else 0)
