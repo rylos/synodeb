@@ -1,0 +1,47 @@
+# Quick checks on every push and pull request: synohwd tests, the packaged copy of synohwd,
+# shellcheck and a syntax check of the shell scripts. No hardware, no kernel build.
+name: test
+
+on:
+  push:
+  pull_request:
+
+permissions: {}
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+
+      - name: synohwd tests
+        run: python3 -I synohwd/test_synohwd.py
+
+      - name: Packaged synohwd is synohwd/synohwd.py
+        run: |
+          cmp synohwd/synohwd.py pkg/synology-ds923/usr/sbin/synohwd ||
+              { echo "pkg/synology-ds923/usr/sbin/synohwd differs from synohwd/synohwd.py: copy it" >&2; exit 1; }
+
+      - name: Shell scripts
+        run: |
+          # every tracked file starting with a sh/bash shebang, plus lib.sh (sourced, no shebang)
+          sh_scripts=() all=()
+          while IFS= read -r f; do
+              case $(head -n 1 "$f") in
+                  '#!/bin/sh'*) sh_scripts+=("$f"); all+=("$f") ;;
+                  '#!/bin/bash'*|'#!/usr/bin/env bash'*) all+=("$f") ;;
+              esac
+          done < <(git ls-files | grep -v '^kernel/patches/')
+          printf '%s\n' "${all[@]}" installer/files/lib.sh
+          # syntax, with the POSIX shell the scripts run with (dash; busybox sh in d-i and initramfs)
+          for f in "${sh_scripts[@]}" installer/files/lib.sh; do dash -n "$f"; done
+          for f in "${all[@]}"; do case $(head -n 1 "$f") in *bash*) bash -n "$f" ;; esac; done
+          # warnings and errors; info and style notes are not enforced
+          shellcheck --severity=warning "${all[@]}"
+          # lib.sh only defines variables and functions for early and finish
+          shellcheck --severity=warning --shell=sh --exclude=SC2034 installer/files/lib.sh
