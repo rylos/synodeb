@@ -66,9 +66,15 @@ administrator account. The installer downloads Debian from the internet.
    sudo bash synodeb-setup.sh install
    ```
 
-   It asks three questions (network, host name, language), backs up the DOM, adds the Debian
-   installer to it and prints how to connect, including a one-time password. **Copy the DOM
-   backup off the NAS.**
+   It asks for the network (`dsm` or `dhcp`), the host name and the installer language,
+   backs up the DOM, asks before writing it, adds the Debian installer to it and prints how to
+   connect, including a one-time password. **Copy the DOM backup off the NAS.**
+
+   While it writes the DOM the script ignores a dropped SSH session and Ctrl-C, but a
+   session that drops earlier stops it. On an unreliable connection run it under `screen` or
+   `tmux` if you have them, or detached:
+   `sudo nohup bash synodeb-setup.sh install --yes > setup.log 2>&1` (add `--network`,
+   `--hostname`, `--lang` as needed) and read the password in `setup.log`.
 3. **Reboot** the NAS (`sudo reboot`). After 2-3 minutes it gives **one long beep**: the
    installer is ready.
 4. **Connect** with the command and password the script printed:
@@ -79,7 +85,9 @@ administrator account. The installer downloads Debian from the internet.
 
    Choose *Start installer* and follow the Debian installer. In *Partition disks* select
    where Debian goes (see [Keeping DSM](#keeping-dsm)); do not choose *encrypted LVM*, an
-   encrypted root cannot be unlocked at boot. The SSH session stays up for the
+   encrypted root cannot be unlocked at boot. The DOM (the 128 MB disk with two small
+   partitions) is shown as installation media and locked: leave it alone, the NAS cannot
+   boot without it. The SSH session stays up for the
    whole installation; if it drops, connect again and the installer is where you left it.
 5. At the end the NAS reboots into Debian. Log in with the user you created:
    `ssh <user>@<address>`. With `--network dsm` Debian keeps the address DSM had; with
@@ -87,6 +95,12 @@ administrator account. The installer downloads Debian from the internet.
 
 If the installer gets no network within 20 minutes it reboots into DSM by itself, and until
 the installation completes any reboot brings DSM back.
+
+If the installer cannot switch the DOM back to DSM when it starts, the status LED turns
+orange with three short beeps, and after 20 minutes without SSH there are five short beeps
+and no reboot (it would start the installer again). Connect over SSH and complete the
+installation, or choose *Execute a shell* and switch the DOM by hand:
+`. /usr/lib/synodeb-installer/lib.sh; dom_unprotect; dom_default SYNOLOGY_2; dom_protect`.
 
 ## Keeping DSM
 
@@ -96,7 +110,14 @@ synodeb never changes DSM: it only adds its boot entries and files to the DOM.
 To keep DSM, install Debian **on a disk DSM does not use**: an empty disk in a free bay, or an
 NVMe drive that is not part of a DSM volume. In the installer's *Partition disks* step choose
 *Manual* or *Guided – use entire disk* on that disk only, and leave the DSM disks as they are.
-The installer never assembles the DSM RAID arrays, so they cannot be changed by accident.
+The installer never assembles the DSM RAID arrays, so they cannot be changed by accident, and
+it keeps the DOM out of guided partitioning and locks it in manual partitioning: never delete
+or format it.
+
+The installed Debian keeps that rule: `/etc/mdadm/mdadm.conf` lists the arrays that exist at
+the end of the installation and has `AUTO -all`, so DSM's arrays are never assembled. An
+array created later is assembled at boot once its line is added there: copy it from
+`sudo mdadm --detail --scan`, then run `sudo update-initramfs -u`.
 
 To use the DSM disks for Debian instead, just select them in the partitioner and let it erase
 them: DSM and its data on those disks are gone.
@@ -118,28 +139,39 @@ Runs on DSM, as root. Without arguments it shows a menu; every entry is also a c
 
 | command | what it does |
 |---|---|
-| `install` | backs up the DOM and adds the Debian installer to it, made the default boot entry |
+| `install` | backs up the DOM and adds the Debian installer to it, made the default boot entry; the kernel of an installed Debian stays on the DOM (see `--replace-debian`) |
 | `boot debian` | makes the installed Debian the default boot entry |
 | `boot dsm` | makes DSM the default boot entry |
 | `status` | shows the boot entries, the default one and the files of synodeb on the DOM |
-| `cancel` | removes the installer from the DOM; DSM boots (an installed Debian stays) |
-| `restore FILE` | writes a DOM backup back, byte for byte, and verifies it |
+| `cancel` | removes the installer from the DOM; DSM boots (an installed Debian stays: `boot debian` makes it the default again) |
+| `restore FILE` | writes a DOM backup back, byte for byte, and verifies it; works on a damaged DOM too |
 | `uninstall` | advanced: removes everything synodeb put on the DOM (boot entries, kernels, installer, markers) and puts the original Synology boot configuration back |
 
 Options of `install`:
 
 | option | default | |
 |---|---|---|
-| `--network dsm\|dhcp` | asked (`dsm`) | `dsm`: the installer uses the address DSM has now, as a static address; `dhcp`: an address from the DHCP server |
-| `--hostname NAME` | asked (DSM host name) | host name of the Debian system |
+| `--network dsm\|dhcp` | asked (`dsm`, or `dhcp` if DSM uses DHCP) | `dsm`: the installer uses the address DSM has now, as a static address; `dhcp`: an address from the DHCP server. With a DSM bond or Open vSwitch the installer uses one port only, without link aggregation |
+| `--hostname NAME` | asked (DSM host name) | host name of the Debian system: letters, digits and `-` |
 | `--lang en\|it\|de\|fr\|es\|nl\|pt` | asked (`en`) | language and keyboard layout of the installer |
 | `--backup-dir DIR` | current folder | where the DOM backup goes |
 | `--yes` | | no questions, defaults for everything not given |
 | `--local DIR` | | take `vmlinuz` and `installer.img` from DIR instead of downloading them |
-| `--repo URL` | synodeb repository | apt repository for the installed system |
+| `--repo URL` | synodeb repository | apt repository for the installed system (`http://` or `https://`) |
+| `--replace-debian` | | when the DOM has no room for the installer next to the kernel of an installed Debian, remove that Debian from the DOM instead of stopping (without it the script asks, even with `--yes`) |
 
-Every write to the DOM works on a copy: the copy is checked, written back with `dd`, read back
-and compared. If a write fails, the DOM backup is written back automatically.
+Options can come before or after the command.
+
+Every write to the DOM works on a copy: the copy is checked, the partition is checked to be
+unchanged since it was read, then the copy is written back with `dd`, read back from the
+device and compared. If a write fails, what was there before is written back automatically:
+the DOM backup for `install` and `uninstall`, the copy of the partition read before the change
+for the other commands. While the DOM is written, a dropped SSH session, Ctrl-C and `kill`
+(TERM) are ignored.
+
+The one-time SSH password of the installer is in the INSTALLER boot entry on the DOM (and on
+the installer's kernel command line) only: it is removed when the installation completes, by
+`cancel` and by `uninstall`. DOM backups are readable by root only.
 
 ## On the installed system
 
