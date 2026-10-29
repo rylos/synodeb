@@ -5,7 +5,7 @@ Maintainer: Marco Ziliani <508111+rylos@users.noreply.github.com>
 Depends: linux-image-ds923-longterm | linux-image-ds923-stable | linux-image-ds923, python3 (>= 3.11), hdparm, nvme-cli, ethtool, util-linux, iproute2, initramfs-tools, systemd, coreutils, xz-utils, mawk | gawk
 Conflicts: systemd-boot
 Recommends: nut-server, nut-client, nftables, smartmontools, lm-sensors, mdadm, lvm2, cryptsetup-bin, btrfs-progs, zstd, curl, msmtp, unattended-upgrades
-Section: kernel
+Section: admin
 Priority: optional
 Homepage: https://github.com/rylos/synodeb
 Description: Debian on the Synology DS923+: hardware support
