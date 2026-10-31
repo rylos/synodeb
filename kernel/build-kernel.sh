@@ -73,7 +73,8 @@ scripts/kconfig/merge_config.sh -m .config /work/kernel/ds923.config /work/kerne
 make olddefconfig
 for o in SYNOLOGY_DS923=y LEDS_ATMEGA1608=m RTC_DRV_S35390A=y RTC_DRV_CMOS=m PINCTRL_AMD=y \
          SERIAL_8250_DW=y I2C_DESIGNWARE_PLATFORM=y EFI_VARS_PSTORE_DEFAULT_DISABLE=y \
-         ATA_LEDS=y LEDS_TRIGGER_TIMER DEBUG_INFO_NONE; do
+         ATA_LEDS=y LEDS_TRIGGER_TIMER DEBUG_INFO_NONE \
+         SYNOLOGY_EUNIT_9705=m SATA_PMP_VENDOR_EH=y; do
     grep -E "^CONFIG_$o" .config || { echo "missing CONFIG_$o"; exit 1; }
 done
 make -j"$(nproc)" bindeb-pkg KDEB_PKGVERSION="$PKGVER" LOCALVERSION="-$ABI-ds923"
