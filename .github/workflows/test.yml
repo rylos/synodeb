@@ -22,6 +22,9 @@ jobs:
       - name: synohwd tests
         run: python3 -I synohwd/test_synohwd.py
 
+      - name: Expansion-unit driver tests (encoding, unit table, write guard)
+        run: kernel/tests/eunit-9705/run-tests.sh
+
       - name: Packaged synohwd is synohwd/synohwd.py
         run: |
           cmp synohwd/synohwd.py pkg/synology-ds923/usr/sbin/synohwd ||
