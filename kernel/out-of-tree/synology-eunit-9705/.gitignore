@@ -1,0 +1,11 @@
+# copies made by "make sources" and build output
+/synology_eunit_9705.c
+/synology_eunit_9705.h
+*.o
+*.ko
+*.mod
+*.mod.c
+*.cmd
+.*.cmd
+modules.order
+Module.symvers
