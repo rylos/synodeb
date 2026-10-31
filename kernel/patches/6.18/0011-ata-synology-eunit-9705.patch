@@ -1,0 +1,41 @@
+diff --git a/drivers/ata/Kconfig b/drivers/ata/Kconfig
+index afe97620f..36732fae8 100644
+--- a/drivers/ata/Kconfig
++++ b/drivers/ata/Kconfig
+@@ -137,6 +137,24 @@ config SATA_AHCI
+ 
+ 	  If unsure, say N.
+ 
++config SYNOLOGY_EUNIT_9705
++	tristate "Synology expansion units with Marvell 88SM9705 PMPs"
++	depends on SATA_AHCI && SATA_PMP && PCI && DMI
++	depends on X86 || COMPILE_TEST
++	depends on LEDS_CLASS && HWMON
++	select SATA_PMP_VENDOR_EH
++	help
++	  Fans, fan alarms and orange bay LEDs of Synology expansion units
++	  built on Marvell 88SM9705 port multipliers (DX1215, DX517,
++	  RX418, DX1222, DX1215II, RX413, RX1214, RX1217), through the
++	  GPIO pins of the PMPs. Exposes one hwmon device (pwm1 with three
++	  levels, fan alarms) and one orange LED per bay for each unit.
++
++	  It only looks at AHCI ports of Synology hosts (DMI), or at the
++	  ports named with its "ports" parameter, and only acts where an
++	  88SM9705 PMP is attached. To compile this driver as a module,
++	  choose M here: the module will be called synology_eunit_9705.
++
+ config SATA_MOBILE_LPM_POLICY
+ 	int "Default SATA Link Power Management policy"
+ 	range 0 5
+diff --git a/drivers/ata/Makefile b/drivers/ata/Makefile
+index 20e6645ab..52fe927b0 100644
+--- a/drivers/ata/Makefile
++++ b/drivers/ata/Makefile
+@@ -4,6 +4,7 @@ obj-$(CONFIG_ATA)		+= libata.o
+ 
+ # non-SFF interface
+ obj-$(CONFIG_SATA_AHCI)		+= ahci.o libahci.o
++obj-$(CONFIG_SYNOLOGY_EUNIT_9705)	+= synology_eunit_9705.o
+ obj-$(CONFIG_SATA_ACARD_AHCI)	+= acard-ahci.o libahci.o
+ obj-$(CONFIG_SATA_AHCI_SEATTLE)	+= ahci_seattle.o libahci.o libahci_platform.o
+ obj-$(CONFIG_SATA_AHCI_PLATFORM) += ahci_platform.o libahci.o libahci_platform.o
