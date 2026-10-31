@@ -27,7 +27,8 @@
  *
  * Binding: the driver looks at AHCI ports of supported Synology hosts only
  * (DMI vendor "Synology Inc."; the DS2415+, whose BIOS has placeholder DMI
- * strings, by DMI and PCI topology), plus the ports named with the "ports"
+ * strings, by DMI or, when the kernel has no DMI, by the ACPI FADT OEM IDs,
+ * and in both cases by PCI topology), plus the ports named with the "ports"
  * parameter. On those ports it acts only where a 1b4b:9705 PMP is attached,
  * so the internal bays that share a controller with an eSATA port are never
  * touched, and neither is a 88SM9705 on any other machine (generic eSATA
@@ -40,6 +41,7 @@
  * syno-eunitK:orange:diskN.
  */
 
+#include <linux/acpi.h>
 #include <linux/ctype.h>
 #include <linux/delay.h>
 #include <linux/device.h>
@@ -934,6 +936,39 @@ static const struct dmi_system_id eu_dmi_all[] = {
 };
 MODULE_DEVICE_TABLE(dmi, eu_dmi_all);
 
+/*
+ * DS2415+ without DMI: a kernel started by kexec without EFI tables (the
+ * DS2415+ BIOS publishes SMBIOS only through EFI, there is no legacy entry
+ * point) sees no DMI, but ACPI is there. Measured on a DS2415+ (BIOS M.211):
+ * every table has OEM ID "INSYDE" and OEM table ID "MOHOPEAK". Those are
+ * Insyde's Avoton reference-board IDs, so eu_find_ds2415p() still checks
+ * the PCI topology. The module alias below is the Avoton PCU, so the
+ * module also loads on such a kernel.
+ */
+static bool eu_acpi_ds2415p(void)
+{
+#ifdef CONFIG_ACPI
+	struct acpi_table_header *h;
+	bool ok;
+
+	if (acpi_disabled ||
+	    ACPI_FAILURE(acpi_get_table(ACPI_SIG_FADT, 0, &h)))
+		return false;
+	ok = !memcmp(h->oem_id, "INSYDE", ACPI_OEM_ID_SIZE) &&
+	     !memcmp(h->oem_table_id, "MOHOPEAK", ACPI_OEM_TABLE_ID_SIZE);
+	acpi_put_table(h);
+	return ok;
+#else
+	return false;
+#endif
+}
+
+static const struct pci_device_id eu_pci_avoton[] = {
+	{ PCI_DEVICE(PCI_VENDOR_ID_INTEL, 0x1f38) },
+	{ }
+};
+MODULE_DEVICE_TABLE(pci, eu_pci_avoton);
+
 /* takes the reference of @pdev */
 static int eu_add(struct pci_dev *pdev, u32 mask)
 {
@@ -1037,7 +1072,8 @@ static int __init eu_init(void)
 {
 	int i, ret;
 
-	if (dmi_check_system(eu_dmi_ds2415p))
+	if (dmi_check_system(eu_dmi_ds2415p) ||
+	    (!dmi_get_system_info(DMI_SYS_VENDOR) && eu_acpi_ds2415p()))
 		eu_find_ds2415p();
 	else if (dmi_check_system(eu_dmi_synology))
 		eu_find_synology();
