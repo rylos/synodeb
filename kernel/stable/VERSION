@@ -7,8 +7,8 @@
 # Moving to the next series (7.4) is done by hand: kernel/patches/<x.y> and
 # kernel/config-debian-<x.y> must exist for it.
 SERIES=stable
-KVER=7.3
-ABI=3
+KVER=7.3.1
+ABI=4
 # derived
 KMAJ=${KVER%%.*}; KMIN=${KVER#*.}; KMIN=${KMIN%%.*}
 KBRANCH=$KMAJ.$KMIN             # 7.3: kernel/patches/7.3, kernel/config-debian-7.3
