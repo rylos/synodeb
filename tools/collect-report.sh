@@ -6,7 +6,11 @@
 # Privacy: the host name, MAC addresses, serial numbers (incl. sn=/mac=/macs= on a DSM kernel
 # command line), IPv4 addresses and UUIDs are replaced before the file is written. Best effort:
 # read the file before attaching it. Disk models and firmware versions stay (they matter).
+umask 077
 out="./synodeb-report-$(date +%Y%m%d-%H%M).txt"
+if [ -e "$out" ] || [ -L "$out" ]; then echo "$out already exists, not overwriting it" >&2; exit 1; fi
+tmp=$(mktemp ./synodeb-report.XXXXXX) || exit 1
+trap 'rm -f "$tmp"' EXIT
 host=$(hostname 2>/dev/null)
 sec() { printf '\n===== %s\n' "$*"; }
 run() { sec "$*"; sh -c "$*" 2>&1 | head -n 4000; }
@@ -40,9 +44,13 @@ have i2cdetect && run "i2cdetect -l"
 run "cat /proc/interrupts | head -n 80"
 # the whole kernel log of this boot (level 2 of the form)
 if have journalctl; then run "journalctl -k -b --no-pager"; else run "dmesg"; fi
-} > "$out.tmp"
+} > "$tmp"
 # mask MAC addresses and serial numbers before sharing
-sed -E 's/([0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}/xx:xx:xx:xx:xx:xx/g; s/\b((sn|SN|mac[0-9]*|macs|MAC[0-9]*|vender|netif_num|hw_serial)=)[^ ]+/\1REDACTED/g; s/([Ss][Ee][Rr][Ii][Aa][Ll][ _A-Za-z.]*[:=] *)[^ ,]+/\1REDACTED/g; s/\b([0-9]{1,3}\.){3}[0-9]{1,3}\b/x.x.x.x/g; s/[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}/UUID/g' "$out.tmp" > "$out"
-rm -f "$out.tmp"
-if [ -n "$host" ] && [ "$host" != localhost ]; then h=$(printf %s "$host" | sed "s/[.[\*^$/]/\\&/g"); sed -i "s/\b$h\b/HOST/g" "$out"; fi
+sed -E 's/([0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}/xx:xx:xx:xx:xx:xx/g; s/\b((sn|SN|mac[0-9]*|macs|MAC[0-9]*|vender|netif_num|hw_serial)=)[^ ]+/\1REDACTED/g; s/([Ss][Ee][Rr][Ii][Aa][Ll][ _A-Za-z.]*[:=] *)[^ ,]+/\1REDACTED/g; s/\b([0-9]{1,3}\.){3}[0-9]{1,3}\b/x.x.x.x/g; s/[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}/UUID/g' "$tmp" > "$out"
+# host name (full, then the part before the first dot), regex characters escaped
+for n in "$host" "${host%%.*}"; do
+    if [ -n "$n" ] && [ "$n" != localhost ]; then
+        h=$(printf %s "$n" | sed 's/[][\.*^$/]/\\&/g'); sed -i "s/\b$h\b/HOST/g" "$out"
+    fi
+done
 echo "wrote $out ($(wc -l < "$out") lines). Please read it before attaching."
