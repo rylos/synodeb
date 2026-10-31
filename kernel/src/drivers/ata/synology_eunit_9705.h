@@ -33,8 +33,23 @@
 #define EU_REG_OUT		0x3a0
 #define EU_REG_EN		0x3a4
 #define EU_REG_IN		0x3b0
+#define EU_REG_POL		0x3ac	/* GPIO input polarity */
+#define EU_POL_ALL		0xfffffU
 #define EU_EN_ALL_OUT		0xfffffU	/* before every 0x3a0 write */
 #define EU_EN_READ		0xfc7c0U	/* before reading 0x3b0 */
+/*
+ * Power-on state of a PMP whose GPIO block nobody has set up yet (measured on
+ * the three slave PMPs of a DX1215 after a power cycle: 0x3a0 = 0, 0x3a4 =
+ * 0x107c0). The driver sets such a PMP up (output enable 0xfffff) the first
+ * time it meets this state, ending idle: both strobes high,
+ * page 3 selected (0x6c000, measured on every PMP after set-up).
+ */
+#define EU_EN_POWERON		0x107c0U
+/*
+ * Input polarity (0x3ac): set to 0xfffff when a PMP is set up. Left at its
+ * power-on value, every input bit reads inverted (measured: slave page 0 0xcc instead of 0x33).
+ */
+#define EU_R_IDLE		(EU_R_WCTL | EU_R_RCTL | EU_R_PAGE(3))
 
 #define EU_R_WCTL		(1U << 14)	/* write strobe, active low */
 #define EU_R_RCTL		(1U << 15)	/* read strobe, active low */
@@ -112,6 +127,8 @@ static inline bool eu_write_ok(const struct eu_guard *g, u16 reg, u32 val)
 {
 	if (reg == EU_REG_EN)
 		return val == EU_EN_ALL_OUT || val == EU_EN_READ;
+	if (reg == EU_REG_POL)
+		return val == EU_POL_ALL;
 	if (reg == EU_REG_OUT)
 		return EU_R_SELECT_OK(val) || eu_data_ok(g, val);
 	return false;

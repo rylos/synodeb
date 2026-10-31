@@ -82,6 +82,8 @@ static bool ref_write_ok(const struct eu_guard *g, u16 reg, u32 val)
 
 	if (reg == 0x3a4)
 		return val == 0xfffff || val == 0xfc7c0;
+	if (reg == 0x3ac)		/* GPI polarity: only the GPL set-up value */
+		return val == 0xfffff;
 	if (reg != 0x3a0)
 		return false;
 	/* page select: write strobe high, only strobes and page bits */
@@ -126,7 +128,8 @@ static void test_encoding(void)
 		}
 	}
 	EXPECT(EU_EN_ALL_OUT == 0xfffff && EU_EN_READ == 0xfc7c0, "output enable values");
-	EXPECT(EU_REG_OUT == 0x3a0 && EU_REG_EN == 0x3a4 && EU_REG_IN == 0x3b0, "registers");
+	EXPECT(EU_REG_OUT == 0x3a0 && EU_REG_EN == 0x3a4 && EU_REG_IN == 0x3b0 &&
+	       EU_REG_POL == 0x3ac, "registers");
 }
 
 static void test_table(void)
@@ -248,6 +251,7 @@ static void test_guard(void)
 			for (v = 0; v < (1u << 20); v++) {
 				if (eu_write_ok(&g, EU_REG_OUT, v) != ref_write_ok(&g, EU_REG_OUT, v) ||
 				    eu_write_ok(&g, EU_REG_EN, v) != ref_write_ok(&g, EU_REG_EN, v) ||
+				    eu_write_ok(&g, EU_REG_POL, v) != ref_write_ok(&g, EU_REG_POL, v) ||
 				    eu_write_ok(&g, EU_REG_IN, v) || eu_write_ok(&g, 0x3a8, v)) {
 					EXPECT(0, "%s armed %d word 0x%05x", t->name, armeds[ai], v);
 					break;

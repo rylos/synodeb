@@ -283,6 +283,7 @@ static int eu_cycle_fn(struct ata_port *ap, void *data)
 	struct eu_req *r = data;
 	unsigned int pages = r->pages, err;
 	int pg, rc = 0;
+	u32 pol;
 
 	r->g.armed = -1;
 	r->g.valid = 0;
@@ -293,6 +294,22 @@ static int eu_cycle_fn(struct ata_port *ap, void *data)
 		err = sata_pmp_vendor_read(ap, EU_REG_EN, &r->en);
 	if (err)
 		return -EIO;
+	/* input polarity 0xfffff; otherwise inputs read inverted */
+	err = sata_pmp_vendor_read(ap, EU_REG_POL, &pol);
+	if (!err && pol != EU_POL_ALL) {
+		err = eu_write(ap, r, EU_REG_POL, EU_POL_ALL);
+		if (!err)
+			err = sata_pmp_vendor_read(ap, EU_REG_POL, &pol);
+		if (!err && pol != EU_POL_ALL)
+			err = AC_ERR_OTHER;
+	}
+	if (err)
+		return -EIO;
+	/* never set up since power-on: end in the set-up idle state instead */
+	if (r->out == 0 && r->en == EU_EN_POWERON) {
+		r->out = EU_R_IDLE;
+		r->en = EU_EN_ALL_OUT;
+	}
 	/* not a state we could put back: leave the PMP alone */
 	if (!EU_R_SELECT_OK(r->out) ||
 	    (r->en != EU_EN_ALL_OUT && r->en != EU_EN_READ))
