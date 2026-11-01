@@ -8,6 +8,8 @@
 # themselves. It also prints the DOM partition identity (FAT volume id, ext2 UUID, sizes)
 # that synodeb-setup.sh checks before it touches the DOM. Under DSM, hot-plugging a disk into an empty bay is safe: DSM only lists the new
 # disk, it does not touch it until you create something on it. Use a disk without data you need.
+# Only use empty bays: skip a bay that holds a disk, and never remove a disk that belongs to a
+# storage pool (the pool would become degraded).
 #
 # Output: ./synodeb-board-<date>.txt  (attach it to your hardware report)
 umask 077
@@ -44,6 +46,8 @@ tmpd=$(mktemp -d ./synodeb-board.XXXXXX) || exit 1
 trap 'rm -rf "$tmpd"' EXIT
 log() { printf '%s\n' "$*" | tee -a "$out"; }
 ask() { printf '\n%s\nPress Enter when done (or type s and Enter to skip): ' "$*"; read -r a; [ "$a" != s ]; }
+echo "Only empty bays are used. Skip (s) every step for a bay that already holds a disk:"
+echo "never pull a disk that belongs to a storage pool."
 
 log "===== synodeb board map $(date -u +%FT%TZ)"
 log "model: $(cat /proc/sys/kernel/syno_hw_version 2>/dev/null || cat /sys/class/dmi/id/product_name 2>/dev/null)"
@@ -73,11 +77,11 @@ awk '{ seen[$1 " " $3] = 1; pins[$1] = 1 } END { for (p in pins) if ((p " high")
 
 prev=$base
 for step in \
-    "Insert a disk into bay 3 (an empty bay). Wait until its activity LED lights up or DSM lists it (about 30 s)." \
+    "Insert a disk into bay 3 (skip if bay 3 holds a disk). Wait until its activity LED lights up or DSM lists it (about 30 s)." \
     "Remove the disk from bay 3. Wait 15 s." \
-    "Insert the disk into bay 4. Wait about 30 s." \
+    "Insert the disk into bay 4 (skip if bay 4 holds a disk). Wait about 30 s." \
     "Remove the disk from bay 4. Wait 15 s." \
-    "Insert the disk into bay 5. Wait about 30 s." \
+    "Insert the disk into bay 5 (skip if bay 5 holds a disk). Wait about 30 s." \
     "Remove the disk from bay 5. Wait 15 s."
 do
     if ask "$step"; then
