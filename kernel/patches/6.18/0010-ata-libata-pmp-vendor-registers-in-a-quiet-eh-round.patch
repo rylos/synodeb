@@ -36,7 +36,7 @@ diff --git a/drivers/ata/libata-pmp.c b/drivers/ata/libata-pmp.c
 index 01898fd..22ca376 100644
 --- a/drivers/ata/libata-pmp.c
 +++ b/drivers/ata/libata-pmp.c
-@@ -1127,3 +1127,233 @@ void sata_pmp_error_handler(struct ata_port *ap)
+@@ -1127,3 +1127,284 @@ void sata_pmp_error_handler(struct ata_port *ap)
  EXPORT_SYMBOL_GPL(sata_pmp_port_ops);
  EXPORT_SYMBOL_GPL(sata_pmp_qc_defer_cmd_switch);
  EXPORT_SYMBOL_GPL(sata_pmp_error_handler);
@@ -52,15 +52,20 @@ index 01898fd..22ca376 100644
 + * for it.
 + */
 +#define SATA_PMP_VENDOR_TRIES	3
++#define SATA_PMP_VENDOR_WAIT	(10 * HZ)	/* per call, for EH to settle */
 +
 +static DEFINE_MUTEX(sata_pmp_vendor_mutex);	/* one call at a time */
 +
-+/* The pending call: set and cleared under req.ap->lock, with the mutex held. */
++/*
++ * The pending call: set and cleared under req.ap->lock, with the mutex
++ * held. running: the EH thread has taken it and is in ->fn.
++ */
 +static struct {
 +	struct ata_port *ap;
 +	int (*fn)(struct ata_port *ap, void *data);
 +	void *data;
 +	int rc;
++	bool running;
 +	bool done;
 +} sata_pmp_vendor_req;
 +
@@ -189,9 +194,11 @@ index 01898fd..22ca376 100644
 +	if (READ_ONCE(sata_pmp_vendor_req.ap) != ap)
 +		return false;
 +	spin_lock_irqsave(ap->lock, flags);
-+	if (sata_pmp_vendor_req.ap == ap && sata_pmp_eh_quiet(ap)) {
++	if (sata_pmp_vendor_req.ap == ap && sata_pmp_vendor_req.fn &&
++	    sata_pmp_eh_quiet(ap)) {
 +		fn = sata_pmp_vendor_req.fn;
 +		data = sata_pmp_vendor_req.data;
++		sata_pmp_vendor_req.running = true;
 +	}
 +	spin_unlock_irqrestore(ap->lock, flags);
 +	if (!fn)
@@ -202,12 +209,38 @@ index 01898fd..22ca376 100644
 +	spin_lock_irqsave(ap->lock, flags);
 +	sata_pmp_vendor_req.rc = rc;
 +	sata_pmp_vendor_req.done = true;
++	sata_pmp_vendor_req.running = false;
 +	sata_pmp_vendor_req.fn = NULL;
 +	spin_unlock_irqrestore(ap->lock, flags);
++	wake_up_all(&ap->eh_wait_q);
 +
 +	if (ata_port_is_frozen(ap))
 +		ap->ops->error_handler(ap);
 +	return true;
++}
++
++static bool sata_pmp_vendor_settled(struct ata_port *ap)
++{
++	unsigned long flags;
++	bool busy;
++
++	spin_lock_irqsave(ap->lock, flags);
++	busy = ata_port_eh_scheduled(ap);
++	spin_unlock_irqrestore(ap->lock, flags);
++	return !busy;
++}
++
++/* ata_port_wait_eh() with a deadline: -EAGAIN if EH of @ap is still busy */
++static int sata_pmp_vendor_wait_eh(struct ata_port *ap, unsigned long deadline)
++{
++	long left = (long)(deadline - jiffies);
++
++	if (!wait_event_timeout(ap->eh_wait_q, sata_pmp_vendor_settled(ap),
++				max(left, 1L)))
++		return -EAGAIN;
++	/* the end of the SCSI EH round that follows */
++	ata_port_wait_eh(ap);
++	return 0;
 +}
 +
 +/**
@@ -220,27 +253,30 @@ index 01898fd..22ca376 100644
 + *	it. @fn runs from the EH thread only in a round with no error, no
 + *	pending action and nothing in flight; other rounds are left to the
 + *	port's error handler and the request is tried again, up to
-+ *	SATA_PMP_VENDOR_TRIES rounds.
++ *	SATA_PMP_VENDOR_TRIES rounds. Waits for EH of @ap at most
++ *	SATA_PMP_VENDOR_WAIT in all; a call that @fn has started is waited
++ *	for until @fn returns (its commands have their own timeouts).
 + *
 + *	LOCKING:
 + *	Kernel thread context (may sleep).
 + *
 + *	RETURNS:
 + *	The return value of @fn, -ENODEV if no PMP is attached, -EAGAIN if
-+ *	no quiet round came.
++ *	no quiet round came or EH of @ap stayed busy.
 + */
 +int sata_pmp_vendor_call(struct ata_port *ap,
 +			 int (*fn)(struct ata_port *ap, void *data), void *data)
 +{
-+	unsigned long flags;
++	unsigned long deadline = jiffies + SATA_PMP_VENDOR_WAIT, flags;
 +	int i, rc = -EAGAIN;
-+	bool done = false;
++	bool done = false, running;
 +
 +	might_sleep();
 +	mutex_lock(&sata_pmp_vendor_mutex);
 +	for (i = 0; i < SATA_PMP_VENDOR_TRIES && !done; i++) {
 +		/* start from a settled port: never add a round to a running EH */
-+		ata_port_wait_eh(ap);
++		if (sata_pmp_vendor_wait_eh(ap, deadline))
++			break;
 +		spin_lock_irqsave(ap->lock, flags);
 +		if (!sata_pmp_attached(ap) ||
 +		    (ap->pflags & (ATA_PFLAG_UNLOADING | ATA_PFLAG_UNLOADED))) {
@@ -250,12 +286,25 @@ index 01898fd..22ca376 100644
 +		}
 +		sata_pmp_vendor_req.fn = fn;
 +		sata_pmp_vendor_req.data = data;
++		sata_pmp_vendor_req.running = false;
 +		sata_pmp_vendor_req.done = false;
 +		WRITE_ONCE(sata_pmp_vendor_req.ap, ap);
 +		ata_port_schedule_eh(ap);
 +		spin_unlock_irqrestore(ap->lock, flags);
 +
-+		ata_port_wait_eh(ap);
++		sata_pmp_vendor_wait_eh(ap, deadline);
++
++		spin_lock_irqsave(ap->lock, flags);
++		running = sata_pmp_vendor_req.running;
++		if (!running) {
++			/* not taken: withdraw it, @data is the caller's */
++			sata_pmp_vendor_req.fn = NULL;
++			WRITE_ONCE(sata_pmp_vendor_req.ap, NULL);
++		}
++		spin_unlock_irqrestore(ap->lock, flags);
++		if (running)
++			wait_event(ap->eh_wait_q,
++				   READ_ONCE(sata_pmp_vendor_req.done));
 +
 +		spin_lock_irqsave(ap->lock, flags);
 +		done = sata_pmp_vendor_req.done;
@@ -264,6 +313,8 @@ index 01898fd..22ca376 100644
 +		sata_pmp_vendor_req.fn = NULL;
 +		WRITE_ONCE(sata_pmp_vendor_req.ap, NULL);
 +		spin_unlock_irqrestore(ap->lock, flags);
++		if (!done && time_after_eq(jiffies, deadline))
++			break;
 +	}
 +	mutex_unlock(&sata_pmp_vendor_mutex);
 +	return rc;
