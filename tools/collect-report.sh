@@ -45,8 +45,9 @@ run "cat /proc/interrupts | head -n 80"
 # the whole kernel log of this boot (level 2 of the form)
 if have journalctl; then run "journalctl -k -b --no-pager"; else run "dmesg"; fi
 } > "$tmp"
-# mask MAC addresses and serial numbers before sharing
-sed -E 's/([0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}/xx:xx:xx:xx:xx:xx/g; s/\b((sn|SN|mac[0-9]*|macs|MAC[0-9]*|vender|netif_num|hw_serial)=)[^ ]+/\1REDACTED/g; s/([Ss][Ee][Rr][Ii][Aa][Ll][ _A-Za-z.]*[:=] *)[^ ,]+/\1REDACTED/g; s/\b([0-9]{1,3}\.){3}[0-9]{1,3}\b/x.x.x.x/g; s/[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}/UUID/g' "$tmp" > "$out"
+# mask MAC addresses and serial numbers before sharing (the last pattern: the serial at the
+# end of a DSM lsusb -t line, "(Manufacturer Product SERIAL)")
+sed -E 's/([0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}/xx:xx:xx:xx:xx:xx/g; s/\b((sn|SN|mac[0-9]*|macs|MAC[0-9]*|vender|netif_num|hw_serial)=)[^ ]+/\1REDACTED/g; s/([Ss][Ee][Rr][Ii][Aa][Ll][ _A-Za-z.]*[:=] *)[^ ,]+/\1REDACTED/g; s/\b([0-9]{1,3}\.){3}[0-9]{1,3}\b/x.x.x.x/g; s/[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}/UUID/g; s/^( *\|__.*\(.* )[A-Za-z]*[0-9][0-9A-Za-z]{5,}\)( hub)?$/\1REDACTED)\2/' "$tmp" > "$out"
 # host name (full, then the part before the first dot), regex characters escaped
 for n in "$host" "${host%%.*}"; do
     if [ -n "$n" ] && [ "$n" != localhost ]; then
