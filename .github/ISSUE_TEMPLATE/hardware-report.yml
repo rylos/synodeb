@@ -1,0 +1,228 @@
+name: Hardware report (NAS model or expansion unit)
+description: Send dmesg lines, boot logs or register dumps from your own unit. Every level helps.
+title: "hardware report: <host model> + <unit or none>"
+labels: ["hardware-report"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for helping. synodeb supports a model or an expansion unit once its hardware facts are
+        known: which controller a port is on, what a chip reports, which bit drives which fan or LED.
+        You don't need to write code; a few lines of `dmesg` from a unit nobody has measured yet are
+        often the missing piece. Fill in as many levels as you like and leave the rest empty.
+
+        **Reports of things that did not work are just as welcome.** Support for a unit is shipped
+        from the best information available and corrected from what owners see, rather than held
+        back until every detail has been measured. If a fan, LED or bay behaves wrongly, a short
+        "tried X, expected Y, got Z" with the output below is the fastest way to get it fixed.
+
+        **Please don't attach** firmware images, extracted firmware files, keys or tools.
+        **Please remove** serial numbers and MAC addresses you don't want public, e.g.
+        `sed -E 's/([0-9a-f]{2}:){5}[0-9a-f]{2}/xx:xx:xx:xx:xx:xx/Ig'`.
+
+  - type: markdown
+    attributes:
+      value: |
+        ### Quickest: collect everything at once (read-only)
+
+        `tools/collect-report.sh` in this repository reads system files and runs listing tools only
+        (dmesg, lspci, sysfs, hwmon, LEDs, GPIO, USB, serial devices); it writes nothing to the
+        hardware and sends nothing anywhere. Before writing the file it replaces the host name with
+        `HOST`, MAC addresses with `xx:xx:xx:xx:xx:xx`, serial numbers (also `sn=`/`mac=`/`macs=` on a
+        DSM kernel command line) with `REDACTED`, IPv4 addresses with `x.x.x.x` and UUIDs with
+        `UUID`. This is best effort, so please read the file before attaching it. Disk models and
+        firmware versions stay, because they matter for compatibility. It also includes this boot's kernel log. Download it,
+        read it, then run it as root on the unit, with every expansion unit attached and powered:
+        ```sh
+        wget https://raw.githubusercontent.com/rylos/synodeb/main/tools/collect-report.sh
+        less collect-report.sh
+        sudo sh collect-report.sh
+        ```
+        Example result (excerpt, DS2415+ with a DX1215, synodeb 6.18 kernel):
+        ```
+        wrote ./synodeb-report-20261031-1758.txt (1470 lines). Please read it before attaching.
+        ===== uname -a
+        Linux HOST 6.18.60-3-ds923 #3 SMP PREEMPT_DYNAMIC Sat Oct 31 11:36:05 UTC 2026 x86_64 GNU/Linux
+        ===== lspci -nn
+        ===== dmesg | grep -iE 'ahci|ata[0-9]+...|Port Multiplier|...'
+        ...
+        ```
+        Attach the file in the "Level 2 files" box below. The levels explain what we look for in it.
+
+  - type: textarea
+    id: tried
+    attributes:
+      label: "Tried something and it failed or behaved oddly? (optional)"
+      description: What you tried, what you expected, what happened. Paste the related dmesg lines.
+      placeholder: |
+        Tried: synodeb 0.x on DS923+ with a DX517, fan level set to low
+        Expected: DX517 fans slow down
+        Got: no change; dmesg shows "..."
+
+  - type: input
+    id: host
+    attributes:
+      label: Host model and OS
+      description: Model, and the OS that produced the output below (synodeb version, DSM version, other Linux).
+      placeholder: "DS923+, DSM 7.2.2"
+    validations:
+      required: true
+
+  - type: input
+    id: unit
+    attributes:
+      label: Expansion unit(s)
+      description: Model, and the hardware revision if it is printed on the label. "none" for a host-only report.
+      placeholder: "DX517"
+
+  - type: input
+    id: uname
+    attributes:
+      label: "Kernel: output of `uname -a`"
+      description: The same chip can report a different port count under different kernels, so this matters.
+    validations:
+      required: true
+
+  - type: markdown
+    attributes:
+      value: |
+        ### Level 1: controllers and port multipliers (any OS, 5 minutes)
+
+        ```sh
+        dmesg | grep -iE "Port Multiplier|SATA link up|ahci 0000|\.15: " | head -40
+        lspci -nn | grep -iE "sata|ahci|raid|sas"
+        ```
+
+        Example result, DX1215 on a DS2415+ under DSM 7.1.1:
+        ```
+        pci 0000:07:00.0: [1b4b:9235] type 00 class 0x010601
+        ata20.15: Port Multiplier 1.2, 0x1b4b:0x9705 r160, 5 ports, feat 0x5/0x1f
+        ```
+        The same unit under Linux 6.18:
+        ```
+        ata20.15: Port Multiplier 1.2, 0x1b4b:0x9705 r160, 6 ports, feat 0x5/0x1f
+        ```
+        Read it as: host controller Marvell 88SE9235 (`1b4b:9235`); behind ATA port 20 a Marvell
+        88SM9705 port multiplier (`0x1b4b:0x9705`), revision 160. DSM hides the chip's sixth port,
+        mainline shows it.
+
+  - type: textarea
+    id: level1
+    attributes:
+      label: Level 1 output
+      render: text
+
+  - type: markdown
+    attributes:
+      value: |
+        ### Level 2: boot log of synodeb on the real unit (30 minutes)
+
+        Needed for anything that lands in the repository. The collector above already includes it,
+        with the host name, MAC addresses, serials and UUIDs replaced; by hand:
+        ```sh
+        journalctl -k -b > boot.txt
+        lspci -nnk > lspci.txt
+        for h in /sys/class/scsi_host/host*; do echo "$h -> $(readlink -f $h)"; done > hosts.txt
+        cat /sys/class/dmi/id/{sys_vendor,product_name,board_name} > dmi.txt 2>/dev/null
+        ```
+        Example result, one line of `hosts.txt` on a DS2415+ (DX1215 attached):
+        ```
+        /sys/class/scsi_host/host18 ->
+          /sys/devices/pci0000:00/0000:00:04.0/0000:07:00.0/ata19/host18/scsi_host/host18
+        ```
+        Read it as: SCSI host 18 is ATA port 19 on the controller at PCI `0000:07:00.0`, behind root
+        port `00:04.0`: that is where the expansion port sits, and it goes into the model's board file.
+        Drag the files into the box below.
+
+  - type: textarea
+    id: level2
+    attributes:
+      label: Level 2 files
+      description: boot.txt, lspci.txt, hosts.txt, dmi.txt
+
+  - type: markdown
+    attributes:
+      value: |
+        ### Level 3: the unit's own identity
+
+        Synology units with the same port multiplier chip tell themselves apart by a small unit ID
+        that the master port multiplier returns through its GPIO lines (for example `0x13` on a
+        DX1215). Bay count, fans and LED order follow from it. The known IDs are in the unit table
+        of the expansion-unit driver (`kernel/src/drivers/ata/synology_eunit_9705.h`, #9).
+
+        Under DSM:
+        ```sh
+        for f in /sys/class/scsi_host/host*/syno_pm_info; do echo "== $f"; cat "$f"; done
+        ```
+        Under Linux with the expansion-unit driver loaded (read-only, as root):
+        ```sh
+        for h in /sys/class/hwmon/hwmon*; do if [ -e "$h/pages" ]; then cat "$h/unit_name" "$h/unit_id" "$h/pmps" "$h/pages"; fi; done
+        ```
+        Without it: a read-only register dump (GSCR 0, 1, 2, 32, 33, 64, 96; vendor registers
+        0x3a0, 0x3a4, 0x3b0; GPIO pages 0-4) if you have a tool for it.
+
+        Example result, DX1215 (four port multipliers; read-only dumps under Linux 6.18, two runs combined):
+        ```
+        host  EMID  GSCR0       GSCR2  page0  page1  page2  page3  page4
+        18    0     0x97051b4b  6      0x13   0x40   0x3c   0x09   0x02
+        19    1     0x97051b4b  6      0x33   0x40   0x3f   0x3f   0x3f
+        20    2     0x97051b4b  6      0x53   0x40   0x3f   0x3f   0x3f
+        21    3     0x97051b4b  6      0x73   0x40   0x3f   0x3f   0x3f
+        ```
+        Read it as: GSCR0 = device `0x9705`, vendor `0x1b4b`; GSCR2 = 6 ports. Page 0 holds the EMID
+        in bits 7:5 and the unit ID in bits 4:0: `0x13` on the master (EMID 0) = DX1215; `0x33`,
+        `0x53`, `0x73` = EMID 1, 2, 3 with the same unit ID. Pages 2-4 carry fan, alarm and control
+        bits on the master only; on the others they read `0x3f`.
+
+  - type: textarea
+    id: level3
+    attributes:
+      label: Level 3 output
+      render: text
+
+  - type: markdown
+    attributes:
+      value: |
+        ### Level 4: what each bit does (careful, your own unit only)
+
+        Record GPIO pages 0-4 at idle, then change one physical thing at a time and read again:
+        unplug one fan, insert a disk, press the power button, let the unit warm up. For outputs,
+        change one identified bit at a time and watch or listen. On a DX1215, page 2 bits 0/1 are
+        the fan 1/2 alarms and page-4 bits 1:0 select the fan level (`00` full, `01` middle,
+        `10` low, `11` stop); page-4 bit 4 is a momentary power-switch line and must never be set.
+
+        Example result, DX1215 master (host 18), fan level and fan stop test:
+        ```
+        step 1: idle at load               page4 = 0x02 (low)  page2 = 0x3c  fan alarm 0
+        step 2: write middle               page4 = 0x01        read back, same 30 s later, fan alarm 0
+        step 3: write full                 page4 = 0x00        read back, same 30 s later, fan alarm 0
+        step 4: write low                  page4 = 0x02        read back, same 30 s later, fan alarm 0
+        step 5: stop, 30 s time limit      page4 = 0x03        page2 = 0x3f: both fan alarms within 5 s
+        step 6: limit reached, low again   page4 = 0x02        page2 = 0x3c, alarms clear (disk 28 C)
+        ```
+        Read it as: page-4 bits 1:0 are the fan level and read back what was written; page-2 bits 0
+        and 1 are the alarms of fan 1 and fan 2; there is no level between low and stop.
+
+        Safety: read before you write; write only bits you have identified; never stop the fans
+        without a time limit and a temperature watch; keep disks idle while experimenting.
+
+  - type: textarea
+    id: level4
+    attributes:
+      label: Level 4 steps and results
+      description: One line per step, including steps that changed nothing.
+      placeholder: |
+        step 1: idle, pages 0-4 = ...
+        step 2: unplugged fan 1, page 2 = ...
+
+  - type: textarea
+    id: source
+    attributes:
+      label: How you learned each fact
+      description: Measurements on your own unit are the strongest evidence.
+      placeholder: "measured on my unit / printed by dmesg under DSM 7.2.2 / published specification"
+
+  - type: textarea
+    id: notes
+    attributes:
+      label: Anything unexpected
