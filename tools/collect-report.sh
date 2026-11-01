@@ -11,7 +11,7 @@ out="./synodeb-report-$(date +%Y%m%d-%H%M).txt"
 if [ -e "$out" ] || [ -L "$out" ]; then echo "$out already exists, not overwriting it" >&2; exit 1; fi
 tmp=$(mktemp ./synodeb-report.XXXXXX) || exit 1
 trap 'rm -f "$tmp"' EXIT
-host=$(hostname 2>/dev/null)
+host=$(hostname 2>/dev/null || cat /proc/sys/kernel/hostname 2>/dev/null)
 sec() { printf '\n===== %s\n' "$*"; }
 run() { sec "$*"; sh -c "$*" 2>&1 | head -n 4000; }
 have() { command -v "$1" >/dev/null 2>&1; }
