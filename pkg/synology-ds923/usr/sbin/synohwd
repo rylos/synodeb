@@ -93,9 +93,15 @@ FAN_TABLES = {
     },
 }
 
-# Bay -> (PCI function of the SATA controller, port index) from model.dtb:
-# bays 1-2 on the JMB585 behind 00:01.5, bays 3-4 on the FCH SATA behind 00:08.2.
-BAYS = {1: ("00:01.5", 0), 2: ("00:01.5", 1), 3: ("00:08.2", 0), 4: ("00:08.2", 1)}
+# Bay -> (PCI function of the SATA controller, port index), per model (DMI product name).
+MODEL_BAYS = {
+    # bays 1-2 on the JMB585 behind 00:01.5, bays 3-4 on the FCH SATA behind 00:08.2
+    "DS923+": {1: ("00:01.5", 0), 2: ("00:01.5", 1), 3: ("00:08.2", 0), 4: ("00:08.2", 1)},
+    # bays 1-3 on JMB585 ports 2, 1, 0, bays 4-5 on the FCH SATA
+    "DS1522+": {1: ("00:01.5", 2), 2: ("00:01.5", 1), 3: ("00:01.5", 0),
+                4: ("00:08.2", 0), 5: ("00:08.2", 1)},
+}
+DMI_PRODUCT = "/sys/class/dmi/id/product_name"
 
 DEFAULTS = {
     "fan_mode": "low",          # low (quiet, DSM default) | high (cool) | full
@@ -155,6 +161,14 @@ def read(path, default=None):
             return f.read().strip()
     except OSError:
         return default
+
+
+def model_bays(product):
+    """Bay map of a model; any other product gets the DS923+ one."""
+    return MODEL_BAYS.get(product, MODEL_BAYS["DS923+"])
+
+
+BAYS = model_bays(read(DMI_PRODUCT, ""))
 
 
 def write(path, value):
@@ -747,7 +761,7 @@ class Daemon:
 
     def write_status(self, s):
         bays = {}
-        for n in range(1, 5):
+        for n in sorted(BAYS):
             bays[n] = {"present": read(f"{PLATFORM}/bay{n}_present") == "1",
                        "power": read(f"{PLATFORM}/bay{n}_power") == "1",
                        "device": self.bays.get(n)}
@@ -809,7 +823,7 @@ class Daemon:
 
     def led_step(self, shown, on):
         disks = bay_disks()
-        for bay in range(1, 5):
+        for bay in sorted(BAYS):
             dev, ata = disks.get(bay, (None, None))
             present = read(f"{PLATFORM}/bay{bay}_present") == "1"
             st = read(f"{SYS_BLOCK}/{dev}/device/state") if dev else None
@@ -905,7 +919,7 @@ class Daemon:
                 step()
             except OSError as e:
                 log.error("shutdown: %s", e)
-        for bay in range(1, 5):
+        for bay in sorted(BAYS):
             self.led(bay, "green", 0)            # 0 also detaches the ataN trigger
             self.led(bay, "orange", 0)
         remove_status()
