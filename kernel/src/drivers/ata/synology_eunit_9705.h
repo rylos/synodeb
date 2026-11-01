@@ -46,8 +46,11 @@
  */
 #define EU_EN_POWERON		0x107c0U
 /*
- * Input polarity (0x3ac): set to 0xfffff when a PMP is set up. Left at its
- * power-on value, every input bit reads inverted (measured: slave page 0 0xcc instead of 0x33).
+ * Input polarity (0x3ac): set to 0xfffff once page 0 of a PMP has shown a
+ * unit ID of the table. Before that, every input bit reads inverted
+ * (measured: slave page 0 0xcc instead of 0x33), so page 0 is decoded with
+ * the polarity found; only 0xfffff and 0 (all bits inverted) are decoded,
+ * any other value leaves the PMP alone.
  */
 #define EU_R_IDLE		(EU_R_WCTL | EU_R_RCTL | EU_R_PAGE(3))
 
@@ -64,6 +67,18 @@
 /* a data word of page p: read strobe high, write strobe high or low */
 #define EU_R_DATA(p, d, wlow)	(EU_R_RCTL | ((wlow) ? 0 : EU_R_WCTL) | \
 				 EU_R_PAGE(p) | EU_ENC(d))
+
+/* input polarities page 0 can be decoded with: as set up, all inverted */
+static inline bool eu_pol_known(u32 pol)
+{
+	return pol == EU_POL_ALL || pol == 0;
+}
+
+/* input word -> data byte, for the polarity found in 0x3ac */
+static inline u8 eu_dec_in(u32 r, u32 pol)
+{
+	return EU_DEC(pol == EU_POL_ALL ? r : r ^ EU_POL_ALL);
+}
 
 #define EU_PAGES		5
 /* page 0: bits 7:5 EMID (0 = unit master), bits 4:0 unit ID */
@@ -82,12 +97,16 @@ enum { EU_FAN_FULL, EU_FAN_MIDDLE, EU_FAN_LOW, EU_FAN_STOP };
 
 /*
  * State of one register cycle that the guard decides on. Filled only by
- * the cycle itself: the pages read in this EH round, and the page write
- * that is running (armed) with its byte as read (cur) and as written (new).
+ * the cycle itself: the state found, the pages read in this EH round, and
+ * the page write that is running (armed) with its byte as read (cur) and as
+ * written (new).
  */
 struct eu_guard {
-	bool writable;		/* the PMP belongs to a unit in the table */
-	u8 id;			/* that row's unit ID */
+	bool writable;		/* fan/LED writes: a table row, confirmed or allowed */
+	u8 id;			/* the request's row unit ID (0: no row) */
+	bool poweron;		/* found in the power-on state this round */
+	bool setup_ok;		/* the caller allows setting such a PMP up */
+	u32 en_now;		/* 0x3a4 as found or last written in this round */
 	u8 p1_mask;		/* page 1 bits the row may change */
 	unsigned int valid;	/* bit n: page[n] read in this round */
 	u8 page[EU_PAGES];
@@ -122,18 +141,6 @@ static inline bool eu_data_ok(const struct eu_guard *g, u32 val)
 	       !((d ^ g->cur) & ~g->p1_mask);
 }
 
-/* The write policy: true if (reg, val) may be sent to the PMP. */
-static inline bool eu_write_ok(const struct eu_guard *g, u16 reg, u32 val)
-{
-	if (reg == EU_REG_EN)
-		return val == EU_EN_ALL_OUT || val == EU_EN_READ;
-	if (reg == EU_REG_POL)
-		return val == EU_POL_ALL;
-	if (reg == EU_REG_OUT)
-		return EU_R_SELECT_OK(val) || eu_data_ok(g, val);
-	return false;
-}
-
 /* new page 4 byte for fan level @code: bits 1:0 replaced, pulse bit 0 */
 static inline u8 eu_p4_new(u8 cur, unsigned int code)
 {
@@ -165,7 +172,8 @@ struct eu_type {
  * One row per unit ID. Bays, PMPs and fans: Synology's published
  * specifications, three bays per PMP on the multi-PMP units. The
  * DX1222 LED bits are in reverse order. Rows other than the DX1215
- * are not confirmed on hardware yet.
+ * are not confirmed on hardware yet: the driver writes their fan level
+ * and LEDs only if told to (eu_type_writable()).
  */
 static const struct eu_type eu_types[] = {
 	{ .id = 0x11, .name = "RX413", .bays = 4, .pmps = 1, .fans = 3,
@@ -207,6 +215,62 @@ static inline u8 eu_type_p1_mask(const struct eu_type *t)
 	for (i = 0; i < (unsigned int)(t->bays / t->pmps); i++)
 		m |= 1U << t->led_bit[i];
 	return m;
+}
+
+/* fan and LED writes for a row: confirmed rows, others only if allowed */
+static inline bool eu_type_writable(const struct eu_type *t, bool unconfirmed)
+{
+	return t && (t->confirmed || unconfirmed);
+}
+
+/*
+ * Page 1 bits to write so that the bits of @want_mask get the value of
+ * @want: only the bits that differ from @cur and that the row may change.
+ * 0: nothing to write.
+ */
+static inline u8 eu_p1_diff(u8 cur, u8 p1_mask, u8 want_mask, u8 want)
+{
+	return (cur ^ want) & want_mask & p1_mask & ~EU_P1_BUZZER;
+}
+
+/*
+ * Identification: page 0 of this round shows a unit ID of the table, and
+ * the request's row ID if it has one.
+ */
+static inline bool eu_id_ok(const struct eu_guard *g)
+{
+	if (!(g->valid & 1U) || !eu_type_lookup(EU_P0_ID(g->page[0])))
+		return false;
+	return !g->id || EU_P0_ID(g->page[0]) == g->id;
+}
+
+/*
+ * The write policy: true if (reg, val) may be sent to the PMP.
+ *  - A PMP found in the power-on state is not written at all unless the
+ *    caller allows the set-up; then it may also be put back as found
+ *    (0x3a4 0x107c0, then 0x3a0 0). While 0x3a4 is 0x107c0 the strobe and
+ *    page pins are inputs, and 0x3a0 may only get the idle word or 0.
+ *  - 0x3a4: the two values of the read/write protocol.
+ *  - 0x3ac: 0xfffff, and only once page 0 identified the unit.
+ *  - 0x3a0: page select words, and data words as in eu_data_ok().
+ */
+static inline bool eu_write_ok(const struct eu_guard *g, u16 reg, u32 val)
+{
+	if (g->poweron && !g->setup_ok)
+		return false;
+	if (reg == EU_REG_EN) {
+		if (val == EU_EN_POWERON)
+			return g->poweron;
+		return val == EU_EN_ALL_OUT || val == EU_EN_READ;
+	}
+	if (reg == EU_REG_POL)
+		return val == EU_POL_ALL && eu_id_ok(g);
+	if (reg == EU_REG_OUT) {
+		if (g->en_now == EU_EN_POWERON)
+			return g->poweron && (val == EU_R_IDLE || val == 0);
+		return EU_R_SELECT_OK(val) || eu_data_ok(g, val);
+	}
+	return false;
 }
 
 #endif /* SYNOLOGY_EUNIT_9705_H */

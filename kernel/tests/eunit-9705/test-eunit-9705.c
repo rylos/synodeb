@@ -76,16 +76,38 @@ static bool ref_data_ok(const struct eu_guard *g, u32 val)
 	return !((d ^ g->cur) & ~g->p1_mask);
 }
 
+/* page 0 of this round: a table unit ID (the 8 IDs), the request's if any */
+static bool ref_id_ok(const struct eu_guard *g)
+{
+	static const u8 ids[] = { 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x1c };
+	unsigned int i;
+	u8 id = g->page[0] & 0x1f;
+
+	if (!(g->valid & 1))
+		return false;
+	for (i = 0; i < sizeof(ids); i++)
+		if (ids[i] == id)
+			return !g->id || id == g->id;
+	return false;
+}
+
 static bool ref_write_ok(const struct eu_guard *g, u16 reg, u32 val)
 {
 	u32 sel_bits = (1u << 14) | (1u << 15) | (7u << 17);
 
-	if (reg == 0x3a4)
+	if (g->poweron && !g->setup_ok)
+		return false;			/* power-on state: hands off */
+	if (reg == 0x3a4) {
+		if (val == 0x107c0)
+			return g->poweron;	/* back to the power-on state */
 		return val == 0xfffff || val == 0xfc7c0;
-	if (reg == 0x3ac)		/* GPI polarity: only the GPL set-up value */
-		return val == 0xfffff;
+	}
+	if (reg == 0x3ac)		/* GPI polarity 0xfffff, after identification */
+		return val == 0xfffff && ref_id_ok(g);
 	if (reg != 0x3a0)
 		return false;
+	if (g->en_now == 0x107c0)	/* strobe pins are inputs: idle or 0 */
+		return g->poweron && (val == 0x6c000 || val == 0);
 	/* page select: write strobe high, only strobes and page bits */
 	if ((val & (1u << 14)) && !(val & ~sel_bits))
 		return true;
@@ -188,6 +210,9 @@ static void guard_for(struct eu_guard *g, const struct eu_type *t, u8 p0, int ar
 {
 	g->writable = t != NULL;
 	g->id = t ? t->id : 0;
+	g->poweron = false;
+	g->setup_ok = false;
+	g->en_now = EU_EN_ALL_OUT;
 	g->p1_mask = t ? eu_type_p1_mask(t) : 0;
 	g->valid = 0x1f;
 	g->page[0] = p0;
@@ -311,11 +336,128 @@ static void test_guard(void)
 	}
 }
 
+/* identification first, power-on state, polarity (review of the write order) */
+static void test_identify(void)
+{
+	static const u32 ens[] = { 0xfffff, 0xfc7c0, 0x107c0 };
+	static const u8 p0s[] = { 0x13, 0x33, 0x15, 0x1d, 0x00, 0xcc };
+	unsigned int ti, pi, po, so, ei, vi;
+	struct eu_guard g;
+	u32 v;
+
+	for (ti = 0; ti <= EU_NTYPES; ti++) {
+		const struct eu_type *t = ti < EU_NTYPES ? &eu_types[ti] : NULL;
+
+		for (pi = 0; pi < sizeof(p0s); pi++)
+			for (vi = 0; vi < 2; vi++)
+				for (po = 0; po < 2; po++)
+					for (so = 0; so < 2; so++)
+						for (ei = 0; ei < 3; ei++) {
+							guard_for(&g, t, p0s[pi], -1, 0, 0);
+							g.valid = vi ? 0x1f : 0x1e;
+							g.poweron = po;
+							g.setup_ok = so;
+							g.en_now = ens[ei];
+							for (v = 0; v < (1u << 20); v += (v & 0xfff) ? 0x1001 : 1) {
+								if (eu_write_ok(&g, EU_REG_OUT, v) != ref_write_ok(&g, EU_REG_OUT, v) ||
+								    eu_write_ok(&g, EU_REG_EN, v) != ref_write_ok(&g, EU_REG_EN, v) ||
+								    eu_write_ok(&g, EU_REG_POL, v) != ref_write_ok(&g, EU_REG_POL, v)) {
+									EXPECT(0, "%s p0 0x%02x valid %u poweron %u setup %u en 0x%05x word 0x%05x",
+									       t ? t->name : "none", p0s[pi], vi, po, so, ens[ei], v);
+									goto next;
+								}
+							}
+							checks++;
+next:
+							;
+						}
+	}
+
+	/* concrete cases */
+	guard_for(&g, NULL, 0, -1, 0, 0);
+	g.valid = 0;						/* nothing read yet */
+	EXPECT(!eu_write_ok(&g, EU_REG_POL, EU_POL_ALL), "polarity before page 0 accepted");
+	g.valid = 1;
+	g.page[0] = 0x1d;					/* not a table unit ID */
+	EXPECT(!eu_write_ok(&g, EU_REG_POL, EU_POL_ALL), "polarity on an unknown unit accepted");
+	g.page[0] = 0x33;					/* DX1215 slave */
+	EXPECT(eu_write_ok(&g, EU_REG_POL, EU_POL_ALL), "polarity on a DX1215 slave refused");
+	g.id = 0x15;						/* the request wants a DX517 */
+	EXPECT(!eu_write_ok(&g, EU_REG_POL, EU_POL_ALL), "polarity on another row accepted");
+	guard_for(&g, NULL, 0, -1, 0, 0);
+	g.poweron = true;
+	g.en_now = EU_EN_POWERON;				/* power-on, no set-up allowed */
+	EXPECT(!eu_write_ok(&g, EU_REG_OUT, EU_R_IDLE) && !eu_write_ok(&g, EU_REG_EN, EU_EN_ALL_OUT) &&
+	       !eu_write_ok(&g, EU_REG_OUT, EU_R_SEL(0, 1)), "power-on PMP written without set-up");
+	g.setup_ok = true;
+	EXPECT(eu_write_ok(&g, EU_REG_OUT, EU_R_IDLE) && eu_write_ok(&g, EU_REG_EN, EU_EN_ALL_OUT),
+	       "set-up refused");
+	EXPECT(!eu_write_ok(&g, EU_REG_OUT, EU_R_SEL(0, 1)), "page select while strobes are inputs");
+	EXPECT(eu_write_ok(&g, EU_REG_OUT, 0) && eu_write_ok(&g, EU_REG_EN, EU_EN_POWERON),
+	       "back to the power-on state refused");
+	g.poweron = false;
+	g.en_now = EU_EN_ALL_OUT;
+	EXPECT(!eu_write_ok(&g, EU_REG_EN, EU_EN_POWERON) && !eu_write_ok(&g, EU_REG_OUT, 0),
+	       "power-on state written on a PMP found set up");
+
+	/* polarity decode: measured, page 0 0x33 read as 0xcc before 0x3ac was set */
+	for (v = 0; v < 256; v++) {
+		u32 raw = EU_R_DATA(0, v, 0), inv = raw ^ 0xfffff;
+
+		EXPECT(eu_dec_in(raw, EU_POL_ALL) == v && eu_dec_in(inv, 0) == v,
+		       "DEC_IN 0x%02x", v);
+	}
+	EXPECT(EU_DEC(EU_R_DATA(0, 0x33, 0) ^ 0xfffff) == 0xcc, "inverted 0x33 is 0xcc");
+	EXPECT(eu_pol_known(0) && eu_pol_known(0xfffff) && !eu_pol_known(0x107c0) &&
+	       !eu_pol_known(1), "known polarity values");
+}
+
+/* rows not confirmed: no fan or LED writes unless allowed; LED writes only on change */
+static void test_policy(void)
+{
+	unsigned int i, cur, m, w;
+
+	for (i = 0; i < EU_NTYPES; i++) {
+		const struct eu_type *t = &eu_types[i];
+
+		EXPECT(eu_type_writable(t, false) == (t->id == 0x13), "%s writable by default", t->name);
+		EXPECT(eu_type_writable(t, true), "%s writable with the parameter", t->name);
+	}
+	EXPECT(!eu_type_writable(NULL, true), "unknown unit writable");
+	for (i = 0; i < EU_NTYPES; i++) {
+		u8 pm = eu_type_p1_mask(&eu_types[i]);
+
+		for (cur = 0; cur < 256; cur++)
+			for (m = 0; m < 256; m += 3)
+				for (w = 0; w < 256; w += 5) {
+					u8 d = eu_p1_diff(cur, pm, m, w);
+					u8 want = (cur ^ w) & m & pm & ~0x20;
+
+					if (d != want) {
+						EXPECT(0, "p1_diff(0x%02x, 0x%02x, 0x%02x, 0x%02x) = 0x%02x",
+						       cur, pm, m, w, d);
+						goto out;
+					}
+					/* nothing to write when the bits already have the value */
+					if (!((cur ^ w) & m & pm) && d) {
+						EXPECT(0, "p1_diff writes an unchanged bit");
+						goto out;
+					}
+				}
+	}
+	checks++;
+out:
+	EXPECT(eu_p1_diff(0x40, 0x47, 0x02, 0x02) == 0x02, "bay 8 LED on");
+	EXPECT(eu_p1_diff(0x42, 0x47, 0x02, 0x02) == 0x00, "bay 8 LED already on");
+}
+
 int main(void)
 {
 	test_encoding();
 	test_table();
 	test_guard();
+	test_identify();
+	test_policy();
 	printf("%lu checks, %lu failed\n", checks, fails);
 	return fails ? 1 : 0;
 }

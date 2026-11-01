@@ -21,9 +21,17 @@
  *
  * Each 88SM9705 unit model has its own unit ID in page 0 bits 4:0 of its
  * master PMP, and all of them use the same GPIO word encoding. Only the
- * DX1215 row is confirmed on hardware; every row is used, and the log says
+ * DX1215 row is confirmed on hardware. The other rows are read-only (fan
+ * alarms, fan level, sysfs) unless unconfirmed_writes=1, and the log says
  * which row and whether it is confirmed. A PMP whose unit ID is not in the
  * table gets read-only sysfs files and nothing else.
+ *
+ * Nothing but reads goes to a PMP before page 0 has shown a unit ID of
+ * the table: on a PMP found set up only the read protocol (page select
+ * words, the two output-enable values), and a PMP found in the power-on
+ * state is set up only when a master of a table unit on the same
+ * controller is already identified (or with setup_unidentified=1). The
+ * GPIO state found at the first look is logged once per PMP.
  *
  * Binding: the driver looks at AHCI ports of supported Synology hosts only
  * (DMI vendor "Synology Inc."; the DS2415+, whose BIOS has placeholder DMI
@@ -72,10 +80,16 @@
 #define EU_MAX_PORTS		32	/* ATA ports per controller */
 #define EU_MAX_CTRLS		8
 #define EU_SCAN_S		30
+#define EU_LED_GAP		HZ	/* at most one LED round per unit and second */
+#define EU_P0_TRIES		5	/* page 0 tries, 30 s apart, then 60, 120, 240 s */
 #define EU_MASTER_PAGES		(BIT(0) | BIT(2) | BIT(4))
 #define EU_ALL_PAGES		(BIT(EU_PAGES) - 1)
 
 static const u8 eu_level_pwm[4] = { 255, 128, 64, 0 };
+
+static bool unconfirmed_writes;
+module_param(unconfirmed_writes, bool, 0444);
+MODULE_PARM_DESC(unconfirmed_writes, "Fan level and LED writes on unit rows not yet confirmed on hardware");
 
 static bool disk_leds = true;
 module_param(disk_leds, bool, 0444);
@@ -84,6 +98,10 @@ MODULE_PARM_DESC(disk_leds, "Turn the disk LEDs of a unit on when it is found (p
 static unsigned int refresh_s = 10;
 module_param(refresh_s, uint, 0644);
 MODULE_PARM_DESC(refresh_s, "Max age in s of the fan values before a read asks the unit again");
+
+static bool setup_unidentified;
+module_param(setup_unidentified, bool, 0444);
+MODULE_PARM_DESC(setup_unidentified, "Set up 88SM9705 PMPs found in the power-on state even without an identified unit on the controller");
 
 static char *ports;
 module_param(ports, charp, 0444);
@@ -97,6 +115,13 @@ struct eu_port {
 	struct eu_unit *unit;		/* NULL: not part of a unit */
 	bool p0_valid;			/* page 0 read since the PMP attached */
 	u8 p0;
+	bool p1_valid;			/* page 1 as last read */
+	u8 p1;
+	bool logged;			/* GPIO state at first look logged */
+	bool parked;			/* power-on state, left as it is */
+	bool given_up;			/* page 0 failed EU_P0_TRIES times */
+	unsigned int fails;
+	unsigned long next;		/* no page 0 try before this */
 };
 
 struct eu_led {
@@ -120,6 +145,9 @@ struct eu_unit {
 	unsigned long mstamp;
 	struct device *hwmon;
 	char hwmon_name[24];
+	struct delayed_work led_work;	/* LED writes, coalesced */
+	unsigned long led_stamp;	/* last LED round */
+	u32 led_mask, led_val;		/* bit = bay: LED to set, its value */
 	unsigned int nleds;
 	struct eu_led led[EU_MAX_PMPS * EU_MAX_LOCAL];
 };
@@ -154,9 +182,23 @@ struct eu_req {
 	unsigned int pages;		/* bit n: read page n */
 	int wpage;			/* -1, 1 or 4 */
 	u8 wmask, wval;			/* page bits to change and their value */
-	u32 out, en;			/* 0x3a0/0x3a4 found at the start */
+	bool setup;			/* may set up a PMP in the power-on state */
+	u32 out, en;			/* 0x3a0/0x3a4 to leave behind */
+	bool found;			/* out0, en0, pol0 read */
+	u32 out0, en0, pol0;		/* 0x3a0/0x3a4/0x3ac as found */
+	u32 pol;			/* 0x3ac now: how 0x3b0 is decoded */
 };
 
+static bool eu_writable(const struct eu_unit *u)
+{
+	return u && eu_type_writable(u->type, unconfirmed_writes);
+}
+
+/*
+ * @u: the unit the PMP belongs to, NULL while it is not identified. A
+ * unit's request may set the PMP up again (after the unit was power
+ * cycled); fan and LED writes only for a writable row.
+ */
 static void eu_req_init(struct eu_req *r, const struct eu_unit *u,
 			unsigned int pages)
 {
@@ -165,7 +207,8 @@ static void eu_req_init(struct eu_req *r, const struct eu_unit *u,
 	r->wpage = -1;
 	r->g.armed = -1;
 	if (u && u->type) {
-		r->g.writable = true;
+		r->setup = true;
+		r->g.writable = eu_writable(u);
 		r->g.id = u->type->id;
 		r->g.p1_mask = eu_type_p1_mask(u->type);
 	}
@@ -175,22 +218,30 @@ static void eu_req_init(struct eu_req *r, const struct eu_unit *u,
 static unsigned int eu_write(struct ata_port *ap, struct eu_req *r, u16 reg,
 			     u32 val)
 {
+	unsigned int err;
+
 	if (!eu_write_ok(&r->g, reg, val)) {
 		WARN_ONCE(1, DRV_NAME ": refused PMP write reg 0x%x val 0x%x\n",
 			  reg, val);
 		return AC_ERR_INVALID;
 	}
-	return sata_pmp_vendor_write(ap, reg, val);
+	err = sata_pmp_vendor_write(ap, reg, val);
+	if (!err && reg == EU_REG_EN)
+		r->g.en_now = val;
+	return err;
 }
 
-/* output enable all-out, then 0x3a0; 5 ms for the unit */
+/*
+ * output enable all-out, then 0x3a0; 5 ms for the unit, with the EH of the
+ * controller's other ports free to run meanwhile
+ */
 static unsigned int eu_out(struct ata_port *ap, struct eu_req *r, u32 val)
 {
 	unsigned int err = eu_write(ap, r, EU_REG_EN, EU_EN_ALL_OUT);
 
 	if (!err)
 		err = eu_write(ap, r, EU_REG_OUT, val);
-	usleep_range(5000, 6000);
+	ata_msleep(ap, 5);
 	return err;
 }
 
@@ -210,21 +261,32 @@ static unsigned int eu_read_page(struct ata_port *ap, struct eu_req *r, int pg)
 	if (!err)
 		err = eu_out(ap, r, EU_R_SEL(pg, 0));
 	if (!err) {
-		r->g.page[pg] = EU_DEC(raw);
+		r->g.page[pg] = eu_dec_in(raw, r->pol);
 		r->g.valid |= BIT(pg);
 	}
 	return err;
 }
 
-/* 0x3a0 and 0x3a4 back to what they were at the start, read back */
+/*
+ * 0x3a0 and 0x3a4 to the state to leave behind, read back. Back to the
+ * power-on state: strobes high first, then 0x3a4, then 0x3a0 0.
+ */
 static unsigned int eu_restore(struct ata_port *ap, struct eu_req *r)
 {
 	unsigned int err;
 	u32 out, en;
 
-	err = eu_out(ap, r, r->out);
-	if (!err)
-		err = eu_write(ap, r, EU_REG_EN, r->en);
+	if (r->en == EU_EN_POWERON) {
+		err = eu_out(ap, r, EU_R_IDLE);
+		if (!err)
+			err = eu_write(ap, r, EU_REG_EN, EU_EN_POWERON);
+		if (!err)
+			err = eu_write(ap, r, EU_REG_OUT, 0);
+	} else {
+		err = eu_out(ap, r, r->out);
+		if (!err)
+			err = eu_write(ap, r, EU_REG_EN, r->en);
+	}
 	if (!err)
 		err = sata_pmp_vendor_read(ap, EU_REG_OUT, &out);
 	if (!err)
@@ -271,6 +333,7 @@ static int eu_write_page(struct ata_port *ap, struct eu_req *r)
 	return g->page[p] == g->new ? 0 : -EIO;
 }
 
+/* from the EH callback; outside EH use eu_is_9705_locked() */
 static bool eu_is_9705(struct ata_port *ap)
 {
 	u32 *gscr = ap->link.device->gscr;
@@ -280,6 +343,48 @@ static bool eu_is_9705(struct ata_port *ap)
 	       sata_pmp_gscr_devid(gscr) == 0x9705;
 }
 
+static bool eu_is_9705_locked(struct ata_port *ap)
+{
+	unsigned long flags;
+	bool ret;
+
+	spin_lock_irqsave(ap->lock, flags);
+	ret = eu_is_9705(ap);
+	spin_unlock_irqrestore(ap->lock, flags);
+	return ret;
+}
+
+/*
+ * Power-on state to the set-up idle state: 0x3a0 gets the idle word while
+ * 0x3a4 still has only the power-on outputs, then 0x3a4 all-out, so the
+ * strobes come up high. If 0x3a0 did not keep the idle word, it is written
+ * again.
+ */
+static unsigned int eu_setup(struct ata_port *ap, struct eu_req *r)
+{
+	unsigned int err;
+	u32 out;
+
+	err = eu_write(ap, r, EU_REG_OUT, EU_R_IDLE);
+	if (!err)
+		err = eu_write(ap, r, EU_REG_EN, EU_EN_ALL_OUT);
+	if (!err)
+		err = sata_pmp_vendor_read(ap, EU_REG_OUT, &out);
+	if (!err && out != EU_R_IDLE)
+		err = eu_out(ap, r, EU_R_IDLE);
+	return err;
+}
+
+/*
+ * Reads 0x3a0, 0x3a4, 0x3ac first and writes nothing before page 0 has
+ * identified the unit, apart from the read protocol itself (page select
+ * words, the two output-enable values) on a PMP found set up, and the
+ * set-up of a PMP found in the power-on state when the request allows it.
+ * Page 0 without a table unit ID (or not the request's row): no other
+ * page, no write, the PMP is left as found, return -ENODEV with page 0 in
+ * r->g. A PMP in the power-on state that may not be set up: -EPERM; an
+ * input polarity other than 0xfffff or 0: -ENXIO; nothing written.
+ */
 static int eu_cycle_fn(struct ata_port *ap, void *data)
 {
 	struct eu_req *r = data;
@@ -289,42 +394,73 @@ static int eu_cycle_fn(struct ata_port *ap, void *data)
 
 	r->g.armed = -1;
 	r->g.valid = 0;
+	r->g.poweron = false;
+	r->g.setup_ok = r->setup;
+	r->found = false;
 	if (!eu_is_9705(ap))
 		return -ENODEV;
-	err = sata_pmp_vendor_read(ap, EU_REG_OUT, &r->out);
+	err = sata_pmp_vendor_read(ap, EU_REG_OUT, &r->out0);
 	if (!err)
-		err = sata_pmp_vendor_read(ap, EU_REG_EN, &r->en);
+		err = sata_pmp_vendor_read(ap, EU_REG_EN, &r->en0);
+	if (!err)
+		err = sata_pmp_vendor_read(ap, EU_REG_POL, &r->pol0);
 	if (err)
 		return -EIO;
-	/* input polarity 0xfffff; otherwise inputs read inverted */
-	err = sata_pmp_vendor_read(ap, EU_REG_POL, &pol);
-	if (!err && pol != EU_POL_ALL) {
+	r->found = true;
+	r->pol = r->pol0;
+	r->out = r->out0;
+	r->en = r->en0;
+	r->g.en_now = r->en0;
+	if (r->out0 == 0 && r->en0 == EU_EN_POWERON) {
+		r->g.poweron = true;
+		if (!r->setup)
+			return -EPERM;
+	}
+	if (!eu_pol_known(r->pol0))
+		return -ENXIO;
+	if (r->g.poweron) {
+		err = eu_setup(ap, r);
+		if (err)
+			goto restore;
+	} else if (!EU_R_SELECT_OK(r->out0) ||
+		   (r->en0 != EU_EN_ALL_OUT && r->en0 != EU_EN_READ)) {
+		/* not a state we could put back: leave the PMP alone */
+		return -EIO;
+	}
+
+	/* identification */
+	err = eu_read_page(ap, r, 0);
+	if (err)
+		goto restore;
+	if (!eu_id_ok(&r->g)) {
+		rc = -ENODEV;
+		goto restore;
+	}
+	/* identified: input polarity 0xfffff; a set-up PMP stays set up */
+	if (r->pol != EU_POL_ALL) {
 		err = eu_write(ap, r, EU_REG_POL, EU_POL_ALL);
 		if (!err)
 			err = sata_pmp_vendor_read(ap, EU_REG_POL, &pol);
 		if (!err && pol != EU_POL_ALL)
 			err = AC_ERR_OTHER;
+		if (err)
+			goto restore;
+		r->pol = pol;
 	}
-	if (err)
-		return -EIO;
-	/* never set up since power-on: end in the set-up idle state instead */
-	if (r->out == 0 && r->en == EU_EN_POWERON) {
+	if (r->g.poweron) {
 		r->out = EU_R_IDLE;
 		r->en = EU_EN_ALL_OUT;
 	}
-	/* not a state we could put back: leave the PMP alone */
-	if (!EU_R_SELECT_OK(r->out) ||
-	    (r->en != EU_EN_ALL_OUT && r->en != EU_EN_READ))
-		return -EIO;
 
 	/* a write needs page 0 (unit ID, EMID) and the page itself from this round */
 	if (r->wpage >= 0)
-		pages |= BIT(0) | BIT(r->wpage);
-	for (pg = 0; pg < EU_PAGES && !err; pg++)
+		pages |= BIT(r->wpage);
+	for (pg = 1; pg < EU_PAGES && !err; pg++)
 		if (pages & BIT(pg))
 			err = eu_read_page(ap, r, pg);
 	if (!err && r->wpage >= 0)
 		rc = eu_write_page(ap, r);
+restore:
 	if (ata_port_is_frozen(ap))
 		return -EIO;
 	if (eu_restore(ap, r) || err)
@@ -335,6 +471,15 @@ static int eu_cycle_fn(struct ata_port *ap, void *data)
 static int eu_cycle(struct ata_port *ap, struct eu_req *r)
 {
 	return sata_pmp_vendor_call(ap, eu_cycle_fn, r);
+}
+
+/* caller holds lock: keep page 1 of a port as read in @r */
+static void eu_note_p1(struct eu_port *p, const struct eu_req *r)
+{
+	if (r->g.valid & BIT(1)) {
+		p->p1 = r->g.page[1];
+		p->p1_valid = true;
+	}
 }
 
 /* ------------------------------------------------------------------ unit */
@@ -438,6 +583,8 @@ static int eu_hwmon_write(struct device *dev, enum hwmon_sensor_types type,
 {
 	struct eu_unit *u = dev_get_drvdata(dev);
 
+	if (!eu_writable(u))
+		return -EPERM;
 	if (attr == hwmon_pwm_enable)
 		return val == 1 ? 0 : -EINVAL;
 	if (val < 0 || val > 255)
@@ -458,7 +605,7 @@ static umode_t eu_hwmon_visible(const void *data, enum hwmon_sensor_types type,
 		return 0444;
 	if (type == hwmon_pwm &&
 	    (attr == hwmon_pwm_input || attr == hwmon_pwm_enable))
-		return 0644;
+		return eu_writable(u) ? 0644 : 0444;
 	return 0;
 }
 
@@ -480,27 +627,77 @@ static const struct hwmon_chip_info eu_hwmon_chip = {
 	.info = eu_hwmon_info,
 };
 
+/*
+ * LED writes: each is an EH round that pauses I/O on the unit's disks, so
+ * they are collected and written by eu_led_work_fn(), at most once per
+ * unit and EU_LED_GAP, only the bits that differ from page 1 as last read.
+ */
 static int eu_led_set(struct led_classdev *cdev, enum led_brightness value)
 {
 	struct eu_led *led = container_of(cdev, struct eu_led, cdev);
 	struct eu_unit *u = led->unit;
-	unsigned int per = u->type->bays / u->type->pmps;
-	int emid = led->bay / per, ret = -ENODEV;
-	u8 bit = BIT(u->type->led_bit[led->bay % per]);
-	struct ata_port *ap;
-	struct eu_req r;
+	unsigned long due;
 
 	mutex_lock(&u->ctrl->lock);
-	ap = u->gone ? NULL : eu_unit_ap(u, emid);
-	if (ap) {
+	if (u->gone) {
+		mutex_unlock(&u->ctrl->lock);
+		return -ENODEV;
+	}
+	u->led_mask |= BIT(led->bay);
+	if (value)
+		u->led_val |= BIT(led->bay);
+	else
+		u->led_val &= ~BIT(led->bay);
+	due = u->led_stamp + EU_LED_GAP;
+	schedule_delayed_work(&u->led_work,
+			      time_after(jiffies, due) ? 0 : due - jiffies);
+	mutex_unlock(&u->ctrl->lock);
+	return 0;
+}
+
+static void eu_led_work_fn(struct work_struct *work)
+{
+	struct eu_unit *u = container_of(to_delayed_work(work), struct eu_unit,
+					 led_work);
+	struct eu_ctrl *c = u->ctrl;
+	unsigned int per = u->type->bays / u->type->pmps, i;
+	int e, ret;
+
+	mutex_lock(&c->lock);
+	for (e = 0; e < u->npmps && !u->gone; e++) {
+		struct eu_port *p;
+		struct eu_req r;
+		u8 m = 0, v = 0, d;
+
+		for (i = 0; i < per; i++) {
+			unsigned int bay = e * per + i;
+
+			if (!(u->led_mask & BIT(bay)))
+				continue;
+			u->led_mask &= ~BIT(bay);
+			m |= BIT(u->type->led_bit[i]);
+			if (u->led_val & BIT(bay))
+				v |= BIT(u->type->led_bit[i]);
+		}
+		if (!m || u->pmp[e] < 0)
+			continue;
+		p = &c->port[u->pmp[e]];
+		d = p->p1_valid ?
+		    eu_p1_diff(p->p1, eu_type_p1_mask(u->type), m, v) : m;
+		if (!d)
+			continue;
 		eu_req_init(&r, u, 0);
 		r.wpage = 1;
-		r.wmask = bit;
-		r.wval = value ? bit : 0;
-		ret = eu_cycle(ap, &r);
+		r.wmask = d;
+		r.wval = v;
+		ret = eu_cycle(p->ap, &r);
+		eu_note_p1(p, &r);
+		u->led_stamp = jiffies;
+		if (ret)
+			dev_warn_ratelimited(c->dev, "ata%u: LEDs: %d\n",
+					     p->ap->print_id, ret);
 	}
-	mutex_unlock(&u->ctrl->lock);
-	return ret;
+	mutex_unlock(&c->lock);
 }
 
 /* ----------------------------------------------------------------- sysfs */
@@ -567,10 +764,16 @@ static ssize_t pages_show(struct device *dev, struct device_attribute *attr,
 
 		if (!ap)
 			continue;
-		/* read-only: no row, so the guard allows no data word */
-		eu_req_init(&r, NULL, EU_ALL_PAGES);
+		/* read-only: the guard allows no data word */
+		eu_req_init(&r, u, EU_ALL_PAGES);
+		r.g.writable = false;
 		ret = eu_cycle(ap, &r);
 		n += sysfs_emit_at(buf, n, "ata%u", ap->print_id);
+		if (ret == -ENODEV && (r.g.valid & BIT(0))) {
+			/* no table unit ID: page 0 only */
+			n += sysfs_emit_at(buf, n, " %02x\n", r.g.page[0]);
+			continue;
+		}
 		if (ret) {
 			n += sysfs_emit_at(buf, n, " error %d\n", ret);
 			continue;
@@ -603,13 +806,14 @@ static void eu_leds_on(struct eu_unit *u, int emid)
 	struct eu_req r;
 	int ret;
 
-	if (!disk_leds || !u->type || !ap)
+	if (!disk_leds || !eu_writable(u) || !ap)
 		return;
 	eu_req_init(&r, u, 0);
 	r.wpage = 1;
 	r.wmask = EU_P1_LED_MASK;
 	r.wval = 0;
 	ret = eu_cycle(ap, &r);
+	eu_note_p1(&u->ctrl->port[u->pmp[emid]], &r);
 	if (ret)
 		dev_warn(u->ctrl->dev, "ata%u: disk LEDs on: %d\n",
 			 ap->print_id, ret);
@@ -622,6 +826,7 @@ static void eu_unit_unregister(struct eu_unit *u)
 
 	for (i = 0; i < u->nleds; i++)
 		led_classdev_unregister(&u->led[i].cdev);
+	cancel_delayed_work_sync(&u->led_work);
 	if (u->hwmon)
 		hwmon_device_unregister(u->hwmon);
 	ida_free(&eu_ida, u->index);
@@ -650,6 +855,8 @@ static struct eu_unit *eu_unit_new(struct eu_ctrl *c, int master)
 	u->type = t;
 	u->id = p->p0;
 	u->npmps = t ? t->pmps : 1;
+	INIT_DELAYED_WORK(&u->led_work, eu_led_work_fn);
+	u->led_stamp = jiffies - EU_LED_GAP;
 	for (e = 0; e < EU_MAX_PMPS; e++)
 		u->pmp[e] = -1;
 	u->pmp[0] = master;
@@ -662,10 +869,14 @@ static struct eu_unit *eu_unit_new(struct eu_ctrl *c, int master)
 	for (i = 0; u->hwmon_name[i]; i++)
 		u->hwmon_name[i] = tolower(u->hwmon_name[i]);
 
-	if (t)
-		dev_info(c->dev, "ata%u: unit ID 0x%02x, using row %s (%s)\n",
+	if (t && t->confirmed)
+		dev_info(c->dev, "ata%u: unit ID 0x%02x, using row %s (confirmed)\n",
+			 p->ap->print_id, EU_P0_ID(p->p0), t->name);
+	else if (t)
+		dev_info(c->dev, "ata%u: unit ID 0x%02x, using row %s (unconfirmed, please report): fan level and LEDs %s\n",
 			 p->ap->print_id, EU_P0_ID(p->p0), t->name,
-			 t->confirmed ? "confirmed" : "unconfirmed, please report");
+			 unconfirmed_writes ? "writable (unconfirmed_writes=1)" :
+			 "read-only, unconfirmed_writes=1 makes them writable");
 	else
 		dev_info(c->dev, "ata%u: unit ID 0x%02x (EMID %u) not in the table: read-only, please report\n",
 			 p->ap->print_id, EU_P0_ID(p->p0), EU_P0_EMID(p->p0));
@@ -677,7 +888,7 @@ static struct eu_unit *eu_unit_new(struct eu_ctrl *c, int master)
 			 PTR_ERR(u->hwmon));
 		u->hwmon = NULL;
 	}
-	if (!t)
+	if (!eu_writable(u))
 		return u;
 	for (i = 0; i < t->bays; i++) {
 		struct eu_led *led = &u->led[i];
@@ -720,6 +931,85 @@ static struct eu_unit *eu_slave_unit(struct eu_ctrl *c, int i)
 	return best;
 }
 
+/*
+ * caller holds lock: the unit ID of a master (EMID 0) of a table unit on
+ * this controller, found by page 0, or 0. Its slaves may be set up from the
+ * power-on state.
+ */
+static u8 eu_master_id(struct eu_ctrl *c)
+{
+	int i;
+
+	for (i = 0; i < EU_MAX_PORTS; i++) {
+		struct eu_port *p = &c->port[i];
+
+		if (p->ap && p->p0_valid && !EU_P0_EMID(p->p0) &&
+		    eu_type_lookup(EU_P0_ID(p->p0)))
+			return EU_P0_ID(p->p0);
+	}
+	return 0;
+}
+
+/* caller holds lock: page 0 of a PMP not identified yet */
+static void eu_identify(struct eu_ctrl *c, struct eu_port *p)
+{
+	u8 mid = eu_master_id(c);
+	struct eu_req r;
+	int ret;
+
+	if (p->given_up || (p->fails && time_before(jiffies, p->next)))
+		return;
+	/* power-on state: nothing changed since, no command needed */
+	if (p->parked && !mid && !setup_unidentified)
+		return;
+	eu_req_init(&r, NULL, BIT(0));
+	r.setup = mid || setup_unidentified;
+	r.g.id = setup_unidentified ? 0 : mid;
+	ret = eu_cycle(p->ap, &r);
+	if (r.found && !p->logged) {
+		p->logged = true;
+		dev_info(c->dev, "ata%u: GPIO at first look: 0x3a0 0x%05x 0x3a4 0x%05x 0x3ac 0x%05x\n",
+			 p->ap->print_id, r.out0, r.en0, r.pol0);
+	}
+	if ((!ret || ret == -ENODEV) && (r.g.valid & BIT(0))) {
+		/* identified, or a unit ID that is not ours: no more tries */
+		p->p0 = r.g.page[0];
+		p->p0_valid = true;
+		p->parked = false;
+		p->fails = 0;
+		return;
+	}
+	if (ret == -ENXIO) {
+		p->given_up = true;
+		dev_warn(c->dev, "ata%u: input polarity 0x%05x not known, left as it is\n",
+			 p->ap->print_id, r.pol0);
+		return;
+	}
+	if (ret == -EPERM) {
+		if (!p->parked)
+			dev_info(c->dev, "ata%u: GPIO in the power-on state, left as it is (no identified unit on this controller; setup_unidentified=1 sets it up)\n",
+				 p->ap->print_id);
+		p->parked = true;
+		return;
+	}
+	if (++p->fails >= EU_P0_TRIES) {
+		p->given_up = true;
+		dev_warn(c->dev, "ata%u: page 0: %d, giving up after %u tries\n",
+			 p->ap->print_id, ret, p->fails);
+		return;
+	}
+	p->next = jiffies + (EU_SCAN_S << (p->fails - 1)) * HZ;
+}
+
+/* caller holds lock: forget everything about a port whose PMP went away */
+static void eu_port_reset(struct eu_port *p)
+{
+	struct ata_port *ap = p->ap;
+
+	memset(p, 0, sizeof(*p));
+	p->ap = ap;
+}
+
 /* caller holds lock: drop what went away, read page 0 of new PMPs, group */
 static void eu_scan(struct eu_ctrl *c, struct list_head *dead)
 {
@@ -728,11 +1018,10 @@ static void eu_scan(struct eu_ctrl *c, struct list_head *dead)
 
 	for (i = 0; i < EU_MAX_PORTS; i++) {
 		struct eu_port *p = &c->port[i];
-		struct eu_req r;
 
 		if (!p->ap)
 			continue;
-		if (!eu_is_9705(p->ap)) {
+		if (!eu_is_9705_locked(p->ap)) {
 			u = p->unit;
 			if (u && u->pmp[0] == i) {
 				u->gone = true;
@@ -741,17 +1030,11 @@ static void eu_scan(struct eu_ctrl *c, struct list_head *dead)
 					if (u->pmp[e] == i)
 						u->pmp[e] = -1;
 			}
-			p->unit = NULL;
-			p->p0_valid = false;
+			eu_port_reset(p);
 			continue;
 		}
-		if (p->unit || p->p0_valid)
-			continue;
-		eu_req_init(&r, NULL, BIT(0));
-		if (!eu_cycle(p->ap, &r)) {
-			p->p0 = r.g.page[0];
-			p->p0_valid = true;
-		}
+		if (!p->unit && !p->p0_valid)
+			eu_identify(c, p);
 	}
 
 	list_for_each_entry_safe(u, tmp, &c->units, node) {
@@ -761,8 +1044,7 @@ static void eu_scan(struct eu_ctrl *c, struct list_head *dead)
 		for (e = 0; e < u->npmps; e++) {
 			if (u->pmp[e] < 0)
 				continue;
-			c->port[u->pmp[e]].unit = NULL;
-			c->port[u->pmp[e]].p0_valid = false;
+			eu_port_reset(&c->port[u->pmp[e]]);
 		}
 		list_move(&u->node, dead);
 	}
@@ -874,20 +1156,38 @@ static void eu_remove(struct platform_device *pdev)
 	}
 }
 
-static int eu_resume(struct device *dev)
+/* no scan or LED round while the system suspends; the unit list stays */
+static int eu_suspend(struct device *dev)
 {
 	struct eu_ctrl *c = dev_get_drvdata(dev);
 	struct eu_unit *u;
 
-	mutex_lock(&c->lock);
+	cancel_delayed_work_sync(&c->work);
 	list_for_each_entry(u, &c->units, node)
-		u->mvalid = false;
-	mutex_unlock(&c->lock);
-	mod_delayed_work(system_wq, &c->work, 0);
+		cancel_delayed_work_sync(&u->led_work);
 	return 0;
 }
 
-static DEFINE_SIMPLE_DEV_PM_OPS(eu_pm, NULL, eu_resume);
+static int eu_resume(struct device *dev)
+{
+	struct eu_ctrl *c = dev_get_drvdata(dev);
+	struct eu_unit *u;
+	int i;
+
+	mutex_lock(&c->lock);
+	list_for_each_entry(u, &c->units, node) {
+		u->mvalid = false;
+		if (u->led_mask)
+			schedule_delayed_work(&u->led_work, 0);
+	}
+	for (i = 0; i < EU_MAX_PORTS; i++)
+		c->port[i].p1_valid = false;
+	mutex_unlock(&c->lock);
+	schedule_delayed_work(&c->work, 0);
+	return 0;
+}
+
+static DEFINE_SIMPLE_DEV_PM_OPS(eu_pm, eu_suspend, eu_resume);
 
 static struct platform_driver eu_driver = {
 	.driver = {
