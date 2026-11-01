@@ -179,6 +179,11 @@ with tempfile.TemporaryDirectory() as d:
     m.SYS_BLOCK = f"{d}/block"
     check("bay_disks", m.bay_disks(), {2: ("sda", 2), 3: ("sdb", 7), 4: ("sdc", 8)})
     check("bay_block_devices", m.bay_block_devices(), {2: "sda", 3: "sdb", 4: "sdc"})
+    check("model_bays DS923+", m.model_bays("DS923+"), m.MODEL_BAYS["DS923+"])
+    check("model_bays other model", m.model_bays("DS9999+"), m.MODEL_BAYS["DS923+"])
+    saved, m.BAYS = m.BAYS, m.model_bays("DS1522+")
+    check("bay_disks DS1522+", m.bay_disks(), {2: ("sda", 2), 4: ("sdb", 7), 5: ("sdc", 8)})
+    m.BAYS = saved
     # fake LEDs and presence
     m.LEDS, m.PLATFORM = f"{d}/leds", f"{d}/platform"
     os.makedirs(m.PLATFORM)
