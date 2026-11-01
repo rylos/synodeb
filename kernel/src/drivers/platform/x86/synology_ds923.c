@@ -2,6 +2,10 @@
 /*
  * Synology DS923+ platform driver.
  *
+ * The values below are those of the DS923+. Other models of the same
+ * platform differ in a few of them (bay count, bay GPIOs, spin-up groups):
+ * those are in a per-model table, selected by DMI (struct ds923_model).
+ *
  * Implements, following the DSM 7.4 GPL kernel sources and the model.dtb of
  * the DS923+ (platform "r1000", board "Bilby"), the parts of the hardware DSM
  * drives itself:
@@ -55,7 +59,7 @@
 #include <linux/workqueue.h>
 
 #define DRV_NAME	"synology-ds923"
-#define NUM_BAYS	4
+#define MAX_BAYS	5
 #define NUM_USB		2
 #define NUM_FANS	2
 #define GPIO_CHIP	"AMDI0030:00"
@@ -68,11 +72,11 @@
 
 static bool force;
 module_param(force, bool, 0444);
-MODULE_PARM_DESC(force, "Load even if DMI does not report a Synology DS923+");
+MODULE_PARM_DESC(force, "Load as a DS923+ even if DMI does not report a supported model");
 
-static char *spinup_groups = "2,1,1";
+static char *spinup_groups;
 module_param(spinup_groups, charp, 0444);
-MODULE_PARM_DESC(spinup_groups, "Bays powered together per spin-up group (DSM: 2,1,1)");
+MODULE_PARM_DESC(spinup_groups, "Bays powered together per spin-up group (default: the model's, DS923+ 2,1,1)");
 
 static unsigned int spinup_delay = 11;
 module_param(spinup_delay, uint, 0444);
@@ -130,6 +134,26 @@ static struct gpiod_lookup_table ds923_gpios = {
 	},
 };
 
+/* What differs between the models this driver supports. */
+struct ds923_model {
+	const char *name;
+	unsigned int bays;		/* at most MAX_BAYS */
+	const char *spinup_groups;	/* DSM's spin-up groups */
+	struct gpiod_lookup_table *gpios;
+	bool atmega_leds;		/* ATmega1608 disk LED controller at 0x60 */
+};
+
+static const struct ds923_model ds923plus = {
+	.name = "DS923+",
+	.bays = 4,
+	.spinup_groups = "2,1,1",
+	.gpios = &ds923_gpios,
+	.atmega_leds = true,
+};
+
+/* the model found at init, used by probe and the I2C work */
+static const struct ds923_model *model;
+
 struct ds923_bay {
 	struct gpio_desc *power;
 	struct gpio_desc *present;
@@ -140,7 +164,8 @@ struct ds923_bay {
 
 struct ds923 {
 	struct device *dev;
-	struct ds923_bay bay[NUM_BAYS];
+	unsigned int nbays;
+	struct ds923_bay bay[MAX_BAYS];
 	struct gpio_desc *vbus[NUM_USB];
 	struct gpio_desc *tach[NUM_FANS];
 	atomic_t pulses[NUM_FANS];
@@ -184,30 +209,30 @@ static int bay_set_power(struct ds923 *ds, int bay, bool on)
 /* Same order and timing as DSM's ata_port_probe() spin-up groups. */
 static void ds923_spinup(struct ds923 *ds)
 {
-	unsigned int group[NUM_BAYS] = { 0 }, sum = 0;
+	unsigned int nbays = ds->nbays, group[MAX_BAYS] = { 0 }, sum = 0;
 	int ngroups = 0, bay = 0, g, i;
 	char *s, *buf, *tok;
 
-	buf = kstrdup(spinup_groups, GFP_KERNEL);
+	buf = kstrdup(spinup_groups ?: model->spinup_groups, GFP_KERNEL);
 	s = buf;
-	while (buf && (tok = strsep(&s, ",")) && ngroups < NUM_BAYS) {
+	while (buf && (tok = strsep(&s, ",")) && ngroups < nbays) {
 		unsigned int n;
 
 		if (kstrtouint(tok, 10, &n) || !n)
 			continue;
-		n = min_t(unsigned int, n, NUM_BAYS);
+		n = min_t(unsigned int, n, nbays);
 		group[ngroups++] = n;
 		sum += n;
 	}
 	kfree(buf);
 	/* bays beyond the configured groups: one more group, delayed like the others */
-	if (sum < NUM_BAYS)
-		group[ngroups++] = NUM_BAYS - sum;
+	if (sum < nbays)
+		group[ngroups++] = nbays - sum;
 
-	for (g = 0; g < ngroups && bay < NUM_BAYS; g++) {
+	for (g = 0; g < ngroups && bay < nbays; g++) {
 		bool powered_any = false;
 
-		for (i = 0; i < group[g] && bay < NUM_BAYS; i++, bay++) {
+		for (i = 0; i < group[g] && bay < nbays; i++, bay++) {
 			bool present = bay_present(ds, bay);
 
 			ds->bay[bay].state = present;
@@ -239,7 +264,7 @@ static void ds923_bays_poll(struct ds923 *ds)
 	int bay;
 
 	mutex_lock(&ds->lock);
-	for (bay = 0; bay < NUM_BAYS; bay++) {
+	for (bay = 0; bay < ds->nbays; bay++) {
 		struct ds923_bay *b = &ds->bay[bay];
 		bool present;
 
@@ -431,6 +456,7 @@ BAY_ATTRS(1);
 BAY_ATTRS(2);
 BAY_ATTRS(3);
 BAY_ATTRS(4);
+BAY_ATTRS(5);
 
 static int vbus_get(struct ds923 *ds, int port)
 {
@@ -501,10 +527,26 @@ static struct attribute *ds923_attrs[] = {
 	&dev_attr_bay2_power.attr, &dev_attr_bay2_present.attr,
 	&dev_attr_bay3_power.attr, &dev_attr_bay3_present.attr,
 	&dev_attr_bay4_power.attr, &dev_attr_bay4_present.attr,
+	&dev_attr_bay5_power.attr, &dev_attr_bay5_present.attr,
 	&dev_attr_usb_vbus.attr, &dev_attr_usb1_vbus.attr, &dev_attr_usb2_vbus.attr,
 	NULL
 };
-ATTRIBUTE_GROUPS(ds923);
+
+/* bayN_* only for the bays the model has */
+static umode_t ds923_attr_visible(struct kobject *kobj, struct attribute *attr, int n)
+{
+	struct ds923 *ds = dev_get_drvdata(kobj_to_dev(kobj));
+
+	if (!strncmp(attr->name, "bay", 3) && attr->name[3] - '1' >= ds->nbays)
+		return 0;
+	return attr->mode;
+}
+
+static const struct attribute_group ds923_group = {
+	.attrs = ds923_attrs,
+	.is_visible = ds923_attr_visible,
+};
+__ATTRIBUTE_GROUPS(ds923);
 
 /* ---------------------------------------------------------------- hwmon */
 
@@ -631,7 +673,8 @@ static void ds923_i2c_register(struct work_struct *work)
 	if (!dev)
 		return;
 	ds923_i2c_add(i2c_verify_adapter(dev), &rtc, "S-35390A RTC");
-	ds923_i2c_add(i2c_verify_adapter(dev), &leds, "ATmega1608 LEDs");
+	if (model->atmega_leds)
+		ds923_i2c_add(i2c_verify_adapter(dev), &leds, "ATmega1608 LEDs");
 	put_device(dev);
 }
 
@@ -667,6 +710,7 @@ static int ds923_probe(struct platform_device *pdev)
 	if (!ds)
 		return -ENOMEM;
 	ds->dev = dev;
+	ds->nbays = model->bays;
 	mutex_init(&ds->lock);
 	ds->last_power_on = jiffies - spinup_delay * HZ - 1;
 	platform_set_drvdata(pdev, ds);
@@ -689,7 +733,7 @@ static int ds923_probe(struct platform_device *pdev)
 		}
 	}
 
-	for (i = 0; i < NUM_BAYS; i++) {
+	for (i = 0; i < ds->nbays; i++) {
 		struct ds923_bay *b = &ds->bay[i];
 
 		b->present = devm_gpiod_get_index(dev, "present", i, GPIOD_IN);
@@ -760,7 +804,7 @@ static int ds923_probe(struct platform_device *pdev)
 
 	INIT_DELAYED_WORK(&ds->poll, ds923_poll);
 	queue_delayed_work(system_freezable_wq, &ds->poll, msecs_to_jiffies(ds923_poll_ms()));
-	dev_info(dev, "Synology DS923+ platform ready\n");
+	dev_info(dev, "Synology %s platform ready\n", model->name);
 	return 0;
 }
 
@@ -781,7 +825,7 @@ static void ds923_shutdown(struct platform_device *pdev)
 	if (system_state != SYSTEM_POWER_OFF)
 		return;
 	/* The disks are already stopped by sd_shutdown(). */
-	for (bay = 0; bay < NUM_BAYS; bay++) {
+	for (bay = 0; bay < ds->nbays; bay++) {
 		if (!bay_powered(ds, bay))
 			continue;
 		bay_set_power(ds, bay, false);
@@ -807,6 +851,7 @@ static const struct dmi_system_id ds923_dmi[] = {
 			DMI_EXACT_MATCH(DMI_SYS_VENDOR, "Synology Inc."),
 			DMI_EXACT_MATCH(DMI_PRODUCT_NAME, "DS923+"),
 		},
+		.driver_data = (void *)&ds923plus,
 	},
 	{ }
 };
@@ -815,11 +860,18 @@ MODULE_DEVICE_TABLE(dmi, ds923_dmi);
 /* Built in only (Kconfig bool): there is no exit path. */
 static int __init ds923_init(void)
 {
+	const struct dmi_system_id *id = dmi_first_match(ds923_dmi);
 	struct platform_device *pdev;
 	int ret;
 
-	if (!dmi_check_system(ds923_dmi) && !force)
+	if (id)
+		model = id->driver_data;
+	else if (force)
+		model = &ds923plus;
+	else
 		return -ENODEV;
+	if (model->bays > MAX_BAYS)
+		return -EINVAL;
 
 	/*
 	 * The notifier stays registered for good, so the clients come back
@@ -833,7 +885,7 @@ static int __init ds923_init(void)
 	schedule_work(&ds923_i2c_work);
 	flush_work(&ds923_i2c_work);
 
-	gpiod_add_lookup_table(&ds923_gpios);
+	gpiod_add_lookup_table(model->gpios);
 	ret = platform_driver_register(&ds923_driver);
 	if (ret)
 		goto err_table;
@@ -848,7 +900,7 @@ static int __init ds923_init(void)
 err_drv:
 	platform_driver_unregister(&ds923_driver);
 err_table:
-	gpiod_remove_lookup_table(&ds923_gpios);
+	gpiod_remove_lookup_table(model->gpios);
 	return ret;
 }
 module_init(ds923_init);
