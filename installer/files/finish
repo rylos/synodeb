@@ -2,7 +2,8 @@
 # synodeb installer, preseed/late_command: turns the freshly installed Debian into a
 # DS923+ system and points the DOM at it.
 #  1. synodeb apt repository (signed) and the Debian kernel pin;
-#  2. linux-image-ds923 + synology-ds923 (+ openssh-server);
+#  2. linux-image-ds923 + synology-ds923 (+ openssh-server; firmware-realtek if a Realtek
+#     NIC asked for its firmware);
 #  3. mdadm.conf: this system's arrays + "AUTO -all" (arrays of other systems, such as
 #     DSM's, are never assembled), then a new initramfs;
 #  4. the DOM is unlocked (early mounted it read-only on /hd-media), the installer files
@@ -52,6 +53,13 @@ chroot_run apt-get update >> $LOG 2>&1 || fail "apt-get update"
 chroot_run apt-get -y -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold \
     install linux-image-ds923 synology-ds923 openssh-server >> $LOG 2>&1 ||
     fail "installing linux-image-ds923 synology-ds923"
+# firmware the kernel asked for and did not find (Realtek NICs of the DS920+: they work
+# without it). Debian's non-free-firmware component, enabled by the installer, has it.
+if dmesg 2>/dev/null | grep -q 'firmware rtl_nic/'; then
+    step "firmware-realtek"
+    chroot_run apt-get -y install firmware-realtek >> $LOG 2>&1 ||
+        log "firmware-realtek not installed (non-free-firmware not enabled?), the NICs work without it"
+fi
 
 if [ -x $T/sbin/mdadm ] || [ -x $T/usr/sbin/mdadm ]; then
     step "mdadm.conf"
