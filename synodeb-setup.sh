@@ -481,6 +481,7 @@ cmd_install() {
         cat <<EOT
 menuentry "INSTALLER" {
         search --fs-uuid --no-floppy --set=root $P2UUID
+        vender /vender -s
         linux /synodeb/installer.vmlinuz $CONSOLE debian-installer/locale=$LOCALE keyboard-configuration/xkb-keymap=$KEYMAP netcfg/get_hostname=$HOST netcfg/hostname=$HOST $net network-console/password=$PW network-console/password-again=$PW${REPO:+ synodeb.repo=$REPO}
         initrd /synodeb/installer.img
 }

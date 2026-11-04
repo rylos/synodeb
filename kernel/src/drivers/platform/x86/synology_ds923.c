@@ -8,7 +8,9 @@
  * selected by DMI (struct ds923_model). The DS920+ (platform geminilake) has
  * its GPIOs on INT3453:00 (bay power 20-23, presence 35-38, USB VBUS 29/30,
  * fan tachometers 39/40), its RTC described in ACPI (RTC35390 on LPSS I2C 0)
- * and its microcontroller on LPSS UART 0 (PCI 00:18.0).
+ * and its microcontroller on LPSS UART 0 (PCI 00:18.0). Its Realtek NICs
+ * carry no MAC address of their own: the Synology GRUB passes them on the
+ * command line (macs=, from "vender" on the DOM), and DSM's order is kept.
  *
  * Implements, following the DSM 7.4 GPL kernel sources and the model.dtb of
  * the DS923+ (platform "r1000", board "Bilby"), the parts of the hardware DSM
@@ -49,6 +51,7 @@
 #include <linux/dmi.h>
 #include <linux/gpio/consumer.h>
 #include <linux/gpio/machine.h>
+#include <linux/hex.h>
 #include <linux/hwmon.h>
 #include <linux/i2c.h>
 #include <linux/interrupt.h>
@@ -56,6 +59,8 @@
 #include <linux/jiffies.h>
 #include <linux/module.h>
 #include <linux/mutex.h>
+#include <linux/netdevice.h>
+#include <linux/etherdevice.h>
 #include <linux/pci.h>
 #include <linux/pm_runtime.h>
 #include <linux/platform_device.h>
@@ -194,6 +199,11 @@ struct ds923_model {
 	const char *rtc_acpi_hid;
 	bool atmega_leds;		/* ATmega1608 disk LED controller at 0x60 */
 	enum ds923_up up;		/* microcontroller UART */
+	/*
+	 * Onboard NICs without a MAC address of their own, in the order of
+	 * the macs= list (DSM's eth0, eth1): PCI device names.
+	 */
+	const char * const *nics;
 };
 
 static const struct ds923_model ds923plus = {
@@ -207,6 +217,9 @@ static const struct ds923_model ds923plus = {
 	.up = UP_AMD,
 };
 
+/* DSM: eth0 (LAN 1) is 03:00.0, eth1 (LAN 2) is 02:00.0 */
+static const char * const ds920_nics[] = { "0000:03:00.0", "0000:02:00.0", NULL };
+
 static const struct ds923_model ds920plus = {
 	.name = "DS920+",
 	.bays = 4,
@@ -215,6 +228,7 @@ static const struct ds923_model ds920plus = {
 	.gpio_chip = GLK_GPIO,
 	.rtc_acpi_hid = "RTC35390",
 	.up = UP_LPSS,
+	.nics = ds920_nics,
 };
 
 /* the model found at init, used by probe and the I2C work */
@@ -813,6 +827,59 @@ static struct notifier_block ds923_i2c_nb = {
 	.notifier_call = ds923_i2c_notify,
 };
 
+/* ---------------------------------------------------------------- MAC addresses */
+
+#define MAX_NICS	4
+static u8 ds923_macs[MAX_NICS][ETH_ALEN];
+static unsigned int ds923_nmacs;
+
+/* macs=001132aabbcc,001132aabbcd: added by the Synology GRUB ("vender" command) */
+static int __init ds923_macs_setup(char *str)
+{
+	while (str && *str && ds923_nmacs < MAX_NICS) {
+		char *next = strchr(str, ',');
+
+		if (next)
+			*next++ = '\0';
+		if (strlen(str) == 2 * ETH_ALEN &&
+		    !hex2bin(ds923_macs[ds923_nmacs], str, ETH_ALEN) &&
+		    is_valid_ether_addr(ds923_macs[ds923_nmacs]))
+			ds923_nmacs++;
+		str = next;
+	}
+	return 1;
+}
+__setup("macs=", ds923_macs_setup);
+
+static int ds923_netdev_event(struct notifier_block *nb, unsigned long action, void *ptr)
+{
+	struct net_device *ndev = netdev_notifier_info_to_dev(ptr);
+	struct device *parent = ndev->dev.parent;
+	struct sockaddr_storage ss = { .ss_family = ndev->type };
+	unsigned int i;
+	int ret;
+
+	if (action != NETDEV_REGISTER || !parent || !dev_is_pci(parent))
+		return NOTIFY_DONE;
+	for (i = 0; model->nics[i] && i < ds923_nmacs; i++) {
+		if (strcmp(dev_name(parent), model->nics[i]))
+			continue;
+		memcpy(ss.__data, ds923_macs[i], ETH_ALEN);
+		ret = dev_set_mac_address(ndev, &ss, NULL);
+		if (ret)
+			pr_warn(DRV_NAME ": %s: MAC address from macs=: %d\n", ndev->name, ret);
+		else
+			pr_info(DRV_NAME ": %s (%s): MAC address %pM from macs=\n",
+				ndev->name, model->nics[i], ds923_macs[i]);
+		break;
+	}
+	return NOTIFY_DONE;
+}
+
+static struct notifier_block ds923_netdev_nb = {
+	.notifier_call = ds923_netdev_event,
+};
+
 /* ---------------------------------------------------------------- probe */
 
 static void ds923_up_release(void *data)
@@ -1044,6 +1111,13 @@ static int __init ds923_init(void)
 		pr_warn(DRV_NAME ": i2c bus notifier: %d\n", ret);
 	schedule_work(&ds923_i2c_work);
 	flush_work(&ds923_i2c_work);
+
+	/* NIC drivers are modules: their devices register long after this */
+	if (model->nics && ds923_nmacs) {
+		ret = register_netdevice_notifier(&ds923_netdev_nb);
+		if (ret)
+			pr_warn(DRV_NAME ": netdevice notifier: %d\n", ret);
+	}
 
 	gpiod_add_lookup_table(model->gpios);
 	ret = platform_driver_register(&ds923_driver);
