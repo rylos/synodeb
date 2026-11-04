@@ -103,13 +103,23 @@ done
 for m in fs/nls/nls_cp437 fs/nls/nls_ascii fs/nls/nls_utf8; do
     for c in "$KM/kernel/$m.ko" "$KM/kernel/$m.ko.xz"; do [ -f "$c" ] && wanted[${c#"$KM"/}]=1; done
 done
-# dependencies (modules.dep of the synodeb kernel)
+# dependencies (modules.dep of the synodeb kernel) and soft dependencies: btrfs needs the
+# crc32c crypto module to mount ("softdep pre: crc32c"), a module Debian's groups list under an
+# older name (crc32c_generic; crc32c-cryptoapi in newer kernels)
+KROOT=${KM%/lib/modules/*}
 changed=1
 while [ $changed = 1 ]; do
     changed=0
     for m in "${!wanted[@]}"; do
         for d in $(awk -v m="$m:" '$1 == m { $1 = ""; print }' "$KM/modules.dep"); do
             [ -n "${wanted[$d]:-}" ] || { wanted[$d]=1; changed=1; }
+        done
+        for a in $(modinfo -F softdep "$KM/$m" | tr ' ' '\n' | grep -v -e '^pre:$' -e '^post:$' -e '^$'); do
+            for name in $(modprobe -d "$KROOT" -S "$KREL" -R "$a" 2>/dev/null); do
+                d=$(awk -v n="$name" '{ f = $1; sub(/:$/, "", f); b = f; sub(/.*\//, "", b); sub(/\.ko.*$/, "", b); gsub(/-/, "_", b) }
+                    b == n { print f; exit }' "$KM/modules.dep")
+                [ -z "$d" ] || [ -n "${wanted[$d]:-}" ] || { wanted[$d]=1; changed=1; echo "    softdep of ${m##*/}: $d"; }
+            done
         done
     done
 done
