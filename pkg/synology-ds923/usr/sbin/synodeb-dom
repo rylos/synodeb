@@ -156,6 +156,13 @@ root_spec() {
     if [ -z "$ROOT" ]; then
         ROOT=$(awk '$1 !~ /^#/ && $2 == "/" { print $1; exit }' /etc/fstab)
         case "$ROOT" in /dev/disk/by-uuid/*) ROOT=UUID=${ROOT#/dev/disk/by-uuid/} ;; esac
+        # a btrfs root in a subvolume (the Debian installer uses @rootfs): the kernel mounts
+        # the top level of the filesystem unless rootflags names the subvolume
+        sv=$(awk '$1 !~ /^#/ && $2 == "/" && $3 == "btrfs" { n = split($4, o, ","); for (i = 1; i <= n; i++) if (o[i] ~ /^subvol(id)?=/) { print o[i]; exit } }' /etc/fstab)
+        case " ${CMDLINE:-} " in
+        *" rootflags="*) ;;
+        *) [ -z "$sv" ] || CMDLINE="${CMDLINE:+$CMDLINE }rootflags=$sv" ;;
+        esac
     fi
     [ -n "$ROOT" ] || die "root device unknown: set ROOT in $DEFAULTS"
 }
