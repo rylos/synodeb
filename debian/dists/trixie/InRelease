@@ -4,31 +4,31 @@ Hash: SHA512
 Architectures: amd64
 Codename: trixie
 Components: main
-Date: Wed, 04 Nov 2026 09:27:57 +0000
+Date: Wed, 04 Nov 2026 10:10:47 +0000
 Description: synodeb: Debian on the Synology DS923+
 Label: synodeb
 Origin: synodeb
 Suite: trixie
 MD5Sum:
- a1f2ea002a934eb7b303bc7c54813cdf            14451 main/binary-amd64/Packages
- 8b35b4beba3949bf4d421fe66c23c7a8             4526 main/binary-amd64/Packages.gz
- 27f09f37367dc90d555b9746ab7a8c0d             4224 main/binary-amd64/Packages.xz
+ 420c188689b2988002052b1226e1714c            14451 main/binary-amd64/Packages
+ 38e621d047d89a56941cb1dc36507bfd             4516 main/binary-amd64/Packages.gz
+ 8b8dc6c2a63d4d1e175c01edcd58fb94             4200 main/binary-amd64/Packages.xz
 SHA1:
- 2dccb60b926b270f58d0b39caa9e719f724eb39f            14451 main/binary-amd64/Packages
- af8415dee15b663d9df6899ff515e681b82bfd1f             4526 main/binary-amd64/Packages.gz
- 878d1e484665f3a502f401a6c47b137555007097             4224 main/binary-amd64/Packages.xz
+ a51ef5f56ab13047ac7eec43ee5123d36bacb791            14451 main/binary-amd64/Packages
+ d55aae651a96699f2054016d12c448fa23dfa721             4516 main/binary-amd64/Packages.gz
+ a14d0e1418e7936c5d240beb37d846ad7c2876ee             4200 main/binary-amd64/Packages.xz
 SHA256:
- 5498b0c3e647dbcd97c2b21fe03ca9a902eb21d3fb618ae97d67d2b3ae7f96ec            14451 main/binary-amd64/Packages
- 7d202cd03e1533a15058549ad65400802799ed528e39ce8d66fbc4d89795a77c             4526 main/binary-amd64/Packages.gz
- 2ef115ce6219da0947f843ec60e18408f39852bb65e70d19a806db09be8b08a2             4224 main/binary-amd64/Packages.xz
+ d412ac046cf0077670cbae3a995ed1dcad8a1dfc27f0edeb8acdbd9bb4f1a955            14451 main/binary-amd64/Packages
+ a33bf086aa39d155b405a10644a0055a7d91fd4a6859396d1e7ff4342b8382e8             4516 main/binary-amd64/Packages.gz
+ 30314313d3f4cad88508fd08b1f32529437976615ef0fd5d4aae3de0fd0a469a             4200 main/binary-amd64/Packages.xz
 SHA512:
- 748609eda48dfa398d912a778e5f2d742c0862757e1fa36857205986eaf94d2cf055832c1b929d32cfac958789eba1183ecaa738ec7c63ce8c5f7ccd6016f3a1            14451 main/binary-amd64/Packages
- 0958c250cf392e7ad44707c8aeced546532fec00e1a1b4c9add05741ec2e9a3adc37eb5ec6a5a8f941c5e65663fcdbabcc7953ae38e80ef2bd16fba189b60818             4526 main/binary-amd64/Packages.gz
- 0130a12423b9d806a77d5470f7a4ca4ad7f7ceacf8d37eaa23ed6033bde773d35fc88017edb0e12d838b5284f22754c8fb0fef3c39253c22c390fac8f575a9e8             4224 main/binary-amd64/Packages.xz
+ a11748555db44c451a4ef5e3bbf06a182645dfab224e70e3d5485b6e8a40821f4f3887515ac38d909c3848af12f0056872fbc4e0c45a02c07161174edb857121            14451 main/binary-amd64/Packages
+ 74e2e26947f2ff4012cb8bd5b0a379be24c84da8b0faa6ebdf192bba77ebec3567dbba38e893871c91decb6a4b5f53338c881deb1e69d038291a1c521067d037             4516 main/binary-amd64/Packages.gz
+ 821d9cb3d7e76eb7e9083f66a6284de1f2488e47d78ca9a97a134a1ccad36acf51a460d0ee9547c3295b021e4bfced0262025545478741b8cf7a3f932f6b8844             4200 main/binary-amd64/Packages.xz
 -----BEGIN PGP SIGNATURE-----
 
-iHUEARYKAB0WIQTO4qb6llf7PL1h6gdCAK21VQ5t7gUCaur6nQAKCRBCAK21VQ5t
-7hRTAPwK44LNHmbmRDgmginllLkxQFNhgMTAG05k3na5lMUFcgD/X8+3gnmQys9K
-tPUv6ypWDr1wLb8XsSUwEKxIOpSHwwU=
-=5Wxi
+iHUEARYKAB0WIQTO4qb6llf7PL1h6gdCAK21VQ5t7gUCausEpwAKCRBCAK21VQ5t
+7rpvAQDoJNBfvjeFs1C1eDGhh0au1HPjCKgdZIMxOIpKHyEEwwD+LzSxZGrt8S1G
+kJ+g2TkPWlSIfixk5QhRBRFh/flOfAU=
+=3npq
 -----END PGP SIGNATURE-----
