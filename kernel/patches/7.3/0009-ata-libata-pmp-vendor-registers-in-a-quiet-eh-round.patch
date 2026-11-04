@@ -1,0 +1,375 @@
+diff --git a/drivers/ata/Kconfig b/drivers/ata/Kconfig
+index c04b253..6c42019 100644
+--- a/drivers/ata/Kconfig
++++ b/drivers/ata/Kconfig
+@@ -114,6 +114,16 @@ config SATA_PMP
+ 	  This option adds support for SATA Port Multipliers
+ 	  (the SATA version of an ethernet hub, or SAS expander).
+ 
++config SATA_PMP_VENDOR_EH
++	bool
++	depends on SATA_PMP
++	help
++	  Lets a driver read and write the vendor registers of an
++	  attached port multiplier (16-bit register numbers, control
++	  port 15) from a quiet error handler round of its host port,
++	  the context in which libata itself talks to the PMP. Selected
++	  by the drivers that need it (e.g. SYNOLOGY_EUNIT_9705).
++
+ if HAS_DMA
+ 
+ comment "Controllers with non-SFF native interface"
+diff --git a/drivers/ata/libata-eh.c b/drivers/ata/libata-eh.c
+index c93c24b..2acc448 100644
+--- a/drivers/ata/libata-eh.c
++++ b/drivers/ata/libata-eh.c
+@@ -758,7 +758,7 @@ void ata_scsi_port_error_handler(struct Scsi_Host *host, struct ata_port *ap)
+ 	/* invoke EH, skip if unloading or suspended */
+ 	if (!(ap->pflags & (ATA_PFLAG_UNLOADING | ATA_PFLAG_SUSPENDED)) &&
+ 	    ata_adapter_is_online(ap))
+-		ap->ops->error_handler(ap);
++		ata_eh_call_error_handler(ap);
+ 	else {
+ 		/* if unloading, commence suicide */
+ 		if ((ap->pflags & ATA_PFLAG_UNLOADING) &&
+diff --git a/drivers/ata/libata-pmp.c b/drivers/ata/libata-pmp.c
+index 62c3e8d..e0a7198 100644
+--- a/drivers/ata/libata-pmp.c
++++ b/drivers/ata/libata-pmp.c
+@@ -1130,3 +1130,292 @@ void sata_pmp_error_handler(struct ata_port *ap)
+ EXPORT_SYMBOL_GPL(sata_pmp_port_ops);
+ EXPORT_SYMBOL_GPL(sata_pmp_qc_defer_cmd_switch);
+ EXPORT_SYMBOL_GPL(sata_pmp_error_handler);
++
++#ifdef CONFIG_SATA_PMP_VENDOR_EH
++/*
++ * Vendor registers of an attached PMP, for board drivers that drive what is
++ * wired to its GPIO pins (e.g. the fans and LEDs of the Synology DX1215,
++ * four Marvell 88SM9705). The register number is 16 bits wide: the high
++ * byte goes in HOB FEATURE. The commands run from the port's EH thread, in a
++ * round with nothing else to do, the context in which libata itself reads
++ * and writes GSCRs: sata_pmp_vendor_call() schedules such a round and waits
++ * for it.
++ */
++#define SATA_PMP_VENDOR_TRIES	3
++#define SATA_PMP_VENDOR_WAIT	(10 * HZ)	/* per call, for EH to settle */
++
++static DEFINE_MUTEX(sata_pmp_vendor_mutex);	/* one call at a time */
++
++/*
++ * The pending call: set and cleared under req.ap->lock, with the mutex
++ * held. running: the EH thread has taken it and is in ->fn.
++ */
++static struct {
++	struct ata_port *ap;
++	int (*fn)(struct ata_port *ap, void *data);
++	void *data;
++	int rc;
++	bool running;
++	bool done;
++} sata_pmp_vendor_req;
++
++static unsigned int sata_pmp_vendor_rw(struct ata_port *ap, u8 cmd, u16 reg,
++				       u32 *val)
++{
++	struct ata_device *pmp_dev = ap->link.device;
++	struct ata_taskfile tf;
++	unsigned int err_mask;
++
++	if (WARN_ON_ONCE(ap->host->eh_owner != current))
++		return AC_ERR_INVALID;
++
++	ata_tf_init(pmp_dev, &tf);
++	tf.command = cmd;
++	tf.protocol = ATA_PROT_NODATA;
++	tf.flags |= ATA_TFLAG_ISADDR | ATA_TFLAG_DEVICE | ATA_TFLAG_LBA48;
++	tf.feature = reg & 0xff;
++	tf.hob_feature = reg >> 8;
++	tf.device = SATA_PMP_CTRL_PORT;
++	if (cmd == ATA_CMD_PMP_WRITE) {
++		tf.nsect = *val & 0xff;
++		tf.lbal = (*val >> 8) & 0xff;
++		tf.lbam = (*val >> 16) & 0xff;
++		tf.lbah = (*val >> 24) & 0xff;
++	}
++
++	err_mask = ata_exec_internal(pmp_dev, &tf, NULL, DMA_NONE, NULL, 0,
++				     SATA_PMP_RW_TIMEOUT);
++	if (!err_mask && cmd == ATA_CMD_PMP_READ)
++		*val = tf.nsect | tf.lbal << 8 | tf.lbam << 16 | tf.lbah << 24;
++	return err_mask;
++}
++
++/**
++ *	sata_pmp_vendor_read - read a PMP vendor register
++ *	@ap: port the PMP is attached to
++ *	@reg: register number (16 bits)
++ *	@r_val: resulting value
++ *
++ *	LOCKING:
++ *	Only from the callback of sata_pmp_vendor_call().
++ *
++ *	RETURNS:
++ *	0 on success, AC_ERR_* mask on failure.
++ */
++unsigned int sata_pmp_vendor_read(struct ata_port *ap, u16 reg, u32 *r_val)
++{
++	return sata_pmp_vendor_rw(ap, ATA_CMD_PMP_READ, reg, r_val);
++}
++EXPORT_SYMBOL_GPL(sata_pmp_vendor_read);
++
++/**
++ *	sata_pmp_vendor_write - write a PMP vendor register
++ *	@ap: port the PMP is attached to
++ *	@reg: register number (16 bits)
++ *	@val: value to write
++ *
++ *	LOCKING:
++ *	Only from the callback of sata_pmp_vendor_call().
++ *
++ *	RETURNS:
++ *	0 on success, AC_ERR_* mask on failure.
++ */
++unsigned int sata_pmp_vendor_write(struct ata_port *ap, u16 reg, u32 val)
++{
++	return sata_pmp_vendor_rw(ap, ATA_CMD_PMP_WRITE, reg, &val);
++}
++EXPORT_SYMBOL_GPL(sata_pmp_vendor_write);
++
++/* Called with ap->lock held. True if this EH round has nothing to recover. */
++static bool sata_pmp_eh_quiet(struct ata_port *ap)
++{
++	struct ata_device *pmp_dev = ap->link.device;
++	struct ata_queued_cmd *qc;
++	struct ata_link *link;
++	unsigned int tag;
++	int i;
++
++	if (ata_port_is_frozen(ap) || ap->qc_active)
++		return false;
++	if (ap->pflags & (ATA_PFLAG_EH_PENDING | ATA_PFLAG_RESUMING |
++			  ATA_PFLAG_LOADING | ATA_PFLAG_UNLOADING |
++			  ATA_PFLAG_UNLOADED | ATA_PFLAG_SUSPENDED |
++			  ATA_PFLAG_INITIALIZING))
++		return false;
++	if (!sata_pmp_attached(ap) || pmp_dev->class != ATA_DEV_PMP ||
++	    !ata_dev_enabled(pmp_dev))
++		return false;
++
++	ata_for_each_link(link, ap, HOST_FIRST) {
++		struct ata_eh_info *ehi = &link->eh_context.i;
++
++		if (ehi->err_mask || ehi->action || ehi->serror || ehi->flags)
++			return false;
++		for (i = 0; i < ATA_MAX_DEVICES; i++)
++			if (ehi->dev_action[i])
++				return false;
++		/* errors that came in after this round started */
++		if (link->eh_info.err_mask || link->eh_info.action)
++			return false;
++	}
++
++	ata_qc_for_each_raw(ap, qc, tag)
++		if (qc->flags & (ATA_QCFLAG_EH | ATA_QCFLAG_ACTIVE))
++			return false;
++
++	return true;
++}
++
++/*
++ * From ata_scsi_port_error_handler(), in place of ->error_handler(). If a
++ * vendor call is pending on @ap and the round is quiet, run it and return
++ * true: the port's error handler is then not called, as there is nothing to
++ * recover (it would only hard-reset fan-out links that are meant to be
++ * down). If a command timed out the port is frozen: the error handler
++ * recovers it in this same round, as after any internal command timeout.
++ */
++bool sata_pmp_vendor_eh(struct ata_port *ap)
++{
++	int (*fn)(struct ata_port *ap, void *data) = NULL;
++	unsigned long flags;
++	void *data = NULL;
++	int rc;
++
++	if (READ_ONCE(sata_pmp_vendor_req.ap) != ap)
++		return false;
++	spin_lock_irqsave(ap->lock, flags);
++	if (sata_pmp_vendor_req.ap == ap && sata_pmp_vendor_req.fn &&
++	    sata_pmp_eh_quiet(ap)) {
++		fn = sata_pmp_vendor_req.fn;
++		data = sata_pmp_vendor_req.data;
++		sata_pmp_vendor_req.running = true;
++	}
++	spin_unlock_irqrestore(ap->lock, flags);
++	if (!fn)
++		return false;
++
++	rc = fn(ap, data);
++
++	spin_lock_irqsave(ap->lock, flags);
++	sata_pmp_vendor_req.rc = rc;
++	sata_pmp_vendor_req.done = true;
++	sata_pmp_vendor_req.running = false;
++	sata_pmp_vendor_req.fn = NULL;
++	spin_unlock_irqrestore(ap->lock, flags);
++	wake_up_all(&ap->eh_wait_q);
++
++	if (ata_port_is_frozen(ap))
++		ap->ops->error_handler(ap);
++	return true;
++}
++
++static bool sata_pmp_vendor_settled(struct ata_port *ap)
++{
++	unsigned long flags;
++	bool busy;
++
++	spin_lock_irqsave(ap->lock, flags);
++	busy = ata_port_eh_scheduled(ap);
++	spin_unlock_irqrestore(ap->lock, flags);
++	return !busy;
++}
++
++/*
++ * ata_port_wait_eh() with a deadline: no EH of @ap scheduled or running,
++ * and the SCSI EH round that follows it over. -EAGAIN at @deadline.
++ */
++static int sata_pmp_vendor_wait_eh(struct ata_port *ap, unsigned long deadline)
++{
++	for (;;) {
++		long left = (long)(deadline - jiffies);
++
++		if (!wait_event_timeout(ap->eh_wait_q,
++					sata_pmp_vendor_settled(ap),
++					max(left, 1L)))
++			return -EAGAIN;
++		if (!scsi_host_in_recovery(ap->scsi_host))
++			return 0;
++		if (time_after_eq(jiffies, deadline))
++			return -EAGAIN;
++		ata_msleep(ap, 10);
++	}
++}
++
++/**
++ *	sata_pmp_vendor_call - run @fn in a quiet EH round of @ap
++ *	@ap: port with a PMP attached
++ *	@fn: callback, may use sata_pmp_vendor_read/write()
++ *	@data: argument of @fn
++ *
++ *	Waits for EH of @ap to finish, schedules a new round and waits for
++ *	it. @fn runs from the EH thread only in a round with no error, no
++ *	pending action and nothing in flight; other rounds are left to the
++ *	port's error handler and the request is tried again, up to
++ *	SATA_PMP_VENDOR_TRIES rounds. Waits for EH of @ap at most
++ *	SATA_PMP_VENDOR_WAIT in all; a call that @fn has started is waited
++ *	for until @fn returns (its commands have their own timeouts).
++ *
++ *	LOCKING:
++ *	Kernel thread context (may sleep).
++ *
++ *	RETURNS:
++ *	The return value of @fn, -ENODEV if no PMP is attached, -EAGAIN if
++ *	no quiet round came or EH of @ap stayed busy.
++ */
++int sata_pmp_vendor_call(struct ata_port *ap,
++			 int (*fn)(struct ata_port *ap, void *data), void *data)
++{
++	unsigned long deadline = jiffies + SATA_PMP_VENDOR_WAIT, flags;
++	int i, rc = -EAGAIN;
++	bool done = false, running;
++
++	might_sleep();
++	mutex_lock(&sata_pmp_vendor_mutex);
++	for (i = 0; i < SATA_PMP_VENDOR_TRIES && !done; i++) {
++		/* start from a settled port: never add a round to a running EH */
++		if (sata_pmp_vendor_wait_eh(ap, deadline))
++			break;
++		spin_lock_irqsave(ap->lock, flags);
++		if (!sata_pmp_attached(ap) ||
++		    (ap->pflags & (ATA_PFLAG_UNLOADING | ATA_PFLAG_UNLOADED))) {
++			spin_unlock_irqrestore(ap->lock, flags);
++			rc = -ENODEV;
++			break;
++		}
++		sata_pmp_vendor_req.fn = fn;
++		sata_pmp_vendor_req.data = data;
++		sata_pmp_vendor_req.running = false;
++		sata_pmp_vendor_req.done = false;
++		WRITE_ONCE(sata_pmp_vendor_req.ap, ap);
++		ata_port_schedule_eh(ap);
++		spin_unlock_irqrestore(ap->lock, flags);
++
++		sata_pmp_vendor_wait_eh(ap, deadline);
++
++		spin_lock_irqsave(ap->lock, flags);
++		running = sata_pmp_vendor_req.running;
++		if (!running) {
++			/* not taken: withdraw it, @data is the caller's */
++			sata_pmp_vendor_req.fn = NULL;
++			WRITE_ONCE(sata_pmp_vendor_req.ap, NULL);
++		}
++		spin_unlock_irqrestore(ap->lock, flags);
++		if (running)
++			wait_event(ap->eh_wait_q,
++				   READ_ONCE(sata_pmp_vendor_req.done));
++
++		spin_lock_irqsave(ap->lock, flags);
++		done = sata_pmp_vendor_req.done;
++		if (done)
++			rc = sata_pmp_vendor_req.rc;
++		sata_pmp_vendor_req.fn = NULL;
++		WRITE_ONCE(sata_pmp_vendor_req.ap, NULL);
++		spin_unlock_irqrestore(ap->lock, flags);
++		if (!done && time_after_eq(jiffies, deadline))
++			break;
++	}
++	mutex_unlock(&sata_pmp_vendor_mutex);
++	return rc;
++}
++EXPORT_SYMBOL_GPL(sata_pmp_vendor_call);
++#endif /* CONFIG_SATA_PMP_VENDOR_EH */
+diff --git a/drivers/ata/libata.h b/drivers/ata/libata.h
+index 4827469..d83449b 100644
+--- a/drivers/ata/libata.h
++++ b/drivers/ata/libata.h
+@@ -289,4 +289,21 @@ static inline void zpodd_disable_run_wake(struct ata_device *dev) {}
+ static inline void zpodd_post_poweron(struct ata_device *dev) {}
+ #endif /* CONFIG_SATA_ZPODD */
+ 
++/* libata-pmp.c: a pending sata_pmp_vendor_call() runs in a quiet round */
++#ifdef CONFIG_SATA_PMP_VENDOR_EH
++bool sata_pmp_vendor_eh(struct ata_port *ap);
++#else
++static inline bool sata_pmp_vendor_eh(struct ata_port *ap)
++{
++	return false;
++}
++#endif
++
++/* ->error_handler(), unless the round is taken by a PMP vendor call */
++static inline void ata_eh_call_error_handler(struct ata_port *ap)
++{
++	if (!sata_pmp_vendor_eh(ap))
++		ap->ops->error_handler(ap);
++}
++
+ #endif /* __LIBATA_H__ */
+diff --git a/include/linux/libata.h b/include/linux/libata.h
+index 4e75f5e..b4b710e 100644
+--- a/include/linux/libata.h
++++ b/include/linux/libata.h
+@@ -2192,4 +2192,13 @@ static inline int sata_sff_hardreset(struct ata_link *link, unsigned int *class,
+ }
+ #endif /* CONFIG_ATA_SFF */
+ 
++#ifdef CONFIG_SATA_PMP_VENDOR_EH
++/* PMP vendor registers - drivers/ata/libata-pmp.c */
++int sata_pmp_vendor_call(struct ata_port *ap,
++			 int (*fn)(struct ata_port *ap, void *data),
++			 void *data);
++unsigned int sata_pmp_vendor_read(struct ata_port *ap, u16 reg, u32 *r_val);
++unsigned int sata_pmp_vendor_write(struct ata_port *ap, u16 reg, u32 val);
++#endif /* CONFIG_SATA_PMP_VENDOR_EH */
++
+ #endif /* __LINUX_LIBATA_H__ */
