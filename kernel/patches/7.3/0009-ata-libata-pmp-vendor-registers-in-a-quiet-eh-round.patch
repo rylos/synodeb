@@ -36,7 +36,7 @@ diff --git a/drivers/ata/libata-pmp.c b/drivers/ata/libata-pmp.c
 index 62c3e8d..e0a7198 100644
 --- a/drivers/ata/libata-pmp.c
 +++ b/drivers/ata/libata-pmp.c
-@@ -1130,3 +1130,284 @@ void sata_pmp_error_handler(struct ata_port *ap)
+@@ -1130,3 +1130,292 @@ void sata_pmp_error_handler(struct ata_port *ap)
  EXPORT_SYMBOL_GPL(sata_pmp_port_ops);
  EXPORT_SYMBOL_GPL(sata_pmp_qc_defer_cmd_switch);
  EXPORT_SYMBOL_GPL(sata_pmp_error_handler);
@@ -230,17 +230,25 @@ index 62c3e8d..e0a7198 100644
 +	return !busy;
 +}
 +
-+/* ata_port_wait_eh() with a deadline: -EAGAIN if EH of @ap is still busy */
++/*
++ * ata_port_wait_eh() with a deadline: no EH of @ap scheduled or running,
++ * and the SCSI EH round that follows it over. -EAGAIN at @deadline.
++ */
 +static int sata_pmp_vendor_wait_eh(struct ata_port *ap, unsigned long deadline)
 +{
-+	long left = (long)(deadline - jiffies);
++	for (;;) {
++		long left = (long)(deadline - jiffies);
 +
-+	if (!wait_event_timeout(ap->eh_wait_q, sata_pmp_vendor_settled(ap),
-+				max(left, 1L)))
-+		return -EAGAIN;
-+	/* the end of the SCSI EH round that follows */
-+	ata_port_wait_eh(ap);
-+	return 0;
++		if (!wait_event_timeout(ap->eh_wait_q,
++					sata_pmp_vendor_settled(ap),
++					max(left, 1L)))
++			return -EAGAIN;
++		if (!scsi_host_in_recovery(ap->scsi_host))
++			return 0;
++		if (time_after_eq(jiffies, deadline))
++			return -EAGAIN;
++		ata_msleep(ap, 10);
++	}
 +}
 +
 +/**
