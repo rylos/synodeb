@@ -33,7 +33,8 @@ want=$(awk -v f="linux-$VER.tar.xz" '$2 == f { print $1 }' /work/build/sha256sum
 [ -n "$want" ] && [ "$(sha256sum "$TB" | cut -d' ' -f1)" = "$want" ] || { echo "$TB: wrong sha256" >&2; exit 1; }
 # Sources: a linux-$VER tree under git (commit "vanilla" = the tarball). The patches
 # (kernel/patches/<x.y>) are applied again only when they change, after resetting the files
-# they touch to vanilla; the new drivers (kernel/src) are copied only when different.
+# they touch to vanilla; the new drivers (kernel/src: shared; platforms/*/kernel/src: one
+# platform each) are copied only when different.
 # So make rebuilds only what changed. FULL=1 starts again from the tarball.
 export GIT_AUTHOR_NAME=synodeb GIT_AUTHOR_EMAIL=synodeb@localhost
 export GIT_COMMITTER_NAME=synodeb GIT_COMMITTER_EMAIL=synodeb@localhost
@@ -68,6 +69,9 @@ else
     echo "patches unchanged"
 fi
 rsync -rc --itemize-changes /work/kernel/src/ ./
+for d in /work/platforms/*/kernel/src; do
+    [ ! -d "$d" ] || rsync -rc --itemize-changes "$d/" ./
+done
 cp "$CONFIG" .config
 scripts/kconfig/merge_config.sh -m .config /work/kernel/ds923.config /work/kernel/ds923-slim.config
 make olddefconfig
