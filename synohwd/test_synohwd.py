@@ -184,6 +184,7 @@ with tempfile.TemporaryDirectory() as d:
     saved, m.BAYS = m.BAYS, m.model_bays("DS1522+")
     check("bay_disks DS1522+", m.bay_disks(), {2: ("sda", 2), 4: ("sdb", 7), 5: ("sdc", 8)})
     m.BAYS = saved
+
     # fake LEDs and presence
     m.LEDS, m.PLATFORM = f"{d}/leds", f"{d}/platform"
     os.makedirs(m.PLATFORM)
@@ -403,6 +404,33 @@ with tempfile.TemporaryDirectory() as d:
         except SystemExit as e:
             got = str(e)
         check(f"status with {content!r}", want in got, True)
+
+
+# DS920+: Marvell 88SE9235 (01:00.0 behind 00:13.0) ata3..ata6, SoC SATA (00:12.0) ata1, ata2
+with tempfile.TemporaryDirectory() as d:
+    mv = f"{d}/devices/pci0000:00/0000:00:13.0/0000:01:00.0"
+    soc = f"{d}/devices/pci0000:00/0000:00:12.0"
+    for c, ports in ((mv, (3, 4, 5, 6)), (soc, (1, 2))):
+        for n in ports:
+            os.makedirs(f"{c}/ata{n}/host{n}/target{n}:0:0/{n}:0:0:0")
+    os.makedirs(f"{d}/block")
+    # disks in bay 1 (Marvell port 1 = ata4), the eSATA port (ata6) and bay 4 (SoC port 1 = ata2)
+    for dev, c, n in (("sda", mv, 4), ("sdb", mv, 6), ("sdc", soc, 2)):
+        os.makedirs(f"{d}/block/{dev}")
+        os.symlink(f"{c}/ata{n}/host{n}/target{n}:0:0/{n}:0:0:0", f"{d}/block/{dev}/device")
+    saved_blk, saved, m.SYS_BLOCK, m.BAYS = m.SYS_BLOCK, m.BAYS, f"{d}/block", m.model_bays("DS920+")
+    check("bay_disks DS920+", m.bay_disks(), {1: ("sda", 4), 4: ("sdc", 2)})
+    m.SYS_BLOCK, m.BAYS = saved_blk, saved
+
+# --- fan curves per model ---
+check("fan tables DS923+", m.model_fan_tables("DS923+") is m.MODEL_FAN_TABLES.get("DS923+", m.model_fan_tables("x")), True)
+check("fan tables DS920+ low disk", m.model_fan_tables("DS920+")["low"]["disk"][0], (0, 20))
+for name, tables in [("DS923+", m.model_fan_tables("DS923+"))] + list(m.MODEL_FAN_TABLES.items()):
+    for mode, t in tables.items():
+        for k in ("disk", "nvme", "cpu", "nic"):
+            th = [x for x, _ in t[k]]
+            check(f"fan table {name} {mode} {k} ordered, below shutdown",
+                  th == sorted(th) and th[-1] < t[f"{k}_shutdown"], True)
 
 
 def test_all():
