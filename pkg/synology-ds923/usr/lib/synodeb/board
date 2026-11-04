@@ -1,0 +1,26 @@
+#!/bin/sh
+# /usr/lib/synodeb/board — the board file of this NAS (/usr/share/synodeb/boards/<model>.conf,
+# a copy of boards/ in the synodeb repository), chosen by the DMI product name.
+#
+#   /usr/lib/synodeb/board          print the path of the board file
+#   /usr/lib/synodeb/board KEY      print one value (MODEL, PLATFORM, CONSOLE, ...)
+#
+# A model without a board file falls back to the DS923+, the model synodeb started with.
+set -eu
+DIR=/usr/share/synodeb/boards
+product=$(cat /sys/class/dmi/id/product_name 2>/dev/null || true)
+name=$(printf '%s' "$product" | tr 'A-Z' 'a-z' | sed 's/+/plus/g' | tr -cd 'a-z0-9')
+f=$DIR/$name.conf
+[ -n "$name" ] && [ -f "$f" ] || f=$DIR/ds923plus.conf
+[ -f "$f" ] || { echo "board: no board file in $DIR" >&2; exit 1; }
+if [ $# -eq 0 ]; then
+    echo "$f"
+    exit 0
+fi
+case "$1" in
+*[!A-Z0-9_]*|'') echo "board: bad key $1" >&2; exit 1 ;;
+esac
+# KEY="value" lines only (tools/sync-boards.py checks the files): read, never sourced
+v=$(sed -n "s/^$1=\"\([^\"]*\)\".*/\1/p" "$f" | head -n 1)
+[ -n "$v" ] || { echo "board: no $1 in $f" >&2; exit 1; }
+echo "$v"
