@@ -1,5 +1,5 @@
 #!/bin/sh
-# synodeb installer, preseed/early_command. The DS923+ has no screen: the front panel
+# synodeb installer, preseed/early_command. The NAS has no screen: the front panel
 # tells what is going on and the DOM falls back to DSM unless the installation completes.
 #  - power LED on, status LED green blinking, fans at a fixed 50 %;
 #  - the DOM default goes back to the Synology entry right away, so any failure or reboot

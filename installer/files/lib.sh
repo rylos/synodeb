@@ -8,11 +8,17 @@ LOG=/var/log/synodeb-installer.log
 
 log() { echo "synodeb: $*" >> $LOG; logger -t synodeb -- "$*" 2>/dev/null || true; }
 
-# --- front-panel microcontroller (uP): UART 8250 at MMIO 0xFEDCA000, 9600 8N1 ---
+# --- front-panel microcontroller (uP), 9600 8N1: on r1000 (DS923+) the UART at MMIO
+# 0xFEDCA000, on geminilake (DS920+) LPSS UART 0, PCI 00:18.0 ---
 up_dev() {
     for t in /sys/class/tty/ttyS*; do
         b=$(tr a-f A-F < "$t/iomem_base" 2>/dev/null)
         [ "$b" = 0XFEDCA000 ] && { echo "/dev/${t##*/}"; return 0; }
+        case "$(readlink -f "$t/device" 2>/dev/null)" in
+        */0000:00:18.0/*)
+            [ "$(cat /sys/bus/pci/devices/0000:00:18.0/vendor 2>/dev/null)" = 0x8086 ] &&
+                { echo "/dev/${t##*/}"; return 0; } ;;
+        esac
     done
     return 1
 }
