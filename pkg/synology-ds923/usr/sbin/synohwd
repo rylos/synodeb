@@ -14,7 +14,7 @@ uP protocol (9600 8N1, ASCII):
                'D' read a current sensor -> reply 'D<digits>X'; '*' reads as '0'.
                    synohwd reports raw * 16.13 (unit unknown). It is NOT the fan
                    speed: the kernel measures that on GPIO 68/69.
-               'R' microP id  -> reply framed '+<n><n bytes>'
+               'R' microP id  -> reply framed '+<n><n bytes>' (DS923+) or 'P...' unframed (DS920+)
                't' / 'u' disable / enable fan-fail check
                'q' / 'p' power back on / stay off after an AC loss
                's' / 'r' enable / disable scheduled power-on (RTC alarm)
@@ -73,6 +73,8 @@ FAN_EVENT_HOLD = 60             # s a uP 'f'/'g' event keeps fan_fail set
 REPLY_TIMEOUT = 0.5             # s for a 'D' / '+' reply to complete
 D_MAX = 8                       # max digits in a 'D...X' reply
 FRAME_MAX = 16                  # max length of a '+' frame
+ID_MAX = 32                     # max length of an unframed 'R' reply (DS920+)
+ID_GAP = 0.1                    # s of silence that ends an unframed 'R' reply
 SEND_TRIES = 3                  # attempts for a uP write failing with EIO/EAGAIN
 NVME_CLASS = "/sys/class/nvme"
 
@@ -279,7 +281,7 @@ def up_tty():
 class Parser:
     """uP byte stream parser, matches DSM behaviour but is loss-tolerant.
 
-    'D<digits>X' and '+<n><data>' are only parsed while the matching query is
+    'D<digits>X', '+<n><data>' and the unframed 'P...' id (DS920+) are only parsed while the matching query is
     pending, are bounded in length and time out after REPLY_TIMEOUT: a lost 'X'
     or a garbage length byte can never swallow the bytes that follow. A byte that
     ends a reply early is handled again as an event, so '0' (power) and 'a'
@@ -300,7 +302,9 @@ class Parser:
         self.state, self.buf, self.frame_len = None, "", 0
 
     def tick(self, now):
-        if self.state and now - self.since > REPLY_TIMEOUT:
+        if self.state == "P" and now - self.since > ID_GAP:
+            self.done(self.buf)
+        elif self.state and now - self.since > REPLY_TIMEOUT:
             self.reset("timeout")
 
     def done(self, value):
@@ -326,6 +330,13 @@ class Parser:
                 self.state, self.frame_len, self.buf = "+data", n, ""
                 return
             self.reset(f"bad frame length {b!r}")   # fall through: b is an event
+        elif self.state == "P":                     # unframed id: 'P31_1_...' (DS920+)
+            # '0' and 'a' never occur in it (the uP writes '0' as '*'): they stay events
+            if b not in "0a" and (b.isalnum() or b in "_*") and len(self.buf) < ID_MAX:
+                self.buf += b
+                self.since = now
+                return
+            self.done(self.buf)                     # fall through: b is an event
         elif self.state == "+data":
             self.buf += b
             if len(self.buf) >= self.frame_len:
@@ -336,6 +347,8 @@ class Parser:
             self.state, self.buf, self.since = "D", "", now
         elif b == "+" and pending == "R":
             self.state, self.since = "+len", now
+        elif b == "P" and pending == "R":
+            self.state, self.buf, self.since = "P", "P", now
         else:
             self.on_event(b)
 
