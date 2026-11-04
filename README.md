@@ -314,6 +314,11 @@ and pull request: the synohwd tests, a check that the packaged `synohwd` is the 
   volumes instead (with a key file on the root filesystem).
 - **ZFS** only with the longterm kernel (`zfs-dkms` with `linux-headers-ds923`): OpenZFS does
   not support Linux 7.3 yet. btrfs, mdadm, LVM, XFS and ext4 work with both.
+- **Expansion units** (e.g. a DX517 on the eSATA port): the kernel has an experimental driver
+  for units with Marvell 88SM9705 port multipliers (fan level, fan alarms, disk LEDs).
+  It has been confirmed only on a DX1215 attached to a DS2415+, not on a DS923+. On other
+  unit models it reports but does not change the fan level or the LEDs, unless loaded with
+  `synology_eunit_9705.unconfirmed_writes=1`; please report the result in an issue.
 - The installer and the system are reached over the network only. The internal serial port
   shows the boot menu and the console, for debugging: see [docs/serial.md](docs/serial.md).
 - Only the DS923+ is supported. Support for more models is being planned in
