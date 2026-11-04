@@ -35,13 +35,13 @@ static unsigned long fails, checks;
 } while (0)
 
 /* bit-by-bit mapping of a (page, strobes, data) value to the register word */
-static u32 gpl_enc(u32 v)
+static u32 ref_enc(u32 v)
 {
 	return (v & 0x1f) | ((v & 0x3e0) << 6) | ((v & 0x1c00) << 7);
 }
 
 /* value of GPIO_9705_PKG_INIT(page, data): both strobes high */
-static u32 gpl_pkg(u32 page, u32 data)
+static u32 ref_pkg(u32 page, u32 data)
 {
 	return (page << 10) | (0x3 << 8) | data;
 }
@@ -57,8 +57,8 @@ static bool ref_data_ok(const struct eu_guard *g, u32 val)
 		return false;			/* unknown unit: no data word ever */
 	if (g->armed != 1 && g->armed != 4)
 		return false;			/* no write running */
-	w0 = gpl_enc(gpl_pkg(g->armed, d));
-	w1 = gpl_enc(gpl_pkg(g->armed, d) & ~0x100u);	/* write strobe low */
+	w0 = ref_enc(ref_pkg(g->armed, d));
+	w1 = ref_enc(ref_pkg(g->armed, d) & ~0x100u);	/* write strobe low */
 	if (val != w0 && val != w1)
 		return false;			/* only the armed byte, as encoded */
 	if (!(g->valid & 1) || (g->page[0] & 0x1f) != g->id)
@@ -122,16 +122,16 @@ static void test_encoding(void)
 	u32 p, d, r;
 
 	for (p = 0; p < 8; p++) {
-		EXPECT(EU_R_SEL(p, 0) == gpl_enc(gpl_pkg(p, 0)),
+		EXPECT(EU_R_SEL(p, 0) == ref_enc(ref_pkg(p, 0)),
 		       "SEL(%u,0) 0x%x", p, EU_R_SEL(p, 0));
-		EXPECT(EU_R_SEL(p, 1) == gpl_enc(gpl_pkg(p, 0) & ~0x200u),
+		EXPECT(EU_R_SEL(p, 1) == ref_enc(ref_pkg(p, 0) & ~0x200u),
 		       "SEL(%u,1) 0x%x", p, EU_R_SEL(p, 1));
 		EXPECT(EU_R_SELECT_OK(EU_R_SEL(p, 0)) && EU_R_SELECT_OK(EU_R_SEL(p, 1)),
 		       "SEL(%u) not a select word", p);
 		for (d = 0; d < 256; d++) {
-			EXPECT(EU_R_DATA(p, d, 0) == gpl_enc(gpl_pkg(p, d)),
+			EXPECT(EU_R_DATA(p, d, 0) == ref_enc(ref_pkg(p, d)),
 			       "DATA(%u,0x%x,0)", p, d);
-			EXPECT(EU_R_DATA(p, d, 1) == gpl_enc(gpl_pkg(p, d) & ~0x100u),
+			EXPECT(EU_R_DATA(p, d, 1) == ref_enc(ref_pkg(p, d) & ~0x100u),
 			       "DATA(%u,0x%x,1)", p, d);
 			EXPECT(EU_DEC(EU_R_DATA(p, d, 0)) == d && EU_DEC(EU_R_DATA(p, d, 1)) == d,
 			       "DEC(DATA(%u,0x%x))", p, d);
@@ -158,7 +158,7 @@ static void test_encoding(void)
 static void test_table(void)
 {
 	/* the 88SM9705 unit IDs */
-	static const u8 gpl_ids[] = { 0x11, 0x12, 0x14, 0x13, 0x15, 0x16, 0x17, 0x1c };
+	static const u8 unit_ids[] = { 0x11, 0x12, 0x14, 0x13, 0x15, 0x16, 0x17, 0x1c };
 	/* id, bays, pmps, fans as specified for this driver */
 	static const u8 want[][4] = {
 		{ 0x13, 12, 4, 2 }, { 0x11, 4, 1, 3 }, { 0x12, 12, 4, 4 },
@@ -168,8 +168,8 @@ static void test_table(void)
 	unsigned int i, j, n = 0;
 
 	EXPECT(EU_NTYPES == 8, "%zu rows", (size_t)EU_NTYPES);
-	for (i = 0; i < sizeof(gpl_ids); i++)
-		EXPECT(eu_type_lookup(gpl_ids[i]), "id 0x%02x missing", gpl_ids[i]);
+	for (i = 0; i < sizeof(unit_ids); i++)
+		EXPECT(eu_type_lookup(unit_ids[i]), "id 0x%02x missing", unit_ids[i]);
 	for (i = 0; i < 32; i++)
 		if (eu_type_lookup(i))
 			n++;
