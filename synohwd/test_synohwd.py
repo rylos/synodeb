@@ -432,6 +432,20 @@ for name, tables in [("DS923+", m.model_fan_tables("DS923+"))] + list(m.MODEL_FA
             check(f"fan table {name} {mode} {k} ordered, below shutdown",
                   th == sorted(th) and th[-1] < t[f"{k}_shutdown"], True)
 
+# --- CPU temperature on Intel (coretemp, DS920+): the package sensor ---
+with tempfile.TemporaryDirectory() as d:
+    real_by_name = m.hwmon_by_name
+    os.makedirs(f"{d}/coretemp")
+    for fn, v in {"temp1_input": "41000", "temp1_label": "Package id 0",
+                  "temp2_input": "45000", "temp2_label": "Core 0"}.items():
+        with open(f"{d}/coretemp/{fn}", "w") as fh:
+            fh.write(v)
+    m.hwmon_by_name = lambda n: [f"{d}/coretemp"] if n == "coretemp" else []
+    try:
+        check("sensors: coretemp package", m.sensors({})["cpu"], 41.0)
+    finally:
+        m.hwmon_by_name = real_by_name
+
 
 def test_all():
     """pytest entry point: the checks above run at import time."""

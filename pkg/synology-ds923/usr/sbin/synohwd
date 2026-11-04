@@ -513,8 +513,11 @@ def sensors(bays, last_disk=None):
     last_disk = {} if last_disk is None else last_disk
     s = {"cpu": None, "disk": {}, "nvme": {}, "nic": {}, "asleep": []}
     nosensor = []
-    for d in hwmon_by_name("k10temp"):
+    for d in hwmon_by_name("k10temp"):            # AMD (r1000)
         t = hwmon_temp(d, "Tctl")
+        s["cpu"] = hwmon_temp(d) if t is None else t
+    for d in hwmon_by_name("coretemp"):           # Intel (geminilake): the package sensor
+        t = hwmon_temp(d, "Package id 0")
         s["cpu"] = hwmon_temp(d) if t is None else t
     for bay, dev in bays.items():
         key = f"bay{bay}"
