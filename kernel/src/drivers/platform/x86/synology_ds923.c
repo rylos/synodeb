@@ -7,7 +7,7 @@
  * devices and the microcontroller UART: those are in a per-model table,
  * selected by DMI (struct ds923_model). The DS920+ (platform geminilake) has
  * its GPIOs on INT3453:00 (bay power 20-23, presence 35-38, USB VBUS 29/30,
- * fan tachometers 39/40), its RTC described in ACPI (RTC35390 on LPSS I2C 0)
+ * fan tachometers 39/40, disk LED enable 17), its RTC described in ACPI (RTC35390 on LPSS I2C 0)
  * and its microcontroller on LPSS UART 0 (PCI 00:18.0). Its Realtek NICs
  * carry no MAC address of their own: the Synology GRUB passes them on the
  * command line (macs=, from "vender" on the DOM), and DSM's order is kept.
@@ -177,6 +177,8 @@ static struct gpiod_lookup_table ds920_gpios = {
 		GPIO_LOOKUP_IDX(GLK_GPIO, 38, "present", 3, GPIO_ACTIVE_LOW),
 		GPIO_LOOKUP_IDX(GLK_GPIO, 39, "fan-tach", 0, GPIO_ACTIVE_HIGH),
 		GPIO_LOOKUP_IDX(GLK_GPIO, 40, "fan-tach", 1, GPIO_ACTIVE_HIGH),
+		/* DSM's disk_led_ctrl: the disk LEDs (LP3943) stay dark while it is low */
+		GPIO_LOOKUP_IDX(GLK_GPIO, 17, "disk-led-ctrl", 0, GPIO_ACTIVE_HIGH),
 		{ }
 	},
 };
@@ -248,6 +250,7 @@ struct ds923 {
 	struct ds923_bay bay[MAX_BAYS];
 	struct gpio_desc *vbus[NUM_USB];
 	struct gpio_desc *tach[NUM_FANS];
+	struct gpio_desc *disk_led_ctrl;	/* optional */
 	atomic_t pulses[NUM_FANS];
 	long fan_rpm[NUM_FANS];
 	unsigned long fan_stamp;
@@ -974,6 +977,13 @@ static int ds923_probe(struct platform_device *pdev)
 			dev_err(dev, "bay %d power output: %d\n", i + 1, ret);
 			b->power = NULL;
 		}
+	}
+
+	/* models with a disk LED enable (DS920+): on, as DSM leaves it */
+	ds->disk_led_ctrl = devm_gpiod_get_optional(dev, "disk-led-ctrl", GPIOD_OUT_HIGH);
+	if (IS_ERR(ds->disk_led_ctrl)) {
+		dev_warn(dev, "disk LED enable gpio: %pe\n", ds->disk_led_ctrl);
+		ds->disk_led_ctrl = NULL;
 	}
 
 	for (i = 0; i < NUM_FANS; i++) {
