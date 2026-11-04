@@ -1,5 +1,5 @@
 #!/usr/bin/python3 -I
-"""synohwd — Synology NAS hardware daemon for Debian (DS923+; DS920+ and DS1522+ wip).
+"""synohwd — Synology NAS hardware daemon for Debian (DS920+, DS923+; DS1522+ wip).
 
 Takes over the hardware management DSM does, using the front-panel microcontroller
 (uP: on the DS923+ the AMD UART at MMIO 0xFEDCA000, AMDI0020:01; on the DS920+ LPSS

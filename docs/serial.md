@@ -1,5 +1,8 @@
 # Serial console
 
+This page describes the DS923+. The DS920+ has its console on LPSS UART 2, not yet enabled
+on the synodeb kernel command line.
+
 The DS923+ has an internal serial port. It is not needed to install or run synodeb, but it
 shows everything the network cannot: the firmware, the boot menu of the DOM, kernel messages
 and a login prompt. It helps when a system does not come up on the network.

@@ -1,6 +1,6 @@
 # Platform geminilake (Intel Celeron J4025/J4125, Gemini Lake)
 
-Models: DS920+ (work in progress). Board file: `boards/ds920plus.conf`.
+Models: DS920+ (supported). Board file: `boards/ds920plus.conf`.
 
 Common hardware (DS920+, measured under DSM 7.4.1): front-panel microcontroller on LPSS UART 0
 (PCI 00:18.0, 9600 8N1, the same protocol as r1000), serial console on LPSS UART 2 (PCI 00:18.2);

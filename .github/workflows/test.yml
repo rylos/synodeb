@@ -37,7 +37,8 @@ jobs:
           bash -c 'set -eu
               eval "$(sed -n "/^### boards begin/,/^### boards end/p" synodeb-setup.sh)"
               model_profile DS923+ && [ "$TIER" = supported ] && [ "$PLATFORM" = r1000 ]
-              model_profile DS920+ && [ "$TIER" = wip ] && [ "$PLATFORM" = geminilake ]
+              model_profile DS920+ && [ "$TIER" = supported ] && [ "$PLATFORM" = geminilake ]
+              model_profile DS1522+ && [ "$TIER" = wip ] && [ "$PLATFORM" = r1000 ]
               ! model_profile DS218+'
 
       - name: Shell scripts
