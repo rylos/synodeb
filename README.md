@@ -93,11 +93,11 @@ administrator account. The installer downloads Debian from the internet.
    `ssh <user>@<address>`. With `--network dsm` Debian keeps the address DSM had; with
    `dhcp` it may get a different one from your DHCP server.
 
-If the installer gets no network within 20 minutes it reboots into DSM by itself, and until
+If the installer gets no network within 8 minutes it reboots into DSM by itself, and until
 the installation completes any reboot brings DSM back.
 
 If the installer cannot switch the DOM back to DSM when it starts, the status LED turns
-orange with three short beeps, and after 20 minutes without SSH there are five short beeps
+orange with three short beeps, and after 8 minutes without SSH there are five short beeps
 and no reboot (it would start the installer again). Connect over SSH and complete the
 installation, or choose *Execute a shell* and switch the DOM by hand:
 `. /usr/lib/synodeb-installer/lib.sh; dom_unprotect; dom_default SYNOLOGY_2; dom_protect`.

@@ -526,7 +526,7 @@ EOT
         say "     address may differ from the installer's, look up '$HOST' in your router)"
     fi
     say ""
-    say "If there is no beep within 20 minutes (no network), the NAS reboots into DSM by itself."
+    say "If there is no beep within 8 minutes (no network), the NAS reboots into DSM by itself."
     say "The installer switches the DOM back to DSM as soon as it starts: until the installation"
     say "completes, any reboot brings DSM back."
     if [ $keep = 1 ]; then
