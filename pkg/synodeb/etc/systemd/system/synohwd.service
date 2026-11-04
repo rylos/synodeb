@@ -4,7 +4,9 @@ After=systemd-modules-load.service systemd-udevd.service
 Wants=systemd-modules-load.service
 # the synodeb platform driver bound to a supported model (DMI): absent in QEMU and on other
 # machines. Was the DS923+ microcontroller UART (ACPI AMDI0020:01), which the DS920+ has not.
-ConditionPathExists=/sys/devices/platform/synology-ds923
+# synology-ds923: its name in the kernels before 6.18.60-7 / 7.3.1-7
+ConditionPathExists=|/sys/devices/platform/synology-nas
+ConditionPathExists=|/sys/devices/platform/synology-ds923
 # fans and LEDs also in UPS Safe Mode (synodeb-ups-safe.target)
 IgnoreOnIsolate=yes
 

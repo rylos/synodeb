@@ -1,7 +1,7 @@
 #!/bin/sh
 # synodeb initramfs (MODULES=dep, conf.d/synodeb.conf): kernel and initrd live on the DOM
 # (synoboot2, 84 MB), so the initrd must stay small.
-# synology_ds923 (bay power, USB VBUS) is built into the kernel and starts first; here:
+# synology_nas (bay power, USB VBUS) is built into the kernel and starts first; here:
 #  - the drivers the root can be on even if mkinitramfs did not see them (SATA, NVMe, USB);
 #  - USB storage + vfat/nls to reach the DOM (kernel trial, synodeb-trial);
 #  - blkid/sed for the synodeb scripts, the module blacklist;

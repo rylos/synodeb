@@ -9,9 +9,9 @@ bay power, bay presence and USB VBUS on AMD GPIOs (AMDI0030); SATA on a JMB585 b
 and on the FCH behind 00:08.2.
 
 Kernel:
-- `kernel/src/drivers/platform/x86/synology_ds923.c` (shared by all platforms, one table per
+- `kernel/src/drivers/platform/x86/synology_nas.c` (shared by all platforms, one table per
   model, chosen by DMI): bay power and spin-up groups, bay presence, USB VBUS, fan
   tachometers, RTC and LED controller instantiation, microcontroller restart/power-off
 - `kernel/src` here: `drivers/leds/leds-atmega1608.c`, the disk LED controller of the DS923+
 
-Patch `0003-ahci-synology-ds923-jmb585-phy` holds the JMB585 PHY tuning of each model.
+Patch `0003-ahci-synology-jmb585-phy` holds the JMB585 PHY tuning of each model.

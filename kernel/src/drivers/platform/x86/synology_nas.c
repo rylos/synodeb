@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: GPL-2.0
 /*
- * Synology NAS platform driver (DS923+, and the models in ds923_dmi[]).
+ * Synology NAS platform driver (DS923+, and the models in syno_dmi[]).
  *
  * The description below is that of the DS923+ (platform r1000). Other models
  * differ in the GPIO chip and pins, the bay count, the spin-up groups, the I2C
  * devices and the microcontroller UART: those are in a per-model table,
- * selected by DMI (struct ds923_model). The DS920+ (platform geminilake) has
+ * selected by DMI (struct syno_model). The DS920+ (platform geminilake) has
  * its GPIOs on INT3453:00 (bay power 20-23, presence 35-38, USB VBUS 29/30,
  * fan tachometers 39/40, disk LED enable 17), its RTC described in ACPI (RTC35390 on LPSS I2C 0)
  * and its microcontroller on LPSS UART 0 (PCI 00:18.0). Its Realtek NICs
@@ -69,7 +69,7 @@
 #include <linux/serial_reg.h>
 #include <linux/workqueue.h>
 
-#define DRV_NAME	"synology-ds923"
+#define DRV_NAME	"synology-nas"
 #define MAX_BAYS	5
 #define NUM_USB		2
 #define NUM_FANS	2
@@ -122,7 +122,7 @@ static unsigned int poll_ms = 200;
 module_param(poll_ms, uint, 0644);
 MODULE_PARM_DESC(poll_ms, "Presence polling interval in ms, at least 50 (3 equal reads = debounce)");
 
-static unsigned int ds923_poll_ms(void)
+static unsigned int syno_poll_ms(void)
 {
 	return max(READ_ONCE(poll_ms), 50U);
 }
@@ -142,7 +142,7 @@ MODULE_PARM_DESC(fan_pulses, "Tachometer pulses per fan revolution");
 #define AMD_GPIO	"AMDI0030:00"
 #define GLK_GPIO	"INT3453:00"	/* Gemini Lake community northwest (UID 1) */
 
-static struct gpiod_lookup_table ds923_gpios = {
+static struct gpiod_lookup_table ds923plus_gpios = {
 	.dev_id = DRV_NAME,
 	.table = {
 		GPIO_LOOKUP_IDX(AMD_GPIO, 42, "usb-vbus", 0, GPIO_ACTIVE_HIGH),
@@ -184,9 +184,9 @@ static struct gpiod_lookup_table ds920_gpios = {
 };
 
 /* What differs between the models this driver supports. */
-enum ds923_up { UP_AMD, UP_LPSS };
+enum syno_up { UP_AMD, UP_LPSS };
 
-struct ds923_model {
+struct syno_model {
 	const char *name;
 	unsigned int bays;		/* at most MAX_BAYS */
 	const char *spinup_groups;	/* DSM's spin-up groups */
@@ -200,7 +200,7 @@ struct ds923_model {
 	const char *rtc_bus_hid, *rtc_bus_uid;
 	const char *rtc_acpi_hid;
 	bool atmega_leds;		/* ATmega1608 disk LED controller at 0x60 */
-	enum ds923_up up;		/* microcontroller UART */
+	enum syno_up up;		/* microcontroller UART */
 	/*
 	 * Onboard NICs without a MAC address of their own, in the order of
 	 * the macs= list (DSM's eth0, eth1): PCI device names.
@@ -208,11 +208,11 @@ struct ds923_model {
 	const char * const *nics;
 };
 
-static const struct ds923_model ds923plus = {
+static const struct syno_model ds923plus = {
 	.name = "DS923+",
 	.bays = 4,
 	.spinup_groups = "2,1,1",
-	.gpios = &ds923_gpios,
+	.gpios = &ds923plus_gpios,
 	.gpio_chip = AMD_GPIO,
 	.rtc_bus_hid = "AMDI0010", .rtc_bus_uid = "3",
 	.atmega_leds = true,
@@ -222,7 +222,7 @@ static const struct ds923_model ds923plus = {
 /* DSM: eth0 (LAN 1) is 03:00.0, eth1 (LAN 2) is 02:00.0 */
 static const char * const ds920_nics[] = { "0000:03:00.0", "0000:02:00.0", NULL };
 
-static const struct ds923_model ds920plus = {
+static const struct syno_model ds920plus = {
 	.name = "DS920+",
 	.bays = 4,
 	.spinup_groups = "2,1,1",
@@ -234,9 +234,9 @@ static const struct ds923_model ds920plus = {
 };
 
 /* the model found at init, used by probe and the I2C work */
-static const struct ds923_model *model;
+static const struct syno_model *model;
 
-struct ds923_bay {
+struct syno_bay {
 	struct gpio_desc *power;
 	struct gpio_desc *present;
 	bool state;		/* debounced presence */
@@ -244,10 +244,10 @@ struct ds923_bay {
 	unsigned int stable;	/* equal raw reads since the change */
 };
 
-struct ds923 {
+struct syno {
 	struct device *dev;
 	unsigned int nbays;
-	struct ds923_bay bay[MAX_BAYS];
+	struct syno_bay bay[MAX_BAYS];
 	struct gpio_desc *vbus[NUM_USB];
 	struct gpio_desc *tach[NUM_FANS];
 	struct gpio_desc *disk_led_ctrl;	/* optional */
@@ -265,17 +265,17 @@ struct ds923 {
 
 /* ---------------------------------------------------------------- bays */
 
-static bool bay_powered(struct ds923 *ds, int bay)
+static bool bay_powered(struct syno *ds, int bay)
 {
 	return ds->bay[bay].power && gpiod_get_value_cansleep(ds->bay[bay].power) > 0;
 }
 
-static bool bay_present(struct ds923 *ds, int bay)
+static bool bay_present(struct syno *ds, int bay)
 {
 	return ds->bay[bay].present && gpiod_get_value_cansleep(ds->bay[bay].present) > 0;
 }
 
-static int bay_set_power(struct ds923 *ds, int bay, bool on)
+static int bay_set_power(struct syno *ds, int bay, bool on)
 {
 	int ret;
 
@@ -291,7 +291,7 @@ static int bay_set_power(struct ds923 *ds, int bay, bool on)
 }
 
 /* Same order and timing as DSM's ata_port_probe() spin-up groups. */
-static void ds923_spinup(struct ds923 *ds)
+static void syno_spinup(struct syno *ds)
 {
 	unsigned int nbays = ds->nbays, group[MAX_BAYS] = { 0 }, sum = 0;
 	int ngroups = 0, bay = 0, g, i;
@@ -343,13 +343,13 @@ static void ds923_spinup(struct ds923 *ds)
 	}
 }
 
-static void ds923_bays_poll(struct ds923 *ds)
+static void syno_bays_poll(struct syno *ds)
 {
 	int bay;
 
 	mutex_lock(&ds->lock);
 	for (bay = 0; bay < ds->nbays; bay++) {
-		struct ds923_bay *b = &ds->bay[bay];
+		struct syno_bay *b = &ds->bay[bay];
 		bool present;
 
 		if (!b->present)
@@ -366,7 +366,7 @@ static void ds923_bays_poll(struct ds923 *ds)
 			b->stable = 1;
 			continue;
 		}
-		if (++b->stable < 3 || b->stable * ds923_poll_ms() < 200)
+		if (++b->stable < 3 || b->stable * syno_poll_ms() < 200)
 			continue;
 		if (present && hotplug && !power_empty_bays && b->power &&
 		    !bay_powered(ds, bay) && spinup_delay &&
@@ -389,13 +389,13 @@ static void ds923_bays_poll(struct ds923 *ds)
 
 /* ---------------------------------------------------------------- fans */
 
-static irqreturn_t ds923_tach_irq(int irq, void *data)
+static irqreturn_t syno_tach_irq(int irq, void *data)
 {
 	atomic_inc(data);
 	return IRQ_HANDLED;
 }
 
-static void ds923_fans_poll(struct ds923 *ds)
+static void syno_fans_poll(struct syno *ds)
 {
 	unsigned long now = jiffies, elapsed = now - ds->fan_stamp;
 	int i;
@@ -412,19 +412,19 @@ static void ds923_fans_poll(struct ds923 *ds)
 	ds->fan_stamp = now;
 }
 
-static void ds923_poll(struct work_struct *work)
+static void syno_poll(struct work_struct *work)
 {
-	struct ds923 *ds = container_of(to_delayed_work(work), struct ds923, poll);
+	struct syno *ds = container_of(to_delayed_work(work), struct syno, poll);
 
-	ds923_bays_poll(ds);
-	ds923_fans_poll(ds);
-	queue_delayed_work(system_freezable_wq, &ds->poll, msecs_to_jiffies(ds923_poll_ms()));
+	syno_bays_poll(ds);
+	syno_fans_poll(ds);
+	queue_delayed_work(system_freezable_wq, &ds->poll, msecs_to_jiffies(syno_poll_ms()));
 }
 
 /* ---------------------------------------------------------------- microcontroller */
 
 /* Bounded busy wait for an LSR bit, in 10 us steps. */
-static void ds923_up_wait(void __iomem *p, u32 bit, unsigned int us)
+static void syno_up_wait(void __iomem *p, u32 bit, unsigned int us)
 {
 	unsigned int i;
 
@@ -437,7 +437,7 @@ static void ds923_up_wait(void __iomem *p, u32 bit, unsigned int us)
  * gone (sys-off prepare hooks). Divisor and line settings are reprogrammed
  * so the byte goes out at 9600 8N1 whatever the tty layer left behind.
  */
-static void ds923_up_write(struct ds923 *ds, u8 c)
+static void syno_up_write(struct syno *ds, u8 c)
 {
 	unsigned int clk = model->up == UP_LPSS ? LPSS_UP_CLK : AMD_UP_CLK;
 	unsigned int div = DIV_ROUND_CLOSEST(clk, 16 * UP_UART_BAUD);
@@ -449,7 +449,7 @@ static void ds923_up_write(struct ds923 *ds, u8 c)
 	 * Let whatever the tty layer queued go out first: changing the divisor
 	 * mid-character garbles it. A full 64-byte FIFO at 9600 is ~67 ms.
 	 */
-	ds923_up_wait(p, UART_LSR_TEMT, 100000);
+	syno_up_wait(p, UART_LSR_TEMT, 100000);
 	if (model->up == UP_LPSS) {
 		u32 v = BIT(0) | (LPSS_UP_M << 1) | (LPSS_UP_N << 16);
 
@@ -461,44 +461,44 @@ static void ds923_up_write(struct ds923 *ds, u8 c)
 	writel(div & 0xff, p + (UART_DLL << 2));
 	writel(div >> 8, p + (UART_DLM << 2));
 	writel(UART_LCR_WLEN8, p + (UART_LCR << 2));
-	ds923_up_wait(p, UART_LSR_THRE, 10000);
+	syno_up_wait(p, UART_LSR_THRE, 10000);
 	writel(c, p + (UART_TX << 2));
-	ds923_up_wait(p, UART_LSR_TEMT, 10000);
+	syno_up_wait(p, UART_LSR_TEMT, 10000);
 	mdelay(20);
 }
 
-static int ds923_restart_prepare(struct sys_off_data *data)
+static int syno_restart_prepare(struct sys_off_data *data)
 {
-	struct ds923 *ds = data->cb_data;
+	struct syno *ds = data->cb_data;
 
 	if (microp_shutdown) {
 		dev_info(ds->dev, "restart: notifying microcontroller\n");
-		ds923_up_write(ds, 'C');
+		syno_up_write(ds, 'C');
 	}
 	return NOTIFY_DONE;
 }
 
-static int ds923_emergency_restart(struct notifier_block *nb, unsigned long action, void *data)
+static int syno_emergency_restart(struct notifier_block *nb, unsigned long action, void *data)
 {
-	struct ds923 *ds = container_of(nb, struct ds923, emergency_nb);
+	struct syno *ds = container_of(nb, struct syno, emergency_nb);
 
 	if (microp_shutdown)
-		ds923_up_write(ds, 'C');	/* atomic context: no logging */
+		syno_up_write(ds, 'C');	/* atomic context: no logging */
 	return NOTIFY_DONE;
 }
 
-static void ds923_emergency_unregister(void *data)
+static void syno_emergency_unregister(void *data)
 {
 	unregister_emergency_restart_prep_notifier(data);
 }
 
-static int ds923_power_off_prepare(struct sys_off_data *data)
+static int syno_power_off_prepare(struct sys_off_data *data)
 {
-	struct ds923 *ds = data->cb_data;
+	struct syno *ds = data->cb_data;
 
 	if (microp_shutdown) {
 		dev_info(ds->dev, "power-off: notifying microcontroller\n");
-		ds923_up_write(ds, '1');
+		syno_up_write(ds, '1');
 	}
 	return NOTIFY_DONE;
 }
@@ -512,7 +512,7 @@ static int attr_bay(struct device_attribute *attr)
 
 static ssize_t bay_power_show(struct device *dev, struct device_attribute *attr, char *buf)
 {
-	struct ds923 *ds = dev_get_drvdata(dev);
+	struct syno *ds = dev_get_drvdata(dev);
 
 	return sysfs_emit(buf, "%d\n", bay_powered(ds, attr_bay(attr)));
 }
@@ -520,7 +520,7 @@ static ssize_t bay_power_show(struct device *dev, struct device_attribute *attr,
 static ssize_t bay_power_store(struct device *dev, struct device_attribute *attr,
 			       const char *buf, size_t count)
 {
-	struct ds923 *ds = dev_get_drvdata(dev);
+	struct syno *ds = dev_get_drvdata(dev);
 	bool on;
 	int ret = kstrtobool(buf, &on);
 
@@ -534,7 +534,7 @@ static ssize_t bay_power_store(struct device *dev, struct device_attribute *attr
 
 static ssize_t bay_present_show(struct device *dev, struct device_attribute *attr, char *buf)
 {
-	struct ds923 *ds = dev_get_drvdata(dev);
+	struct syno *ds = dev_get_drvdata(dev);
 
 	return sysfs_emit(buf, "%d\n", bay_present(ds, attr_bay(attr)));
 }
@@ -550,12 +550,12 @@ BAY_ATTRS(3);
 BAY_ATTRS(4);
 BAY_ATTRS(5);
 
-static int vbus_get(struct ds923 *ds, int port)
+static int vbus_get(struct syno *ds, int port)
 {
 	return ds->vbus[port] ? gpiod_get_value_cansleep(ds->vbus[port]) : -ENODEV;
 }
 
-static int vbus_set(struct ds923 *ds, int port, bool on)
+static int vbus_set(struct syno *ds, int port, bool on)
 {
 	if (!ds->vbus[port])
 		return -ENODEV;
@@ -565,7 +565,7 @@ static int vbus_set(struct ds923 *ds, int port, bool on)
 /* usb_vbus: both slots ("a b" on read, one value for both on write) */
 static ssize_t usb_vbus_show(struct device *dev, struct device_attribute *attr, char *buf)
 {
-	struct ds923 *ds = dev_get_drvdata(dev);
+	struct syno *ds = dev_get_drvdata(dev);
 
 	return sysfs_emit(buf, "%d %d\n", vbus_get(ds, 0), vbus_get(ds, 1));
 }
@@ -573,7 +573,7 @@ static ssize_t usb_vbus_show(struct device *dev, struct device_attribute *attr, 
 static ssize_t usb_vbus_store(struct device *dev, struct device_attribute *attr,
 			      const char *buf, size_t count)
 {
-	struct ds923 *ds = dev_get_drvdata(dev);
+	struct syno *ds = dev_get_drvdata(dev);
 	bool on;
 	int ret = kstrtobool(buf, &on);
 
@@ -614,7 +614,7 @@ static struct device_attribute dev_attr_usb1_vbus =
 static struct device_attribute dev_attr_usb2_vbus =
 	__ATTR(usb2_vbus, 0644, usb_slot_vbus_show, usb_slot_vbus_store);
 
-static struct attribute *ds923_attrs[] = {
+static struct attribute *syno_attrs[] = {
 	&dev_attr_bay1_power.attr, &dev_attr_bay1_present.attr,
 	&dev_attr_bay2_power.attr, &dev_attr_bay2_present.attr,
 	&dev_attr_bay3_power.attr, &dev_attr_bay3_present.attr,
@@ -625,28 +625,28 @@ static struct attribute *ds923_attrs[] = {
 };
 
 /* bayN_* only for the bays the model has */
-static umode_t ds923_attr_visible(struct kobject *kobj, struct attribute *attr, int n)
+static umode_t syno_attr_visible(struct kobject *kobj, struct attribute *attr, int n)
 {
-	struct ds923 *ds = dev_get_drvdata(kobj_to_dev(kobj));
+	struct syno *ds = dev_get_drvdata(kobj_to_dev(kobj));
 
 	if (!strncmp(attr->name, "bay", 3) && attr->name[3] - '1' >= ds->nbays)
 		return 0;
 	return attr->mode;
 }
 
-static const struct attribute_group ds923_group = {
-	.attrs = ds923_attrs,
-	.is_visible = ds923_attr_visible,
+static const struct attribute_group syno_group = {
+	.attrs = syno_attrs,
+	.is_visible = syno_attr_visible,
 };
-__ATTRIBUTE_GROUPS(ds923);
+__ATTRIBUTE_GROUPS(syno);
 
 /* ---------------------------------------------------------------- hwmon */
 
 /* fan1/fan2: tachometers; pwm1: duty set by synohwd on the microcontroller */
-static umode_t ds923_hwmon_visible(const void *data, enum hwmon_sensor_types type,
+static umode_t syno_hwmon_visible(const void *data, enum hwmon_sensor_types type,
 				   u32 attr, int channel)
 {
-	const struct ds923 *ds = data;
+	const struct syno *ds = data;
 
 	if (type == hwmon_fan)
 		return ds->tach[channel] ? 0444 : 0;
@@ -655,10 +655,10 @@ static umode_t ds923_hwmon_visible(const void *data, enum hwmon_sensor_types typ
 	return 0;
 }
 
-static int ds923_hwmon_read(struct device *dev, enum hwmon_sensor_types type,
+static int syno_hwmon_read(struct device *dev, enum hwmon_sensor_types type,
 			    u32 attr, int channel, long *val)
 {
-	struct ds923 *ds = dev_get_drvdata(dev);
+	struct syno *ds = dev_get_drvdata(dev);
 
 	if (type == hwmon_fan) {
 		long rpm = READ_ONCE(ds->fan_rpm[channel]);
@@ -672,49 +672,49 @@ static int ds923_hwmon_read(struct device *dev, enum hwmon_sensor_types type,
 	return 0;
 }
 
-static int ds923_hwmon_write(struct device *dev, enum hwmon_sensor_types type,
+static int syno_hwmon_write(struct device *dev, enum hwmon_sensor_types type,
 			     u32 attr, int channel, long val)
 {
-	struct ds923 *ds = dev_get_drvdata(dev);
+	struct syno *ds = dev_get_drvdata(dev);
 
 	WRITE_ONCE(ds->fan_pwm, clamp_val(val, 0, 255));
 	return 0;
 }
 
-static const struct hwmon_ops ds923_hwmon_ops = {
-	.is_visible = ds923_hwmon_visible,
-	.read = ds923_hwmon_read,
-	.write = ds923_hwmon_write,
+static const struct hwmon_ops syno_hwmon_ops = {
+	.is_visible = syno_hwmon_visible,
+	.read = syno_hwmon_read,
+	.write = syno_hwmon_write,
 };
 
-static const struct hwmon_channel_info * const ds923_hwmon_info[] = {
+static const struct hwmon_channel_info * const syno_hwmon_info[] = {
 	HWMON_CHANNEL_INFO(fan, HWMON_F_INPUT | HWMON_F_ALARM, HWMON_F_INPUT | HWMON_F_ALARM),
 	HWMON_CHANNEL_INFO(pwm, HWMON_PWM_INPUT),
 	NULL
 };
 
-static const struct hwmon_chip_info ds923_hwmon_chip = {
-	.ops = &ds923_hwmon_ops,
-	.info = ds923_hwmon_info,
+static const struct hwmon_chip_info syno_hwmon_chip = {
+	.ops = &syno_hwmon_ops,
+	.info = syno_hwmon_info,
 };
 
 /* ---------------------------------------------------------------- I2C */
 
 /* The S-35390A INT1 output is the one wired to the power-on logic. */
-static const struct property_entry ds923_rtc_props[] = {
+static const struct property_entry syno_rtc_props[] = {
 	PROPERTY_ENTRY_BOOL("sii,alarm-int1"),
 	{ }
 };
 
-static const struct software_node ds923_rtc_swnode = {
-	.properties = ds923_rtc_props,
+static const struct software_node syno_rtc_swnode = {
+	.properties = syno_rtc_props,
 };
 
 /*
  * r1000: the I2C bus AMDI0010 with _UID 3 carries the RTC and the LED
  * controller, which the BIOS does not describe.
  */
-static bool is_ds923_adapter(struct device *dev)
+static bool is_syno_adapter(struct device *dev)
 {
 	struct i2c_adapter *adap = i2c_verify_adapter(dev);
 	struct acpi_device *adev;
@@ -749,7 +749,7 @@ static int match_rtc_acpi_client(struct device *dev, const void *data)
 
 static int match_adapter(struct device *dev, const void *data)
 {
-	return is_ds923_adapter(dev);
+	return is_syno_adapter(dev);
 }
 
 static int match_client_addr(struct device *dev, void *data)
@@ -760,7 +760,7 @@ static int match_client_addr(struct device *dev, void *data)
 }
 
 /* Create @info on @adap unless the address already has a client. */
-static void ds923_i2c_add(struct i2c_adapter *adap, struct i2c_board_info *info,
+static void syno_i2c_add(struct i2c_adapter *adap, struct i2c_board_info *info,
 			  const char *what)
 {
 	struct i2c_client *client;
@@ -775,13 +775,13 @@ static void ds923_i2c_add(struct i2c_adapter *adap, struct i2c_board_info *info,
 /*
  * The clients belong to the adapter, not to this driver: no pointer to them
  * is kept, they go away with the adapter and are created again when it comes
- * back. Only ever run from ds923_i2c_work, so never concurrently.
+ * back. Only ever run from syno_i2c_work, so never concurrently.
  */
-static void ds923_i2c_register(struct work_struct *work)
+static void syno_i2c_register(struct work_struct *work)
 {
 	struct i2c_board_info rtc = {
 		I2C_BOARD_INFO("s35390a", 0x30),
-		.swnode = &ds923_rtc_swnode,
+		.swnode = &syno_rtc_swnode,
 	};
 	struct i2c_board_info leds = { I2C_BOARD_INFO("atmega1608", 0x60) };
 	struct device *dev;
@@ -796,7 +796,7 @@ static void ds923_i2c_register(struct work_struct *work)
 			i2c_unregister_device(client);
 		put_device(dev);
 		if (adap) {
-			ds923_i2c_add(adap, &rtc, "S-35390A RTC");
+			syno_i2c_add(adap, &rtc, "S-35390A RTC");
 			i2c_put_adapter(adap);
 		}
 	}
@@ -804,13 +804,13 @@ static void ds923_i2c_register(struct work_struct *work)
 	dev = bus_find_device(&i2c_bus_type, NULL, NULL, match_adapter);
 	if (!dev)
 		return;
-	ds923_i2c_add(i2c_verify_adapter(dev), &rtc, "S-35390A RTC");
+	syno_i2c_add(i2c_verify_adapter(dev), &rtc, "S-35390A RTC");
 	if (model->atmega_leds)
-		ds923_i2c_add(i2c_verify_adapter(dev), &leds, "ATmega1608 LEDs");
+		syno_i2c_add(i2c_verify_adapter(dev), &leds, "ATmega1608 LEDs");
 	put_device(dev);
 }
 
-static DECLARE_WORK(ds923_i2c_work, ds923_i2c_register);
+static DECLARE_WORK(syno_i2c_work, syno_i2c_register);
 
 /*
  * The DesignWare I2C controller normally probes at subsys_initcall, before
@@ -818,43 +818,43 @@ static DECLARE_WORK(ds923_i2c_work, ds923_i2c_register);
  * clients from the work item (not from the notifier itself, which runs inside
  * the adapter's device_add()).
  */
-static int ds923_i2c_notify(struct notifier_block *nb, unsigned long action, void *data)
+static int syno_i2c_notify(struct notifier_block *nb, unsigned long action, void *data)
 {
 	if (action == BUS_NOTIFY_ADD_DEVICE &&
-	    (is_ds923_adapter(data) || is_rtc_acpi_client(data)))
-		schedule_work(&ds923_i2c_work);
+	    (is_syno_adapter(data) || is_rtc_acpi_client(data)))
+		schedule_work(&syno_i2c_work);
 	return NOTIFY_DONE;
 }
 
-static struct notifier_block ds923_i2c_nb = {
-	.notifier_call = ds923_i2c_notify,
+static struct notifier_block syno_i2c_nb = {
+	.notifier_call = syno_i2c_notify,
 };
 
 /* ---------------------------------------------------------------- MAC addresses */
 
 #define MAX_NICS	4
-static u8 ds923_macs[MAX_NICS][ETH_ALEN];
-static unsigned int ds923_nmacs;
+static u8 syno_macs[MAX_NICS][ETH_ALEN];
+static unsigned int syno_nmacs;
 
 /* macs=001132aabbcc,001132aabbcd: added by the Synology GRUB ("vender" command) */
-static int __init ds923_macs_setup(char *str)
+static int __init syno_macs_setup(char *str)
 {
-	while (str && *str && ds923_nmacs < MAX_NICS) {
+	while (str && *str && syno_nmacs < MAX_NICS) {
 		char *next = strchr(str, ',');
 
 		if (next)
 			*next++ = '\0';
 		if (strlen(str) == 2 * ETH_ALEN &&
-		    !hex2bin(ds923_macs[ds923_nmacs], str, ETH_ALEN) &&
-		    is_valid_ether_addr(ds923_macs[ds923_nmacs]))
-			ds923_nmacs++;
+		    !hex2bin(syno_macs[syno_nmacs], str, ETH_ALEN) &&
+		    is_valid_ether_addr(syno_macs[syno_nmacs]))
+			syno_nmacs++;
 		str = next;
 	}
 	return 1;
 }
-__setup("macs=", ds923_macs_setup);
+__setup("macs=", syno_macs_setup);
 
-static int ds923_netdev_event(struct notifier_block *nb, unsigned long action, void *ptr)
+static int syno_netdev_event(struct notifier_block *nb, unsigned long action, void *ptr)
 {
 	struct net_device *ndev = netdev_notifier_info_to_dev(ptr);
 	struct device *parent = ndev->dev.parent;
@@ -864,28 +864,28 @@ static int ds923_netdev_event(struct notifier_block *nb, unsigned long action, v
 
 	if (action != NETDEV_REGISTER || !parent || !dev_is_pci(parent))
 		return NOTIFY_DONE;
-	for (i = 0; model->nics[i] && i < ds923_nmacs; i++) {
+	for (i = 0; model->nics[i] && i < syno_nmacs; i++) {
 		if (strcmp(dev_name(parent), model->nics[i]))
 			continue;
-		memcpy(ss.__data, ds923_macs[i], ETH_ALEN);
+		memcpy(ss.__data, syno_macs[i], ETH_ALEN);
 		ret = dev_set_mac_address(ndev, &ss, NULL);
 		if (ret)
 			pr_warn(DRV_NAME ": %s: MAC address from macs=: %d\n", ndev->name, ret);
 		else
 			pr_info(DRV_NAME ": %s (%s): MAC address %pM from macs=\n",
-				ndev->name, model->nics[i], ds923_macs[i]);
+				ndev->name, model->nics[i], syno_macs[i]);
 		break;
 	}
 	return NOTIFY_DONE;
 }
 
-static struct notifier_block ds923_netdev_nb = {
-	.notifier_call = ds923_netdev_event,
+static struct notifier_block syno_netdev_nb = {
+	.notifier_call = syno_netdev_event,
 };
 
 /* ---------------------------------------------------------------- probe */
 
-static void ds923_up_release(void *data)
+static void syno_up_release(void *data)
 {
 	struct pci_dev *pdev = data;
 
@@ -898,7 +898,7 @@ static void ds923_up_release(void *data)
  * The LPSS UART is a PCI device that runtime PM may power down when its tty
  * is closed (as it is at power-off): it is kept powered from here on.
  */
-static void ds923_up_map(struct ds923 *ds)
+static void syno_up_map(struct syno *ds)
 {
 	struct pci_dev *up;
 
@@ -909,7 +909,7 @@ static void ds923_up_map(struct ds923 *ds)
 		if (up && up->vendor == PCI_VENDOR_ID_INTEL &&
 		    pci_resource_len(up, 0) >= LPSS_PRIV + 0x10) {
 			pm_runtime_get_sync(&up->dev);
-			if (devm_add_action_or_reset(ds->dev, ds923_up_release, up))
+			if (devm_add_action_or_reset(ds->dev, syno_up_release, up))
 				return;
 			ds->up_pci = up;
 			ds->up = devm_ioremap(ds->dev, pci_resource_start(up, 0),
@@ -922,11 +922,11 @@ static void ds923_up_map(struct ds923 *ds)
 		dev_warn(ds->dev, "microcontroller UART not mapped\n");
 }
 
-static int ds923_probe(struct platform_device *pdev)
+static int syno_probe(struct platform_device *pdev)
 {
 	struct device *dev = &pdev->dev;
 	struct device *hwmon;
-	struct ds923 *ds;
+	struct syno *ds;
 	int i, ret;
 
 	ds = devm_kzalloc(dev, sizeof(*ds), GFP_KERNEL);
@@ -958,7 +958,7 @@ static int ds923_probe(struct platform_device *pdev)
 	}
 
 	for (i = 0; i < ds->nbays; i++) {
-		struct ds923_bay *b = &ds->bay[i];
+		struct syno_bay *b = &ds->bay[i];
 
 		b->present = devm_gpiod_get_index(dev, "present", i, GPIOD_IN);
 		if (IS_ERR(b->present)) {
@@ -997,9 +997,9 @@ static int ds923_probe(struct platform_device *pdev)
 			continue;
 		}
 		irq = gpiod_to_irq(ds->tach[i]);
-		ret = irq < 0 ? irq : devm_request_irq(dev, irq, ds923_tach_irq,
+		ret = irq < 0 ? irq : devm_request_irq(dev, irq, syno_tach_irq,
 						       IRQF_TRIGGER_FALLING,
-						       i ? "ds923-fan2" : "ds923-fan1",
+						       i ? "syno-fan2" : "syno-fan1",
 						       &ds->pulses[i]);
 		if (ret) {
 			dev_warn(dev, "fan %d tach irq: %d\n", i + 1, ret);
@@ -1008,46 +1008,46 @@ static int ds923_probe(struct platform_device *pdev)
 	}
 	ds->fan_stamp = jiffies;
 
-	ds923_up_map(ds);
+	syno_up_map(ds);
 	/*
 	 * PRIO_DEFAULT: for the *_PREPARE chains any other priority must be unique, and
 	 * PRIO_PLATFORM is already taken on the DS923+ (-EBUSY).
 	 */
 	ret = devm_register_sys_off_handler(dev, SYS_OFF_MODE_RESTART_PREPARE,
-					    SYS_OFF_PRIO_DEFAULT, ds923_restart_prepare, ds);
+					    SYS_OFF_PRIO_DEFAULT, syno_restart_prepare, ds);
 	if (!ret)
 		ret = devm_register_sys_off_handler(dev, SYS_OFF_MODE_POWER_OFF_PREPARE,
 						    SYS_OFF_PRIO_DEFAULT,
-						    ds923_power_off_prepare, ds);
+						    syno_power_off_prepare, ds);
 	if (ret)
 		dev_warn(dev, "sys-off handlers: %d\n", ret);
-	ds->emergency_nb.notifier_call = ds923_emergency_restart;
+	ds->emergency_nb.notifier_call = syno_emergency_restart;
 	if (!register_emergency_restart_prep_notifier(&ds->emergency_nb))
-		devm_add_action_or_reset(dev, ds923_emergency_unregister, &ds->emergency_nb);
+		devm_add_action_or_reset(dev, syno_emergency_unregister, &ds->emergency_nb);
 
-	ds923_spinup(ds);
+	syno_spinup(ds);
 
-	hwmon = devm_hwmon_device_register_with_info(dev, "synology", ds, &ds923_hwmon_chip, NULL);
+	hwmon = devm_hwmon_device_register_with_info(dev, "synology", ds, &syno_hwmon_chip, NULL);
 	if (IS_ERR(hwmon))
 		dev_warn(dev, "hwmon: %pe\n", hwmon);
 
-	INIT_DELAYED_WORK(&ds->poll, ds923_poll);
-	queue_delayed_work(system_freezable_wq, &ds->poll, msecs_to_jiffies(ds923_poll_ms()));
+	INIT_DELAYED_WORK(&ds->poll, syno_poll);
+	queue_delayed_work(system_freezable_wq, &ds->poll, msecs_to_jiffies(syno_poll_ms()));
 	dev_info(dev, "Synology %s platform ready\n", model->name);
 	return 0;
 }
 
-static void ds923_remove(struct platform_device *pdev)
+static void syno_remove(struct platform_device *pdev)
 {
-	struct ds923 *ds = platform_get_drvdata(pdev);
+	struct syno *ds = platform_get_drvdata(pdev);
 
 	cancel_delayed_work_sync(&ds->poll);
 	/* Bay and USB power are left as they are: unbinding must not cut the disks. */
 }
 
-static void ds923_shutdown(struct platform_device *pdev)
+static void syno_shutdown(struct platform_device *pdev)
 {
-	struct ds923 *ds = platform_get_drvdata(pdev);
+	struct syno *ds = platform_get_drvdata(pdev);
 	int bay;
 
 	cancel_delayed_work_sync(&ds->poll);
@@ -1062,19 +1062,19 @@ static void ds923_shutdown(struct platform_device *pdev)
 	}
 }
 
-static struct platform_driver ds923_driver = {
+static struct platform_driver syno_driver = {
 	.driver = {
 		.name = DRV_NAME,
-		.dev_groups = ds923_groups,
+		.dev_groups = syno_groups,
 		/* the spin-up sleeps: let other built-in drivers go on meanwhile */
 		.probe_type = PROBE_PREFER_ASYNCHRONOUS,
 	},
-	.probe = ds923_probe,
-	.remove = ds923_remove,
-	.shutdown = ds923_shutdown,
+	.probe = syno_probe,
+	.remove = syno_remove,
+	.shutdown = syno_shutdown,
 };
 
-static const struct dmi_system_id ds923_dmi[] = {
+static const struct dmi_system_id syno_dmi[] = {
 	{
 		.matches = {
 			DMI_EXACT_MATCH(DMI_SYS_VENDOR, "Synology Inc."),
@@ -1092,12 +1092,12 @@ static const struct dmi_system_id ds923_dmi[] = {
 	},
 	{ }
 };
-MODULE_DEVICE_TABLE(dmi, ds923_dmi);
+MODULE_DEVICE_TABLE(dmi, syno_dmi);
 
 /* Built in only (Kconfig bool): there is no exit path. */
-static int __init ds923_init(void)
+static int __init syno_init(void)
 {
-	const struct dmi_system_id *id = dmi_first_match(ds923_dmi);
+	const struct dmi_system_id *id = dmi_first_match(syno_dmi);
 	struct platform_device *pdev;
 	int ret;
 
@@ -1116,21 +1116,21 @@ static int __init ds923_init(void)
 	 * the RTC exists (as rtc0: there is no other RTC driver on this board)
 	 * before rtc_hctosys runs at late_initcall.
 	 */
-	ret = bus_register_notifier(&i2c_bus_type, &ds923_i2c_nb);
+	ret = bus_register_notifier(&i2c_bus_type, &syno_i2c_nb);
 	if (ret)
 		pr_warn(DRV_NAME ": i2c bus notifier: %d\n", ret);
-	schedule_work(&ds923_i2c_work);
-	flush_work(&ds923_i2c_work);
+	schedule_work(&syno_i2c_work);
+	flush_work(&syno_i2c_work);
 
 	/* NIC drivers are modules: their devices register long after this */
-	if (model->nics && ds923_nmacs) {
-		ret = register_netdevice_notifier(&ds923_netdev_nb);
+	if (model->nics && syno_nmacs) {
+		ret = register_netdevice_notifier(&syno_netdev_nb);
 		if (ret)
 			pr_warn(DRV_NAME ": netdevice notifier: %d\n", ret);
 	}
 
 	gpiod_add_lookup_table(model->gpios);
-	ret = platform_driver_register(&ds923_driver);
+	ret = platform_driver_register(&syno_driver);
 	if (ret)
 		goto err_table;
 	pdev = platform_device_register_simple(DRV_NAME, PLATFORM_DEVID_NONE, NULL, 0);
@@ -1142,12 +1142,12 @@ static int __init ds923_init(void)
 
 	/* the RTC and LED clients stay: they do not depend on the platform device */
 err_drv:
-	platform_driver_unregister(&ds923_driver);
+	platform_driver_unregister(&syno_driver);
 err_table:
 	gpiod_remove_lookup_table(model->gpios);
 	return ret;
 }
-module_init(ds923_init);
+module_init(syno_init);
 
 MODULE_AUTHOR("Marco Ziliani <508111+rylos@users.noreply.github.com>");
 MODULE_DESCRIPTION("Synology NAS platform (DS923+, DS920+): bays, USB VBUS, fans, RTC/LED devices, microcontroller shutdown");

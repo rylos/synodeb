@@ -7,6 +7,9 @@ Until November 2026 the packages were named after the first supported model:
 `linux-image-ds923*` and `synology-ds923`, kernels `<version>-ds923`. Those names are now
 transitional packages: `sudo apt full-upgrade` moves an existing system to the `synodeb` names
 by itself, and the transitional packages can be removed afterwards.
+The platform driver was renamed at the same time, from `synology_ds923` to `synology_nas`:
+kernel parameters in `/etc/default/synodeb` (e.g. `synology_nas.spinup_delay=8`) take the new
+prefix.
 
 ## Series
 

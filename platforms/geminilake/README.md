@@ -10,7 +10,7 @@ Gemini Lake GPIO community "northwest" (INT3453 UID 1); SATA on a Marvell 88SE92
 eSATA) and on the SoC AHCI (bays 3-4).
 
 Kernel:
-- `kernel/src/drivers/platform/x86/synology_ds923.c` (shared, table `ds920plus`): bay power
+- `kernel/src/drivers/platform/x86/synology_nas.c` (shared, table `ds920plus`): bay power
   (GPIO 20-23) and spin-up groups 2,1,1, bay presence (35-38, active low), USB VBUS (29, 30),
   fan tachometers (39, 40), the disk LED enable line (17, high at probe), the RTC (the ACPI
   RTC35390 client is replaced by an s35390a one with the INT1 alarm), the microcontroller

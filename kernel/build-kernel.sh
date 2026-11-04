@@ -75,7 +75,7 @@ done
 cp "$CONFIG" .config
 scripts/kconfig/merge_config.sh -m .config /work/kernel/synodeb.config /work/kernel/synodeb-slim.config
 make olddefconfig
-for o in SYNOLOGY_DS923=y LEDS_ATMEGA1608=m RTC_DRV_S35390A=y RTC_DRV_CMOS=m PINCTRL_AMD=y \
+for o in SYNOLOGY_NAS=y LEDS_ATMEGA1608=m RTC_DRV_S35390A=y RTC_DRV_CMOS=m PINCTRL_AMD=y \
          PINCTRL_GEMINILAKE=y MFD_INTEL_LPSS_PCI=y LEDS_SYNOLOGY_LP3943=m \
          SERIAL_8250_DW=y I2C_DESIGNWARE_PLATFORM=y EFI_VARS_PSTORE_DEFAULT_DISABLE=y \
          ATA_LEDS=y LEDS_TRIGGER_TIMER DEBUG_INFO_NONE \

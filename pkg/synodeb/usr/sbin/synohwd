@@ -4,7 +4,7 @@
 Takes over the hardware management DSM does, using the front-panel microcontroller
 (uP: on the DS923+ the AMD UART at MMIO 0xFEDCA000, AMDI0020:01; on the DS920+ LPSS
 UART 0, PCI 00:18.0; /dev/synology-up from the udev rules) and the drivers of the
-synodeb kernel (synology_ds923, leds-atmega1608 or leds-synology-lp3943, rtc-s35390a).
+synodeb kernel (synology_nas, leds-atmega1608 or leds-synology-lp3943, rtc-s35390a).
 
 uP protocol (9600 8N1, ASCII):
   host -> uP   '4' power LED on   '5' blink   '6' off
@@ -27,7 +27,7 @@ uP protocol (9600 8N1, ASCII):
   uP -> host   '0' power button   'a' reset button   '`' USB copy button
                'f' fan failure    'g' CPU fan failure
 
-Fans: hwmon "synology" (platform device synology-ds923) exposes fan1_input /
+Fans: hwmon "synology" (platform device synology-nas) exposes fan1_input /
 fan2_input (rpm measured by the kernel), fan1_alarm / fan2_alarm (1 = stopped)
 and pwm1, which this daemon keeps in sync with the duty it sends.
 Fail-safe: fans at 99% when the CPU or a present disk/NVMe has no temperature
@@ -59,7 +59,10 @@ CONF_PATH = "/etc/synohwd.toml"
 RUN_DIR = "/run/synohwd"
 STATUS = f"{RUN_DIR}/status.json"
 CMD_FIFO = f"{RUN_DIR}/cmd"
-PLATFORM = "/sys/devices/platform/synology-ds923"
+# the synodeb platform driver: synology-nas, synology-ds923 in the kernels before 6.18.60-7 /
+# 7.3.1-7 (one of them may still be DEBIAN_OLD on the DOM)
+PLATFORM = next((p for p in ("/sys/devices/platform/synology-nas", "/sys/devices/platform/synology-ds923")
+                 if os.path.isdir(p)), "/sys/devices/platform/synology-nas")
 SYS_BLOCK = "/sys/block"
 LEDS = "/sys/class/leds"
 UP_MMIO = 0xFEDCA000            # uP UART; 0xFEDC9000 is the serial console
