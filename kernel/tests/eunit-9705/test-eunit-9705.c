@@ -10,6 +10,7 @@
  * write strobe bit 8, data in bits 7:0, mapped bit by bit to the register
  * word; the guard from a reference model of the write policy.
  */
+#include <errno.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -451,6 +452,39 @@ out:
 	EXPECT(eu_p1_diff(0x42, 0x47, 0x02, 0x02) == 0x00, "bay 8 LED already on");
 }
 
+/*
+ * LED retry policy: a timeout or no EH round (-EIO, -EAGAIN) is tried
+ * again, anything else is not, and a unit that keeps failing gets a
+ * bounded number of rounds; the bays of a failed round are pending again
+ * and nothing pending is lost.
+ */
+static void test_led_retry(void)
+{
+	static const int errs[] = { 0, -EIO, -EAGAIN, -EPERM, -ENODEV, -EINVAL, -ETIMEDOUT };
+	unsigned int i, f, rounds;
+	u32 pend, tried;
+
+	for (i = 0; i < sizeof(errs) / sizeof(errs[0]); i++)
+		for (f = 0; f < 20; f++) {
+			bool want = (errs[i] == -EIO || errs[i] == -EAGAIN) && f < 5;
+
+			EXPECT(eu_led_retry(errs[i], f) == want,
+			       "led_retry(%d, %u) = %d", errs[i], f, !want);
+		}
+	/* a unit that always times out: 1 round + EU_LED_TRIES retries */
+	for (rounds = 1, f = 0; eu_led_retry(-EIO, f) && rounds < 1000; f++)
+		rounds++;
+	EXPECT(rounds == 6, "always failing unit: %u LED rounds", rounds);
+	for (pend = 0; pend < 64; pend++)
+		for (tried = 0; tried < 64; tried++) {
+			u32 n = eu_led_requeue(pend, tried);
+
+			EXPECT((n & (pend | tried)) == (pend | tried) &&
+			       !(n & ~(pend | tried)),
+			       "led_requeue(0x%x, 0x%x) = 0x%x", pend, tried, n);
+		}
+}
+
 int main(void)
 {
 	test_encoding();
@@ -458,6 +492,7 @@ int main(void)
 	test_guard();
 	test_identify();
 	test_policy();
+	test_led_retry();
 	printf("%lu checks, %lu failed\n", checks, fails);
 	return fails ? 1 : 0;
 }

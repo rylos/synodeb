@@ -148,6 +148,7 @@ struct eu_unit {
 	struct delayed_work led_work;	/* LED writes, coalesced */
 	unsigned long led_stamp;	/* last LED round */
 	u32 led_mask, led_val;		/* bit = bay: LED to set, its value */
+	unsigned int led_fails;		/* failed LED rounds in a row */
 	unsigned int nleds;
 	struct eu_led led[EU_MAX_PMPS * EU_MAX_LOCAL];
 };
@@ -161,6 +162,7 @@ struct eu_ctrl {
 	struct eu_port port[EU_MAX_PORTS];
 	struct list_head units;
 	struct delayed_work work;
+	bool suspended;			/* no LED round until resume */
 };
 
 /* a controller to look at, set up at module init */
@@ -648,9 +650,12 @@ static int eu_led_set(struct led_classdev *cdev, enum led_brightness value)
 		u->led_val |= BIT(led->bay);
 	else
 		u->led_val &= ~BIT(led->bay);
-	due = u->led_stamp + EU_LED_GAP;
-	schedule_delayed_work(&u->led_work,
-			      time_after(jiffies, due) ? 0 : due - jiffies);
+	/* while suspended the bits wait in led_mask; resume queues them */
+	if (!u->ctrl->suspended) {
+		due = u->led_stamp + EU_LED_GAP;
+		schedule_delayed_work(&u->led_work,
+				      time_after(jiffies, due) ? 0 : due - jiffies);
+	}
 	mutex_unlock(&u->ctrl->lock);
 	return 0;
 }
@@ -661,13 +666,19 @@ static void eu_led_work_fn(struct work_struct *work)
 					 led_work);
 	struct eu_ctrl *c = u->ctrl;
 	unsigned int per = u->type->bays / u->type->pmps, i;
+	bool again = false;
 	int e, ret;
 
 	mutex_lock(&c->lock);
+	if (c->suspended) {
+		mutex_unlock(&c->lock);
+		return;
+	}
 	for (e = 0; e < u->npmps && !u->gone; e++) {
 		struct eu_port *p;
 		struct eu_req r;
 		u8 m = 0, v = 0, d;
+		u32 tried = 0;
 
 		for (i = 0; i < per; i++) {
 			unsigned int bay = e * per + i;
@@ -675,6 +686,7 @@ static void eu_led_work_fn(struct work_struct *work)
 			if (!(u->led_mask & BIT(bay)))
 				continue;
 			u->led_mask &= ~BIT(bay);
+			tried |= BIT(bay);
 			m |= BIT(u->type->led_bit[i]);
 			if (u->led_val & BIT(bay))
 				v |= BIT(u->type->led_bit[i]);
@@ -693,9 +705,26 @@ static void eu_led_work_fn(struct work_struct *work)
 		ret = eu_cycle(p->ap, &r);
 		eu_note_p1(p, &r);
 		u->led_stamp = jiffies;
-		if (ret)
+		if (!ret)
+			continue;
+		if (eu_led_retry(ret, u->led_fails)) {
+			/* pending again; a newer request keeps its value */
+			u->led_mask = eu_led_requeue(u->led_mask, tried);
+			again = true;
+		} else if (ret == -EIO || ret == -EAGAIN) {
+			dev_warn_ratelimited(c->dev,
+					     "ata%u: LEDs not set after %u tries: %d\n",
+					     p->ap->print_id, u->led_fails + 1, ret);
+		} else {
 			dev_warn_ratelimited(c->dev, "ata%u: LEDs: %d\n",
 					     p->ap->print_id, ret);
+		}
+	}
+	if (again && !u->gone) {
+		u->led_fails++;
+		schedule_delayed_work(&u->led_work, EU_LED_GAP);
+	} else {
+		u->led_fails = 0;
 	}
 	mutex_unlock(&c->lock);
 }
@@ -1156,15 +1185,28 @@ static void eu_remove(struct platform_device *pdev)
 	}
 }
 
-/* no scan or LED round while the system suspends; the unit list stays */
+/*
+ * No scan or LED round while the system suspends; the unit list stays.
+ * LED requests made meanwhile (a trigger) are kept and written on resume.
+ */
 static int eu_suspend(struct device *dev)
 {
 	struct eu_ctrl *c = dev_get_drvdata(dev);
 	struct eu_unit *u;
 
+	mutex_lock(&c->lock);
+	c->suspended = true;
+	mutex_unlock(&c->lock);
 	cancel_delayed_work_sync(&c->work);
+	/*
+	 * An LED round in progress holds the lock, so none runs once it is
+	 * taken here; one that starts later sees suspended and returns. The
+	 * requested bits stay in led_mask.
+	 */
+	mutex_lock(&c->lock);
 	list_for_each_entry(u, &c->units, node)
-		cancel_delayed_work_sync(&u->led_work);
+		cancel_delayed_work(&u->led_work);
+	mutex_unlock(&c->lock);
 	return 0;
 }
 
@@ -1175,6 +1217,7 @@ static int eu_resume(struct device *dev)
 	int i;
 
 	mutex_lock(&c->lock);
+	c->suspended = false;
 	list_for_each_entry(u, &c->units, node) {
 		u->mvalid = false;
 		if (u->led_mask)

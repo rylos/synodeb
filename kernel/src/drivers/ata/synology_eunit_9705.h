@@ -27,6 +27,7 @@
 #define SYNOLOGY_EUNIT_9705_H
 
 #ifdef __KERNEL__
+#include <linux/errno.h>
 #include <linux/types.h>
 #endif
 
@@ -231,6 +232,25 @@ static inline bool eu_type_writable(const struct eu_type *t, bool unconfirmed)
 static inline u8 eu_p1_diff(u8 cur, u8 p1_mask, u8 want_mask, u8 want)
 {
 	return (cur ^ want) & want_mask & p1_mask & ~EU_P1_BUZZER;
+}
+
+/*
+ * LED rounds that failed: a timeout or an EH round that could not be had
+ * (-EIO, -EAGAIN) is tried again, at most EU_LED_TRIES times in a row; a
+ * refusal of the write guard or a unit that is gone is not. The bays of a
+ * failed round are pending again, together with what was requested since,
+ * and their value is the newest one requested.
+ */
+#define EU_LED_TRIES		5
+
+static inline bool eu_led_retry(int err, unsigned int fails)
+{
+	return (err == -EIO || err == -EAGAIN) && fails < EU_LED_TRIES;
+}
+
+static inline u32 eu_led_requeue(u32 pending, u32 tried)
+{
+	return pending | tried;
 }
 
 /*

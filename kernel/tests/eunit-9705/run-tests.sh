@@ -66,6 +66,22 @@ mut row_bays       's/\.name = "DX517", \.bays = 5/.name = "DX517", .bays = 4/'
 mut row_dx1222     's/\.led_bit = \{ 3, 2, 1 \}/.led_bit = { 0, 1, 2 }/'
 mut row_confirmed  's/\.name = "DX517", (.*)\n(.*)\} \},/.name = "DX517", $1\n$2}, .confirmed = true },/'
 mut row_led_bit5   's/\.name = "RX1217", (.*)\n\t  \.led_bit = \{ 0, 1, 2 \}/.name = "RX1217", $1\n\t  .led_bit = { 0, 1, 5 }/'
+mut retry_any_err  's/return \(err == -EIO \|\| err == -EAGAIN\) && fails < EU_LED_TRIES;/return err \&\& fails < EU_LED_TRIES;/'
+mut retry_forever  's/return \(err == -EIO \|\| err == -EAGAIN\) && fails < EU_LED_TRIES;/return (err == -EIO || err == -EAGAIN) \&\& (fails < EU_LED_TRIES || fails);/'
+mut retry_tries    's/#define EU_LED_TRIES\t\t5/#define EU_LED_TRIES\t\t50/'
+mut requeue_drop   's/return pending \| tried;/return pending | (tried \& 0);/'
+
+# the driver: no LED round queued or run while suspended
+set_body=$(awk '/^static int eu_led_set\(/,/^}/' "$SRC/synology_eunit_9705.c")
+work_body=$(awk '/^static void eu_led_work_fn\(/,/^}/' "$SRC/synology_eunit_9705.c")
+if grep -q 'if (!u->ctrl->suspended) {' <<<"$set_body" &&
+   [ "$(grep -c schedule_delayed_work <<<"$set_body")" = 1 ] &&
+   [ "$(grep -n 'if (c->suspended)' <<<"$work_body" | head -1 | cut -d: -f1)" -lt \
+     "$(grep -n 'eu_cycle(' <<<"$work_body" | head -1 | cut -d: -f1)" ]; then
+    echo "ok: LED rounds are neither queued nor run while suspended"
+else
+    echo "FAIL: LED rounds while suspended"; rc=1
+fi
 
 # the driver: one sata_pmp_vendor_write() call, inside eu_write(), after the guard
 C=$SRC/synology_eunit_9705.c
