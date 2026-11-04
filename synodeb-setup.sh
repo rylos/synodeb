@@ -58,7 +58,7 @@ model_profile() { # model (from syno_hw_version)
         EXT_UUID='45 e5 b0 7d 47 83 48 67 a3 69 f9 9c 0c d1 e6 10'
         P2UUID=45e5b07d-4783-4867-a369-f99c0cd1e610
         P1_MIN=16777216 P2_MIN=67108864
-        CONSOLE='console=tty0 console=uart8250,mmio32,0xa1317000,115200n8'
+        CONSOLE=console=tty0
         ;;
     DS923+)
         MODEL=DS923+ PLATFORM=r1000 TIER=supported BAYS=4
