@@ -60,7 +60,7 @@ KM=$T/k/lib/modules/$KREL
 KPKGVER=$(dpkg-deb -f "$KDEB" Version)
 
 # --- module udebs: same groups as Debian, with the synodeb modules ---
-# Groups the DS923+ cannot use are left out.
+# Groups a Synology NAS cannot use are left out.
 SKIP='^(sound|speakup|pcmcia|pcmcia-storage|nic-pcmcia|nic-wireless|firewire-core|mmc|mmc-core|pata|rfkill|ppp)-modules-'
 udebs=$(awk -v kv="$KV" '/^Package:/ { p = $2 } /^Kernel-Version:/ && $2 == kv { print p }' "$T/Packages")
 NM=$R/lib/modules/$KREL
@@ -82,9 +82,17 @@ for u in $udebs; do
     while read -r ko; do
         rel=${ko#*/lib/modules/$KV/}
         base=${rel%.ko*}
+        found=
         for c in "$KM/$base.ko" "$KM/$base.ko.xz" "$KM/$base.ko.zst"; do
-            [ -f "$c" ] && { wanted[${c#"$KM"/}]=1; n=$((n + 1)); break; }
+            [ -f "$c" ] && { found=$c; break; }
         done
+        # moved in a newer kernel (e.g. drivers/net/phy/realtek.ko -> phy/realtek/realtek.ko,
+        # needed by r8169): the module of the same name elsewhere in the tree
+        if [ -z "$found" ]; then
+            found=$(find "$KM/kernel" -name "$(basename "$base").ko*" | sort | head -n 1)
+            [ -z "$found" ] || echo "    $base -> ${found#"$KM"/}"
+        fi
+        [ -z "$found" ] || { wanted[${found#"$KM"/}]=1; n=$((n + 1)); }
     done < <(dpkg-deb -c "$CACHE/$(basename "$file")" | awk '{ print $6 }' | grep '\.ko')
     printf 'Package: %s\nStatus: install ok unpacked\nVersion: %s\n%sDescription: %s (synodeb kernel %s)\n\n' \
         "$newname" "$KPKGVER" "${provides:+Provides: $provides
