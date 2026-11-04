@@ -222,10 +222,12 @@ put() {
     [ "$(rd_sha "$1")" = "$(cat "$img.sha")" ] ||
         die "$1 changed since it was read (is another program writing the DOM?): DOM unchanged"
     critical
+    say "  writing $1 ($(($(size_of "$img") / 1048576)) MB) and reading it back, please wait..."
     dd if="$img" of="$1" bs=64k conv=fsync 2>/dev/null || write_failed "$1"
     sync
     [ "$(rd_sha "$1")" = "$(sha "$img")" ] || write_failed "$1"
     sha "$img" > "$img.sha"
+    say "  $1: ok"
     uncritical
 }
 # the DOM backup of this run, else the copy of the partition read before the change
@@ -497,6 +499,9 @@ EOT
     say "  synoboot2: /synodeb/installer.vmlinuz and /synodeb/installer.img$([ $keep = 1 ] && echo ' (the Debian kernel stays)')"
     say "  synoboot1: boot entry INSTALLER, made the default (Synology$([ $keep = 1 ] && echo ' and Debian') entries unchanged)"
     [ "$(ask "Write the DOM now? (yes/no)" no)" = yes ] || [ "$YES" = 1 ] || die "nothing written"
+    say ""
+    say "Writing the DOM: this takes a minute or two, the DOM is slow flash."
+    say "Do not power off the NAS. Ctrl-C is ignored until the DOM is written."
     critical
     put "$P2" "$T/m2" ext2
     put "$P1" "$T/m1" vfat
