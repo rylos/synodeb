@@ -1,24 +1,24 @@
 Architectures: amd64
 Codename: trixie
 Components: main
-Date: Wed, 04 Nov 2026 19:46:39 +0000
+Date: Wed, 04 Nov 2026 20:15:01 +0000
 Description: synodeb: Debian on Synology NAS
 Label: synodeb
 Origin: synodeb
 Suite: trixie
 MD5Sum:
- 34bd92dcfffe97d1704f97e8d75b8198            18165 main/binary-amd64/Packages
- f76e2ceeb3c3f4172e5945b10167c7a3             5709 main/binary-amd64/Packages.gz
- 2b981fb3e2f7ae667e1b3ac586e3bfea             5240 main/binary-amd64/Packages.xz
+ 6402808ca741ff667eef9734e8ab19fb            19581 main/binary-amd64/Packages
+ e0999a28f6b55e295794f4e0afcf6ed5             6096 main/binary-amd64/Packages.gz
+ 1b405cf3499304a14fd6973670a68ba4             5568 main/binary-amd64/Packages.xz
 SHA1:
- 8b5af3bc839e6030b813c730e18ed4e3a55203f8            18165 main/binary-amd64/Packages
- 011bad198e9a492473a2156dd94bbddacae6512c             5709 main/binary-amd64/Packages.gz
- c3532467a421b94d1a46413103faf7d720281bdf             5240 main/binary-amd64/Packages.xz
+ 592c30a52032d24fd9c9c1d5939d93a518101f73            19581 main/binary-amd64/Packages
+ 905fe792b3b04262f17df11004123a12a145cab7             6096 main/binary-amd64/Packages.gz
+ c9a082172307570a68eaee26005225c5d59ebc2a             5568 main/binary-amd64/Packages.xz
 SHA256:
- 04c1a9bf93f930a4a4c37c8142aa657037aa12ff21dd604828fe5408251857a6            18165 main/binary-amd64/Packages
- 765cfab0b13ecd2b070feefdbd30ef2ae02da3a14b27fdac4fb8a7d0cdefe12d             5709 main/binary-amd64/Packages.gz
- 2c29f4b325779b5083dcb0daa0a7581ac8f1f7b9697a6dbb2fa8e12d1db61fb2             5240 main/binary-amd64/Packages.xz
+ b376a4a9e3cac83efe6f8f293c77e537233764ad486965a56f9d908a57535201            19581 main/binary-amd64/Packages
+ f78636dba79edf189aa7e9c5c511016e3102d82b018547d14d1b0d5191c3dfac             6096 main/binary-amd64/Packages.gz
+ 91e7e0f0ccb00b02ba9371bbd67688e5aed9993be378317eab7aafb449098782             5568 main/binary-amd64/Packages.xz
 SHA512:
- bd1b92b807de16981e9ecc5e262d4536139c820c9f6d8fe74a6c451004908b42219d12386726c1097469e17b4bcfbce77c1763b13351045490f586f2db6cc962            18165 main/binary-amd64/Packages
- 0f35c483fe528e03617dedd7fbdfffcf17455d166706125c7dc85bed0a4bc0be1ddcc8c1e64fac742472caa7b3b4bc15ab8443d2c3fb5fea2863fab51a3d73fc             5709 main/binary-amd64/Packages.gz
- 3c5dd06790f8b384b38b663b29c2f23907b25ec5a2f9a58d1186a31d4451728a5e326ec6d0fdc56ddff758b1db5808e330ae1524760c9a13bc030e7ad25fedcf             5240 main/binary-amd64/Packages.xz
+ fe97a91ebfaca190cb15d7971f6344c83405e0617894ed555b41db67427b9cbddb7d540308a506fcf0b6d5e06a5113db18bb522a395462f8bda286d02655dee7            19581 main/binary-amd64/Packages
+ 320ce87360f6024c84381823ec6b098402ece9d515ce3a74f9204af1b3b8a62b38820984337cd4b2cddb8ecd92d164e7adb50701707f1332b319a1952bdfbfcd             6096 main/binary-amd64/Packages.gz
+ aa9dd13a672c49a16bf7d203def934fd86754fe54fbc58b25dd6c71bdd5dea6a4a9663f964498a632100edfac99705a0a224b43115103b44bc923b0c882d36d4             5568 main/binary-amd64/Packages.xz
