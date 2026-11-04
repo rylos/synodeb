@@ -73,7 +73,7 @@ for d in /work/platforms/*/kernel/src; do
     [ ! -d "$d" ] || rsync -rc --itemize-changes "$d/" ./
 done
 cp "$CONFIG" .config
-scripts/kconfig/merge_config.sh -m .config /work/kernel/ds923.config /work/kernel/ds923-slim.config
+scripts/kconfig/merge_config.sh -m .config /work/kernel/synodeb.config /work/kernel/synodeb-slim.config
 make olddefconfig
 for o in SYNOLOGY_DS923=y LEDS_ATMEGA1608=m RTC_DRV_S35390A=y RTC_DRV_CMOS=m PINCTRL_AMD=y \
          PINCTRL_GEMINILAKE=y MFD_INTEL_LPSS_PCI=y LEDS_SYNOLOGY_LP3943=m \
@@ -82,15 +82,17 @@ for o in SYNOLOGY_DS923=y LEDS_ATMEGA1608=m RTC_DRV_S35390A=y RTC_DRV_CMOS=m PIN
          SYNOLOGY_EUNIT_9705=m SATA_PMP_VENDOR_EH=y; do
     grep -E "^CONFIG_$o" .config || { echo "missing CONFIG_$o"; exit 1; }
 done
-make -j"$(nproc)" bindeb-pkg KDEB_PKGVERSION="$PKGVER" LOCALVERSION="-$ABI-ds923"
-[ "$(make -s kernelrelease LOCALVERSION="-$ABI-ds923")" = "$KREL" ] || { echo "kernelrelease is not $KREL" >&2; exit 1; }
+make -j"$(nproc)" bindeb-pkg KDEB_PKGVERSION="$PKGVER" LOCALVERSION="-$ABI-synodeb"
+[ "$(make -s kernelrelease LOCALVERSION="-$ABI-synodeb")" = "$KREL" ] || { echo "kernelrelease is not $KREL" >&2; exit 1; }
 rm -f ../linux-image-*-dbg_*.deb
 mv ../linux-*.deb "$OUT"/
 cp .config "$OUT"/config-$KREL
 # Metapackages: always depend on the latest kernel of the series (like linux-image-amd64 in
-# Debian). linux-image-ds923 is the default and follows the longterm series; its epoch keeps
-# it newer than the 7.3.0-1 it had before the series were split.
-meta() { # package version depends description
+# Debian). linux-image-synodeb is the default and follows the longterm series.
+# The packages were named linux-image-ds923* until 6.18.60-6 / 7.3.1-6: those names stay as
+# transitional packages that depend on the new ones, so that existing systems move over with
+# 'apt full-upgrade' (linux-image-ds923 keeps its epoch, from before the series were split).
+meta() { # package version depends description [section]
     d=/tmp/meta-$1
     rm -rf "$d"; mkdir -p "$d/DEBIAN"
     cat > "$d/DEBIAN/control" <<EOT
@@ -99,13 +101,13 @@ Version: $2
 Architecture: amd64
 Maintainer: Marco Ziliani <508111+rylos@users.noreply.github.com>
 Depends: $3
-Section: kernel
+Section: ${5:-kernel}
 Priority: optional
 Description: $4
 EOT
     # the series decides which kernel the DOM boots (/usr/lib/synodeb/boot-kernels): installing
-    # or removing linux-image-ds923-<series> alone must choose again
-    case $1 in linux-image-ds923-*)
+    # or removing linux-image-synodeb-<series> alone must choose again
+    case $1 in linux-image-synodeb-*)
         for s in postinst postrm; do
             cat > "$d/DEBIAN/$s" <<'EOT'
 #!/bin/sh
@@ -120,14 +122,20 @@ EOT
     dpkg-deb --root-owner-group -Zxz -b "$d" "$OUT/${1}_${2#*:}_amd64.deb" >/dev/null
 }
 for kind in image headers; do
-    meta "linux-$kind-ds923-$SERIES" "$PKGVER" "linux-$kind-$KREL (= $PKGVER)" \
-        "Linux kernel for the Synology DS923+ ($kind, $SERIES series)
+    meta "linux-$kind-synodeb-$SERIES" "$PKGVER" "linux-$kind-$KREL (= $PKGVER)" \
+        "Linux kernel for Synology NAS, synodeb ($kind, $SERIES series)
  Depends on the latest synodeb kernel $kind package of the $SERIES series ($KBRANCH)."
+    meta "linux-$kind-ds923-$SERIES" "$PKGVER" "linux-$kind-synodeb-$SERIES (= $PKGVER)" \
+        "transitional package for linux-$kind-synodeb-$SERIES
+ This package can be removed." oldlibs
     if [ "$SERIES" = longterm ]; then
-        meta "linux-$kind-ds923" "1:$PKGVER" "linux-$kind-ds923-longterm (= $PKGVER)" \
-            "Linux kernel for the Synology DS923+ ($kind, default)
+        meta "linux-$kind-synodeb" "$PKGVER" "linux-$kind-synodeb-longterm (= $PKGVER)" \
+            "Linux kernel for Synology NAS, synodeb ($kind, default)
  Depends on the synodeb kernel of the longterm series. For the newest stable series
- install linux-$kind-ds923-stable instead."
+ install linux-$kind-synodeb-stable instead."
+        meta "linux-$kind-ds923" "1:$PKGVER" "linux-$kind-synodeb (= $PKGVER)" \
+            "transitional package for linux-$kind-synodeb
+ This package can be removed." oldlibs
     fi
 done
 ls -la "$OUT"

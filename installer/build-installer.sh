@@ -166,9 +166,9 @@ mkdir -p "$S"
 cp $W/installer/files/preseed.cfg "$R/preseed.cfg"
 install -m 644 $W/installer/files/lib.sh "$S/"
 install -m 755 $W/installer/files/early $W/installer/files/finish "$S/"
-install -m 644 $W/pkg/synology-ds923/etc/apt/sources.list.d/synodeb.sources \
-    $W/pkg/synology-ds923/etc/apt/preferences.d/synodeb-no-debian-kernel \
-    $W/pkg/synology-ds923/usr/share/keyrings/synodeb-archive-keyring.gpg "$S/"
+install -m 644 $W/pkg/synodeb/etc/apt/sources.list.d/synodeb.sources \
+    $W/pkg/synodeb/etc/apt/preferences.d/synodeb-no-debian-kernel \
+    $W/pkg/synodeb/usr/share/keyrings/synodeb-archive-keyring.gpg "$S/"
 
 # --- output ---
 rm -f "$DEST"/*

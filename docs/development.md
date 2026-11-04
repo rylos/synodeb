@@ -54,9 +54,10 @@ tests/run-test-setup.sh DOM.img     # synodeb-setup.sh against a copy of a DOM i
 
 Each series has its `kernel/<series>/VERSION` (upstream version and ABI); patches and Debian
 configuration are per branch, in `kernel/patches/<x.y>` and `kernel/config-debian-<x.y>`.
-`tools/publish.sh` builds `synology-ds923` from the committed tree (`git archive HEAD`): a change
-to `pkg/synology-ds923` is published only with a new `Version` in its `DEBIAN/control`, and a
-version already in the repository with a different content is refused.
+`tools/publish.sh` builds the packages in `pkg/` (`synodeb`, and `synology-ds923`, its
+transitional package) from the committed tree (`git archive HEAD`): a change to a package is
+published only with a new `Version` in its `DEBIAN/control`, and a version already in the
+repository with a different content is refused.
 
 ## CI
 

@@ -1,5 +1,5 @@
 #!/bin/sh
-# DS923+ initramfs (MODULES=dep, conf.d/synodeb.conf): kernel and initrd live on the DOM
+# synodeb initramfs (MODULES=dep, conf.d/synodeb.conf): kernel and initrd live on the DOM
 # (synoboot2, 84 MB), so the initrd must stay small.
 # synology_ds923 (bay power, USB VBUS) is built into the kernel and starts first; here:
 #  - the drivers the root can be on even if mkinitramfs did not see them (SATA, NVMe, USB);
@@ -19,9 +19,9 @@ copy_exec /usr/sbin/blkid /sbin
 copy_exec /usr/bin/sed /bin
 # while installing, the kernel can be configured before dpkg has put this package's
 # conffiles in place: without the file this is skipped (the trigger rebuilds it later)
-if [ -f /etc/modprobe.d/synology-ds923.conf ]; then
+if [ -f /etc/modprobe.d/synodeb.conf ]; then
     mkdir -p "$DESTDIR/etc/modprobe.d"
-    cp /etc/modprobe.d/synology-ds923.conf "$DESTDIR/etc/modprobe.d/"
+    cp /etc/modprobe.d/synodeb.conf "$DESTDIR/etc/modprobe.d/"
 fi
 
 # --- cleanup ---

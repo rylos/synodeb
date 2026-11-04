@@ -1,63 +1,13 @@
 #!/bin/sh
 set -e
+# transitional package (synodeb >= 4.0): drop the conffiles of the old versions. Those removed
+# in 3.0, and those synodeb 4.0 renamed (a locally changed one is kept as <name>.dpkg-bak)
 for f in /etc/systemd/journald.conf.d/synodeb-volatile.conf /etc/systemd/system/synodeb-journal-archive.service \
          /etc/systemd/system/synodeb-journal-archive-shutdown.service /etc/systemd/system/synodeb-journal-archive.timer \
          /etc/initramfs-tools/scripts/init-premount/synodeb-rootcheck /etc/initramfs-tools/scripts/init-top/synodeb-bootlog; do
     dpkg-maintscript-helper rm_conffile "$f" 3.0~ synology-ds923 -- "$@"
 done
-if [ "$1" = configure ]; then
-    # $2: the version configured before, empty on the first install
-    # notify.conf may hold tokens and passwords
-    chmod 600 /etc/synodeb/notify.conf 2>/dev/null || true
-    # amd64-microcode has no update for the R1600 (00810F81): keep it out of the initramfs
-    # (AMD64UCODE_INITRAMFS=auto brings it back if a future version has one)
-    f=/etc/default/amd64-microcode
-    if [ -f $f ] && ! grep -q '^AMD64UCODE_INITRAMFS=' $f; then
-        printf '%s\n' '# synodeb: no microcode update for 00810F81 (R1600), smaller initramfs' 'AMD64UCODE_INITRAMFS=no' >> $f
-    fi
-    # initramfs with this package's hooks. On an upgrade only for the kernel DEBIAN boots:
-    # DEBIAN_OLD keeps its initrd, so a broken hook cannot break both entries, and the new
-    # initrd goes to the DOM with a kernel trial (synodeb-dom sync). On the first install
-    # all of them (conf.d/synodeb.conf keeps them small enough for the DOM).
-    new=$(/usr/lib/synodeb/boot-kernels | cut -d' ' -f1)
-    if [ -z "${2:-}" ]; then
-        update-initramfs -u -k all || true
-    elif [ -n "$new" ] && [ -f "/boot/initrd.img-$new" ]; then
-        update-initramfs -u -k "$new" || true
-    fi
-    # /boot/vmlinuz(.old) and the copy on the DOM: the kernel may have been installed before
-    # this package and its hook (on a new system the installer does exactly that)
-    # (the hook also creates the initrd of the DEBIAN kernel if it is missing)
-    /etc/kernel/postinst.d/zz-synodeb-boot-links ${new:+"$new"} || true
-    udevadm control --reload || true
-    udevadm trigger --subsystem-match=tty --action=add || true
-    systemctl daemon-reload || true
-    # first install, or reinstall after a remove (prerm disabled the units and left the mark):
-    # an upgrade leaves the units as the admin set them (a unit added by a later version
-    # needs its own versioned enable here)
-    removed=/var/lib/synodeb/removed
-    if [ -z "${2:-}" ] || [ -e $removed ]; then
-        rm -f $removed
-        systemctl enable synohwd.service synodeb-nvme-power-limit.service synodeb-boot-ok.service \
-            synodeb-nut-firewall.service || true
-    elif [ -d /run/systemd/system ]; then
-        systemctl try-restart synohwd.service || true
-    fi
-    # UPS (NUT): 'synodeb-ups setup' writes /etc/nut once, when NUT is installed and not
-    # configured yet (MODE=none, the Debian default); never over the admin's configuration,
-    # and an upgrade never stops NUT
-    mark=/var/lib/synodeb/nut-setup
-    if [ -d /etc/nut ] && [ ! -e $mark ]; then
-        mode=$(sed -n 's/^[[:space:]]*MODE[[:space:]]*=[[:space:]]*"\{0,1\}\([a-z]*\).*/\1/p' /etc/nut/nut.conf 2>/dev/null | tail -n 1)
-        if grep -q '^# synodeb' /etc/nut/upsmon.conf 2>/dev/null; then
-            :                               # written by synodeb-ups setup already
-        elif [ -z "$mode" ] || [ "$mode" = none ]; then
-            /usr/sbin/synodeb-ups setup ${2:+--no-stop} || true
-        else
-            echo "synology-ds923: NUT is configured (MODE=$mode): 'synodeb-ups setup' not run"
-        fi
-        mkdir -p ${mark%/*}
-        : > $mark
-    fi
-    [ ! -d /etc/nut ] || /usr/sbin/synodeb-ups netbind || true
-fi
+for f in /etc/modprobe.d/synology-ds923.conf /etc/modules-load.d/synology-ds923.conf \
+         /etc/initramfs-tools/hooks/synology-ds923 /etc/udev/rules.d/60-synology-ds923.rules; do
+    dpkg-maintscript-helper rm_conffile "$f" 4.0~ synology-ds923 -- "$@"
+done

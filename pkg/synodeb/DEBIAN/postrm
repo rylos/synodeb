@@ -1,0 +1,12 @@
+#!/bin/sh
+set -e
+if [ "$1" = purge ]; then
+    rm -f /var/lib/synodeb/nut-setup /var/lib/synodeb/removed /var/lib/synodeb/from-synology-ds923
+    rmdir /var/lib/synodeb 2>/dev/null || true
+    # written by 'synodeb-ups setup' for NETWORK_CLIENTS: kept, so that upsd (still listening
+    # on the network per /etc/nut/upsd.conf) does not start without its firewall
+    if [ -f /etc/systemd/system/nut-server.service.d/synodeb-network-clients.conf ]; then
+        echo "synodeb: nut-server.service.d/synodeb-network-clients.conf kept: fix the LISTEN" \
+             "lines in /etc/nut/upsd.conf, then remove it" >&2
+    fi
+fi

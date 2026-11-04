@@ -15,14 +15,14 @@ body:
     attributes:
       label: Kernel
       description: Output of `uname -r` (or the installer version, if the problem is in the installer).
-      placeholder: 6.18.59-1-ds923
+      placeholder: 6.18.60-7-synodeb
     validations:
       required: true
   - type: input
     id: package
     attributes:
-      label: synology-ds923 version
-      description: Output of `dpkg-query -W synology-ds923`.
+      label: synodeb version
+      description: Output of `dpkg-query -W synodeb` (`synology-ds923` before 4.0).
   - type: textarea
     id: what
     attributes:

@@ -1,5 +1,5 @@
 // synodeb: automatic Debian updates (security and updates), no automatic reboot.
-// The synodeb kernel and synology-ds923 come from the synodeb repository and are upgraded
+// The synodeb kernel and the synodeb package come from the synodeb repository and are upgraded
 // by hand ('apt upgrade', then a reboot): a kernel upgrade writes the Synology DOM.
 // Log: /var/log/unattended-upgrades/.
 APT::Periodic::Update-Package-Lists "1";
@@ -12,8 +12,9 @@ Unattended-Upgrade::Origins-Pattern {
 };
 // regular expressions on the package name
 Unattended-Upgrade::Package-Blacklist {
-        "linux-image-.*ds923(-longterm|-stable)?$";
-        "linux-headers-.*ds923(-longterm|-stable)?$";
+        "linux-image-.*(synodeb|ds923)(-longterm|-stable)?$";
+        "linux-headers-.*(synodeb|ds923)(-longterm|-stable)?$";
+        "synodeb$";
         "synology-ds923$";
 };
 Unattended-Upgrade::Automatic-Reboot "false";

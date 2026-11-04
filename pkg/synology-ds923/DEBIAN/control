@@ -1,21 +1,11 @@
 Package: synology-ds923
-Version: 3.5
+Version: 4.0
 Architecture: all
 Maintainer: Marco Ziliani <508111+rylos@users.noreply.github.com>
-Depends: linux-image-ds923-longterm | linux-image-ds923-stable | linux-image-ds923, python3 (>= 3.11), hdparm, nvme-cli, ethtool, util-linux, iproute2, initramfs-tools, systemd, coreutils, xz-utils, mawk | gawk
-Conflicts: systemd-boot
-Recommends: nut-server, nut-client, nftables, smartmontools, lm-sensors, mdadm, lvm2, cryptsetup-bin, btrfs-progs, zstd, curl, msmtp, unattended-upgrades
-Section: admin
+Depends: synodeb (>= 4.0)
+Section: oldlibs
 Priority: optional
 Homepage: https://github.com/rylos/synodeb
-Description: Debian on the Synology DS923+: hardware support
- The platform drivers (bay power with DSM-style staggered spin-up and hot-plug,
- USB VBUS, fan hwmon, ATmega1608 disk LEDs, S-35390A RTC) are built into the
- synodeb kernel (linux-image-ds923-longterm or linux-image-ds923-stable). This package adds synohwd, the daemon for the
- front-panel microcontroller (fans, LEDs, buttons, beeper, power-on after an
- AC loss, scheduled power-on), udev and systemd configuration, the hardware
- watchdog, the DSM NVMe power limit, synodeb-dom (kernel and boot entries on
- the Synology DOM, with automatic fallback to the previous kernel),
- notifications (e-mail, Telegram, ntfy) for SMART, RAID, fans, shutdowns and
- failed units, UPS support with NUT and a DSM-like Safe Mode (synodeb-ups),
- and synodeb-dsm to read DSM data volumes read-only.
+Description: transitional package for synodeb
+ The hardware support package of synodeb is now called synodeb. This package
+ can be removed.

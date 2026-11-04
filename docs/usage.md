@@ -66,6 +66,6 @@ extensions), e.g. to copy the data to the new Debian volumes.
 
 ## Updates
 
-Debian's own security updates are installed automatically. The kernel and the `synology-ds923`
+Debian's own security updates are installed automatically. The kernel and the `synodeb`
 package come from the synodeb apt repository and are updated with
 `sudo apt update && sudo apt full-upgrade`, then a reboot. See [kernel](kernel.md).

@@ -27,8 +27,8 @@ jobs:
 
       - name: Packaged synohwd is synohwd/synohwd.py
         run: |
-          cmp synohwd/synohwd.py pkg/synology-ds923/usr/sbin/synohwd ||
-              { echo "pkg/synology-ds923/usr/sbin/synohwd differs from synohwd/synohwd.py: copy it" >&2; exit 1; }
+          cmp synohwd/synohwd.py pkg/synodeb/usr/sbin/synohwd ||
+              { echo "pkg/synodeb/usr/sbin/synohwd differs from synohwd/synohwd.py: copy it" >&2; exit 1; }
 
       - name: Board files (boards/*.conf) and their copy in synodeb-setup.sh
         run: |

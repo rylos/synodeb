@@ -1,17 +1,13 @@
 #!/bin/sh
 set -e
+# transitional package (synodeb >= 4.0): drop the conffiles of the old versions. Those removed
+# in 3.0, and those synodeb 4.0 renamed (a locally changed one is kept as <name>.dpkg-bak)
 for f in /etc/systemd/journald.conf.d/synodeb-volatile.conf /etc/systemd/system/synodeb-journal-archive.service \
          /etc/systemd/system/synodeb-journal-archive-shutdown.service /etc/systemd/system/synodeb-journal-archive.timer \
          /etc/initramfs-tools/scripts/init-premount/synodeb-rootcheck /etc/initramfs-tools/scripts/init-top/synodeb-bootlog; do
     dpkg-maintscript-helper rm_conffile "$f" 3.0~ synology-ds923 -- "$@"
 done
-if [ "$1" = purge ]; then
-    rm -f /var/lib/synodeb/nut-setup /var/lib/synodeb/removed
-    rmdir /var/lib/synodeb 2>/dev/null || true
-    # written by 'synodeb-ups setup' for NETWORK_CLIENTS: kept, so that upsd (still listening
-    # on the network per /etc/nut/upsd.conf) does not start without its firewall
-    if [ -f /etc/systemd/system/nut-server.service.d/synodeb-network-clients.conf ]; then
-        echo "synology-ds923: nut-server.service.d/synodeb-network-clients.conf kept: fix the LISTEN" \
-             "lines in /etc/nut/upsd.conf, then remove it" >&2
-    fi
-fi
+for f in /etc/modprobe.d/synology-ds923.conf /etc/modules-load.d/synology-ds923.conf \
+         /etc/initramfs-tools/hooks/synology-ds923 /etc/udev/rules.d/60-synology-ds923.rules; do
+    dpkg-maintscript-helper rm_conffile "$f" 4.0~ synology-ds923 -- "$@"
+done

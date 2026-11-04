@@ -10,7 +10,7 @@ IgnoreOnIsolate=yes
 
 [Service]
 Type=simple
-# /dev/synology-up (udev, 60-synology-ds923.rules) may come a moment after the unit starts:
+# /dev/synology-up (udev, 60-synodeb.rules) may come a moment after the unit starts:
 # wait up to 10 s. Not a device dependency: on a machine without it that would hold the boot
 # for the device job timeout
 ExecStartPre=/bin/sh -c 'i=0; while [ ! -c /dev/synology-up ] && [ $$i -lt 50 ]; do sleep 0.2; i=$$((i + 1)); done; [ -c /dev/synology-up ]'

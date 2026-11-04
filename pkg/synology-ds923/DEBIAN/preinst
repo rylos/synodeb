@@ -1,10 +1,16 @@
 #!/bin/sh
 set -e
+# transitional package (synodeb >= 4.0): drop the conffiles of the old versions. Those removed
+# in 3.0, and those synodeb 4.0 renamed (a locally changed one is kept as <name>.dpkg-bak)
 for f in /etc/systemd/journald.conf.d/synodeb-volatile.conf /etc/systemd/system/synodeb-journal-archive.service \
          /etc/systemd/system/synodeb-journal-archive-shutdown.service /etc/systemd/system/synodeb-journal-archive.timer \
          /etc/initramfs-tools/scripts/init-premount/synodeb-rootcheck /etc/initramfs-tools/scripts/init-top/synodeb-bootlog; do
     dpkg-maintscript-helper rm_conffile "$f" 3.0~ synology-ds923 -- "$@"
 done
-if [ "$1" = upgrade ] && [ -d /run/systemd/system ]; then
+for f in /etc/modprobe.d/synology-ds923.conf /etc/modules-load.d/synology-ds923.conf \
+         /etc/initramfs-tools/hooks/synology-ds923 /etc/udev/rules.d/60-synology-ds923.rules; do
+    dpkg-maintscript-helper rm_conffile "$f" 4.0~ synology-ds923 -- "$@"
+done
+if [ "$1" = upgrade ] && [ -d /run/systemd/system ] && dpkg --compare-versions "${2:-}" lt 3.0~; then
     systemctl disable --now synodeb-journal-archive.timer synodeb-journal-archive-shutdown.service >/dev/null 2>&1 || true
 fi

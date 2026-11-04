@@ -42,7 +42,7 @@ body:
         ```
         wrote ./synodeb-report-20261031-1758.txt (1470 lines). Please read it before attaching.
         ===== uname -a
-        Linux HOST 6.18.60-3-ds923 #3 SMP PREEMPT_DYNAMIC Sat Oct 31 11:36:05 UTC 2026 x86_64 GNU/Linux
+        Linux HOST 6.18.60-7-synodeb #7 SMP PREEMPT_DYNAMIC Sat Oct 31 11:36:05 UTC 2026 x86_64 GNU/Linux
         ===== lspci -nn
         ===== dmesg | grep -iE 'ahci|ata[0-9]+...|Port Multiplier|...'
         ...

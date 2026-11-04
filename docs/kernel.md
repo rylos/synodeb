@@ -3,8 +3,10 @@
 The kernel is a kernel.org release with Debian's configuration of that branch and the synodeb
 drivers for the supported models. One kernel package serves every model.
 
-The packages are named after the first supported model (`linux-image-ds923*`,
-`synology-ds923`): the names stay as they are, so that existing systems keep updating.
+Until November 2026 the packages were named after the first supported model:
+`linux-image-ds923*` and `synology-ds923`, kernels `<version>-ds923`. Those names are now
+transitional packages: `sudo apt full-upgrade` moves an existing system to the `synodeb` names
+by itself, and the transitional packages can be removed afterwards.
 
 ## Series
 
@@ -12,12 +14,12 @@ There are two, named as on [kernel.org](https://www.kernel.org/category/releases
 
 | metapackage | series | |
 |---|---|---|
-| `linux-image-ds923-longterm` | longterm (6.18.y), projected end of life December 2028 | **default**, also installed as `linux-image-ds923` |
-| `linux-image-ds923-stable` | the newest stable branch (7.3.y, then 7.4.y…) | newer features, each branch maintained for a few months only |
+| `linux-image-synodeb-longterm` | longterm (6.18.y), projected end of life December 2028 | **default**, also installed as `linux-image-synodeb` |
+| `linux-image-synodeb-stable` | the newest stable branch (7.3.y, then 7.4.y…) | newer features, each branch maintained for a few months only |
 
-To follow the stable series: `sudo apt install linux-image-ds923-stable` (plus
-`linux-headers-ds923-stable` if you build modules). With both installed, the DOM boots the
-newest stable kernel; remove `linux-image-ds923-stable` to go back to longterm.
+To follow the stable series: `sudo apt install linux-image-synodeb-stable` (plus
+`linux-headers-synodeb-stable` if you build modules). With both installed, the DOM boots the
+newest stable kernel; remove `linux-image-synodeb-stable` to go back to longterm.
 
 ## Updates
 
@@ -32,7 +34,7 @@ thousands of updates.
 
 ## Headers and modules
 
-For DKMS modules install `linux-headers-ds923` (or `linux-headers-ds923-stable`): it follows the
+For DKMS modules install `linux-headers-synodeb` (or `linux-headers-synodeb-stable`): it follows the
 kernel of its series. Module signatures are checked but not enforced, so locally built modules
 load. ZFS (`zfs-dkms`) works with the longterm series only, until OpenZFS supports the newest
 stable branch.

@@ -1,8 +1,8 @@
 #!/bin/sh
 # synodeb installer, preseed/late_command: turns the freshly installed Debian into a
-# DS923+ system and points the DOM at it.
+# synodeb system and points the DOM at it.
 #  1. synodeb apt repository (signed) and the Debian kernel pin;
-#  2. linux-image-ds923 + synology-ds923 (+ openssh-server; firmware-realtek if a Realtek
+#  2. linux-image-synodeb + synodeb (+ openssh-server; firmware-realtek if a Realtek
 #     NIC asked for its firmware);
 #  3. mdadm.conf: this system's arrays + "AUTO -all" (arrays of other systems, such as
 #     DSM's, are never assembled), then a new initramfs;
@@ -47,12 +47,12 @@ for m in dev proc sys run; do
     grep -q " $T/$m " /proc/mounts || { mount --bind /$m $T/$m && bound="$T/$m $bound"; }
 done
 
-step "installing the kernel and synology-ds923"
+step "installing the kernel and synodeb"
 chroot_run apt-get update >> $LOG 2>&1 || fail "apt-get update"
 # --force-confold: the apt source written above stays (it may point to another repository)
 chroot_run apt-get -y -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold \
-    install linux-image-ds923 synology-ds923 openssh-server >> $LOG 2>&1 ||
-    fail "installing linux-image-ds923 synology-ds923"
+    install linux-image-synodeb synodeb openssh-server >> $LOG 2>&1 ||
+    fail "installing linux-image-synodeb synodeb"
 # firmware the kernel asked for and did not find (Realtek NICs of the DS920+: they work
 # without it). Debian's non-free-firmware component, enabled by the installer, has it.
 if dmesg 2>/dev/null | grep -q 'firmware rtl_nic/'; then

@@ -1,8 +1,8 @@
 #!/bin/sh
 # Prints the two kernels the DOM boots: "<DEBIAN> <DEBIAN_OLD>" (uname -r of each), chosen
 # among the kernels in /boot.
-#  - DEBIAN: the newest kernel of the series the system follows. linux-image-ds923-stable
-#    installed: the newest kernel of all; otherwise linux-image-ds923-longterm installed: the
+#  - DEBIAN: the newest kernel of the series the system follows. linux-image-synodeb-stable
+#    installed: the newest kernel of all; otherwise linux-image-synodeb-longterm installed: the
 #    newest kernel of its branch (e.g. 6.18), even when a newer series is still installed;
 #    neither: the newest kernel of all.
 #  - DEBIAN_OLD: the running kernel, which is known to boot; if DEBIAN is the running kernel
@@ -17,10 +17,15 @@ wanted() { # package: selected for install (also while dpkg is still unpacking i
 }
 branch() { echo "$1" | cut -d. -f1,2; }
 br=
-if ! wanted linux-image-ds923-stable && wanted linux-image-ds923-longterm; then
-    dep=$(dpkg-query -W -f='${Depends}' linux-image-ds923-longterm 2>/dev/null |
-        sed -n 's/^linux-image-\([0-9][^ ,]*\).*/\1/p')
-    [ -n "$dep" ] && br=$(branch "$dep")
+# (the metapackages were called linux-image-ds923-<series> before 6.18.60-7 / 7.3.1-7: a
+# system that has not moved to the new names yet still has those)
+if ! wanted linux-image-synodeb-stable && ! wanted linux-image-ds923-stable; then
+    for m in linux-image-synodeb-longterm linux-image-ds923-longterm; do
+        wanted $m || continue
+        dep=$(dpkg-query -W -f='${Depends}' $m 2>/dev/null |
+            sed -n 's/^linux-image-\([0-9][^ ,]*\).*/\1/p')
+        [ -n "$dep" ] && { br=$(branch "$dep"); break; }
+    done
 fi
 new=
 [ -n "$br" ] && new=$(echo "$kernels" | while read -r k; do

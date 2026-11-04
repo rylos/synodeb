@@ -181,7 +181,7 @@ jobs:
           KEY: ${{ secrets.SYNODEB_SIGNING_KEY }}
           GH_TOKEN: ${{ github.token }}
         run: |
-          # publish.sh dates synology-ds923 from the git history of main
+          # publish.sh dates the packages in pkg/ from the git history of main
           git fetch -q --unshallow origin main
           mv ../src/build/out build/out
           V=kernel/$SERIES/VERSION

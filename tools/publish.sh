@@ -1,16 +1,18 @@
 #!/bin/bash
 # Builds the GitHub Pages tree in build/pages (branch gh-pages):
 #   debian/      signed apt repository (trixie main): kernels and metapackages of both series
-#                (longterm, stable), synology-ds923
+#                (longterm, stable), synodeb, and the transitional packages of the old names
+#                (synology-ds923, linux-image-ds923*)
 #   installer/<kernel release>/   vmlinuz, installer.img, SHA256SUMS, VERSION
 #   synodeb-archive.asc           public key of the repository
 # and writes the installer checksums into synodeb-setup.sh.
 # SERIES=longterm (default) or stable: the kernel series whose packages in build/out are
 # added; the other series stays as it is in the repository. The installer runs the longterm
 # kernel, so it is published only with SERIES=longterm.
-# synology-ds923 is built from the committed tree (git archive HEAD), never from the working
-# tree: a version already in the repository is kept if its content is the same, and refused
-# if it differs (bump Version in pkg/synology-ds923/DEBIAN/control).
+# The packages in pkg/ (synodeb, and synology-ds923, now transitional) are built from the
+# committed tree (git archive HEAD), never from the working tree: a version already in the
+# repository is kept if its content is the same, and refused if it differs (bump Version in
+# pkg/<package>/DEBIAN/control).
 # Runs on the host; the repository is built in a debian:trixie container. The signing key is
 # in $SYNODEB_GNUPG (default ~/.local/share/synodeb/gnupg), never in the project.
 # SYNODEB_KEY: fingerprint of the signing key (default: the synodeb archive key; another key
@@ -40,20 +42,26 @@ if [ -n "$(find "$OUT" ! -type f ! -type d -print -quit)" ]; then
     exit 1
 fi
 
-# synology-ds923 from the committed tree: content, file modes and dates depend only on the
-# commit, so the same version always gives the same package
-PKG=pkg/synology-ds923
+# the packages in pkg/ from the committed tree: content, file modes and dates depend only on
+# the commit, so the same version always gives the same package
 [ "$(git -C "$ROOT" rev-parse --is-shallow-repository)" = false ] ||
     { echo "shallow clone: the package dates come from the git history (git fetch --unshallow)" >&2; exit 1; }
-[ -z "$(git -C "$ROOT" status --porcelain -- "$PKG")" ] ||
-    echo "note: uncommitted changes in $PKG are not published" >&2
-PKGVER=$(git -C "$ROOT" show "HEAD:$PKG/DEBIAN/control" | sed -n 's/^Version: //p')
-PKGCOMMIT=$(git -C "$ROOT" log -1 --format=%H HEAD -- "$PKG")
-PKGEPOCH=$(git -C "$ROOT" log -1 --format=%ct HEAD -- "$PKG")
-PKGYEARS=$(git -C "$ROOT" log --reverse --format=%ad --date=format:%Y HEAD -- "$PKG" | sed -n 1p)
-[ "$PKGYEARS" = "$(date -u -d "@$PKGEPOCH" +%Y)" ] || PKGYEARS=$PKGYEARS-$(date -u -d "@$PKGEPOCH" +%Y)
+PKGS="synodeb synology-ds923"
+PKGINFO=
 mkdir -p "$ROOT/build"
-git -C "$ROOT" -c tar.umask=022 archive --format=tar -o "$ROOT/build/synology-ds923.tar" HEAD "$PKG"
+for p in $PKGS; do
+    PKG=pkg/$p
+    [ -z "$(git -C "$ROOT" status --porcelain -- "$PKG")" ] ||
+        echo "note: uncommitted changes in $PKG are not published" >&2
+    ver=$(git -C "$ROOT" show "HEAD:$PKG/DEBIAN/control" | sed -n 's/^Version: //p')
+    commit=$(git -C "$ROOT" log -1 --format=%H HEAD -- "$PKG")
+    epoch=$(git -C "$ROOT" log -1 --format=%ct HEAD -- "$PKG")
+    years=$(git -C "$ROOT" log --reverse --format=%ad --date=format:%Y HEAD -- "$PKG" | sed -n 1p)
+    [ "$years" = "$(date -u -d "@$epoch" +%Y)" ] || years=$years-$(date -u -d "@$epoch" +%Y)
+    git -C "$ROOT" -c tar.umask=022 archive --format=tar -o "$ROOT/build/pkg-$p.tar" HEAD "$PKG"
+    PKGINFO="$PKGINFO$p $ver $commit $epoch $years
+"
+done
 
 # shellcheck disable=SC2016  # the script runs in the container
 SCRIPT='
@@ -66,15 +74,23 @@ export GNUPGHOME=/tmp/gnupg
 cp -a /gnupg $GNUPGHOME; find $GNUPGHOME -type s -delete; chown -R root:root $GNUPGHOME; chmod 700 $GNUPGHOME
 gpg --batch -q --list-secret-keys "$KEY" >/dev/null || { echo "signing key $KEY not found" >&2; exit 1; }
 
-# synology-ds923
+# the packages in pkg/
+# what makes a package: control files, file list with modes and owners, file contents
+debsum() {
+    dpkg-deb --ctrl-tarfile "$1" | tar -xO
+    dpkg-deb --fsys-tarfile "$1" | tar -tv | awk "{ \$4 = \$5 = \"\"; print }"
+    dpkg-deb --fsys-tarfile "$1" | tar -xO | md5sum
+}
+echo "$PKGINFO" | while read -r NAME PKGVER PKGCOMMIT PKGEPOCH PKGYEARS; do
+[ -n "$NAME" ] || continue
 export SOURCE_DATE_EPOCH=$PKGEPOCH
-B=/tmp/pkg; mkdir $B
-tar -xf /work/build/synology-ds923.tar -C $B --strip-components=2
+B=/tmp/pkg-$NAME; mkdir $B
+tar -xf /work/build/pkg-$NAME.tar -C $B --strip-components=2
 find $B -type d -exec chmod 0755 {} +
 find $B -type f -perm /111 -exec chmod 0755 {} +
 find $B -type f ! -perm /111 -exec chmod 0644 {} +
-chmod 0600 $B/etc/synodeb/notify.conf        # may hold tokens and passwords
-D=$B/usr/share/doc/synology-ds923
+[ ! -f $B/etc/synodeb/notify.conf ] || chmod 0600 $B/etc/synodeb/notify.conf   # may hold tokens and passwords
+D=$B/usr/share/doc/$NAME
 mkdir -p $D
 cat > $D/copyright <<EOF
 Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
@@ -97,10 +113,10 @@ License: GPL-2
 EOF
 maint=$(sed -n "s/^Maintainer: //p" $B/DEBIAN/control)
 {
-    echo "synology-ds923 ($PKGVER) trixie; urgency=medium"
+    echo "$NAME ($PKGVER) trixie; urgency=medium"
     echo
     echo "  * Built from commit $PKGCOMMIT"
-    echo "    (https://github.com/rylos/synodeb/commits/$PKGCOMMIT/pkg/synology-ds923)."
+    echo "    (https://github.com/rylos/synodeb/commits/$PKGCOMMIT/pkg/$NAME)."
     echo
     echo " -- $maint  $(date -u -R -d @$PKGEPOCH)"
 } | gzip -9n > $D/changelog.gz
@@ -108,33 +124,29 @@ chmod 0644 $D/copyright $D/changelog.gz
 (cd $B && find . -path ./DEBIAN -prune -o -type f -printf "%P\0" | LC_ALL=C sort -z | xargs -0 md5sum) > $B/DEBIAN/md5sums
 chmod 0644 $B/DEBIAN/md5sums
 find $B -exec touch -h -d @$PKGEPOCH {} +
-NEW=/work/build/out/synology-ds923_${PKGVER}_all.deb
+NEW=/work/build/out/${NAME}_${PKGVER}_all.deb
 dpkg-deb --root-owner-group -Zxz -b $B $NEW >/dev/null
-# what makes a package: control files, file list with modes and owners, file contents
-debsum() {
-    dpkg-deb --ctrl-tarfile "$1" | tar -xO
-    dpkg-deb --fsys-tarfile "$1" | tar -tv | awk "{ \$4 = \$5 = \"\"; print }"
-    dpkg-deb --fsys-tarfile "$1" | tar -xO | md5sum
-}
-OLD=$R/pool/main/synology-ds923_${PKGVER}_all.deb
+OLD=$R/pool/main/${NAME}_${PKGVER}_all.deb
 if [ -f $OLD ]; then
     if [ "$(debsum $OLD | md5sum)" = "$(debsum $NEW | md5sum)" ]; then
-        echo "synology-ds923 $PKGVER: already in the repository, unchanged"
+        echo "$NAME $PKGVER: already in the repository, unchanged"
     else
-        echo "synology-ds923 $PKGVER is already in the repository with a different content:" >&2
-        echo "bump Version in pkg/synology-ds923/DEBIAN/control" >&2
+        echo "$NAME $PKGVER is already in the repository with a different content:" >&2
+        echo "bump Version in pkg/$NAME/DEBIAN/control" >&2
         diff <(debsum $OLD) <(debsum $NEW) | head -n 20 >&2 || true
         exit 1
     fi
 else
     cp $NEW $R/pool/main/
 fi
+chown $HOSTUID:$HOSTUID $NEW
 unset SOURCE_DATE_EPOCH
+done
 
-# metapackages of this series: only the new version (linux-image-ds923 has an epoch, so the
-# file names do not sort by version)
-metas="linux-image-ds923-$SERIES linux-headers-ds923-$SERIES"
-[ "$SERIES" = longterm ] && metas="$metas linux-image-ds923 linux-headers-ds923"
+# metapackages of this series (and the transitional ones of the old names): only the new
+# version (linux-image-ds923 has an epoch, so the file names do not sort by version)
+metas="linux-image-synodeb-$SERIES linux-headers-synodeb-$SERIES linux-image-ds923-$SERIES linux-headers-ds923-$SERIES"
+[ "$SERIES" = longterm ] && metas="$metas linux-image-synodeb linux-headers-synodeb linux-image-ds923 linux-headers-ds923"
 for m in $metas; do
     rm -f $R/pool/main/${m}_*.deb
     cp /work/build/out/${m}_${KDEBVER}_amd64.deb $R/pool/main/
@@ -149,7 +161,7 @@ for b in $(ls $R/pool/main/linux-image-[0-9]*_amd64.deb | sed "s|.*/linux-image-
         rm -f $R/pool/main/linux-image-${v}_* $R/pool/main/linux-headers-${v}_*
     done
 done
-ls $R/pool/main/synology-ds923_*.deb | sort -V | head -n -2 | xargs -r rm -f
+for p in $PKGS; do ls $R/pool/main/${p}_*.deb | sort -V | head -n -2 | xargs -r rm -f; done
 
 cd $R
 apt-ftparchive packages pool > dists/trixie/main/binary-amd64/Packages
@@ -161,7 +173,7 @@ mv -f dists/trixie/Release dists/trixie/InRelease dists/trixie/Release.gpg /tmp/
 apt-ftparchive -o APT::FTPArchive::Release::Origin=synodeb -o APT::FTPArchive::Release::Label=synodeb \
     -o APT::FTPArchive::Release::Suite=trixie -o APT::FTPArchive::Release::Codename=trixie \
     -o APT::FTPArchive::Release::Architectures=amd64 -o APT::FTPArchive::Release::Components=main \
-    -o "APT::FTPArchive::Release::Description=synodeb: Debian on the Synology DS923+" \
+    -o "APT::FTPArchive::Release::Description=synodeb: Debian on Synology NAS" \
     release dists/trixie > /tmp/Release
 mv /tmp/Release dists/trixie/Release
 gpg --batch -q --yes --local-user "$KEY!" --clearsign -o dists/trixie/InRelease dists/trixie/Release
@@ -184,15 +196,15 @@ if [ "$SKIP_INSTALLER" != 1 ]; then
     done
 fi
 touch $P/.nojekyll
-chown -R $HOSTUID:$HOSTUID $P $NEW
+chown -R $HOSTUID:$HOSTUID $P
 '
-docker run --rm -v "$ROOT":/work -v "$GNUPG":/gnupg:ro -e KREL="$KREL" -e PKGVER="$PKGVER" \
-    -e PKGCOMMIT="$PKGCOMMIT" -e PKGEPOCH="$PKGEPOCH" -e PKGYEARS="$PKGYEARS" \
+docker run --rm -v "$ROOT":/work -v "$GNUPG":/gnupg:ro -e KREL="$KREL" \
+    -e PKGINFO="$PKGINFO" -e PKGS="$PKGS" \
     -e KEY="$KEY" -e ARCHIVE_KEY="$ARCHIVE_KEY" \
     -e PREV_INSTALLER="$(sed -n 's/^INSTALLER_DIR=//p' "$ROOT/synodeb-setup.sh")" \
     -e KDEBVER="$KPKGVER" -e SERIES="$SERIES" -e HOSTUID="$(id -u)" -e SKIP_INSTALLER="${SKIP_INSTALLER:-0}" \
     debian:trixie bash -euo pipefail -c "$SCRIPT"
-rm -f "$ROOT/build/synology-ds923.tar"
+for p in $PKGS; do rm -f "$ROOT/build/pkg-$p.tar"; done
 [ "${SKIP_INSTALLER:-0}" != 1 ] || exit 0
 # checksums of this installer in synodeb-setup.sh
 sv=$(sha256sum "$INST/vmlinuz" | cut -d' ' -f1)

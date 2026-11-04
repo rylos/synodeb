@@ -4,12 +4,12 @@
 /etc/default/synodeb
 /etc/initramfs/post-update.d/synodeb-dom
 /etc/initramfs-tools/conf.d/synodeb.conf
-/etc/initramfs-tools/hooks/synology-ds923
+/etc/initramfs-tools/hooks/synodeb
 /etc/initramfs-tools/scripts/init-premount/synodeb-trial
 /etc/kernel/postinst.d/zz-synodeb-boot-links
 /etc/kernel/postrm.d/zz-synodeb-boot-links
-/etc/modprobe.d/synology-ds923.conf
-/etc/modules-load.d/synology-ds923.conf
+/etc/modprobe.d/synodeb.conf
+/etc/modules-load.d/synodeb.conf
 /etc/smartmontools/run.d/50synodeb-notify
 /etc/synodeb/notify.conf
 /etc/synodeb/ups.conf
@@ -39,4 +39,4 @@
 /etc/systemd/system/systemd-networkd.socket.d/synodeb-ups.conf
 /etc/systemd/system/systemd-resolved.service.d/synodeb-ups.conf
 /etc/systemd/system/systemd-user-sessions.service.d/synodeb-ups.conf
-/etc/udev/rules.d/60-synology-ds923.rules
+/etc/udev/rules.d/60-synodeb.rules

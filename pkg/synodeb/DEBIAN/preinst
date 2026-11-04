@@ -1,0 +1,7 @@
+#!/bin/sh
+set -e
+# synodeb was called synology-ds923 until 3.5: installing over it (its configuration is
+# there) is an upgrade for postinst, which must not redo the first-install steps
+if [ "$1" = install ] && [ -e /etc/synohwd.toml ]; then
+    mkdir -p /var/lib/synodeb && : > /var/lib/synodeb/from-synology-ds923
+fi

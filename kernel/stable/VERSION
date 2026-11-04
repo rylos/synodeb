@@ -1,8 +1,9 @@
 # synodeb kernel, "stable" series: the newest x.y released on kernel.org (7.3, 7.3.1, ...).
 # KVER is the upstream version (kernel.org tarball name), ABI is bumped on every published
 # build, so the previous kernel stays installed next to the new one and serves as
-# DEBIAN_OLD on the DOM. The kernel is named <upstream x.y.z>-<ABI>-ds923 (e.g.
-# 7.3.0-1-ds923, package linux-image-7.3.0-1-ds923); metapackage linux-image-ds923-stable.
+# DEBIAN_OLD on the DOM. The kernel is named <upstream x.y.z>-<ABI>-synodeb (e.g.
+# 7.3.0-1-synodeb, package linux-image-7.3.0-1-synodeb); metapackage linux-image-synodeb-stable.
+# Until 6.18.60-6 and 7.3.1-6 the kernels were named -ds923.
 # .github/workflows/kernel.yml updates KVER and ABI when a new release of the series is out.
 # Moving to the next series (7.4) is done by hand: kernel/patches/<x.y> and
 # kernel/config-debian-<x.y> must exist for it.
@@ -13,5 +14,5 @@ ABI=6
 KMAJ=${KVER%%.*}; KMIN=${KVER#*.}; KMIN=${KMIN%%.*}
 KBRANCH=$KMAJ.$KMIN             # 7.3: kernel/patches/7.3, kernel/config-debian-7.3
 KUPS=$KVER; case $KUPS in *.*.*) ;; *) KUPS=$KUPS.0 ;; esac
-KREL=$KUPS-$ABI-ds923           # uname -r
+KREL=$KUPS-$ABI-synodeb         # uname -r
 KPKGVER=$KUPS-$ABI              # version of the .deb packages
