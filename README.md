@@ -305,8 +305,10 @@ adds it to the signed apt repository and commits the new `VERSION`. When kernel.
 branch (a new longterm, or the next stable x.y) it only warns: moving to it means porting the
 patches. It can also be started by hand (one series or both, rebuild with a new ABI, rebuild the
 installer, or build only). The workflow [`test`](.github/workflows/test.yml) runs on every push
-and pull request: the synohwd tests, a check that the packaged `synohwd` is the same as
-`synohwd/synohwd.py`, and shellcheck on the shell scripts.
+and pull request: the synohwd tests, the expansion-unit driver tests, a check that the packaged
+`synohwd` is the same as `synohwd/synohwd.py`, a check that the board files (`boards/*.conf`)
+match their copies in `synodeb-setup.sh` and in the package (`tools/sync-boards.py --check`), and
+shellcheck on the shell scripts.
 
 ## Known limitations
 
@@ -321,8 +323,9 @@ and pull request: the synohwd tests, a check that the packaged `synohwd` is the 
   `synology_eunit_9705.unconfirmed_writes=1`; please report the result in an issue.
 - The installer and the system are reached over the network only. The internal serial port
   shows the boot menu and the console, for debugging: see [docs/serial.md](docs/serial.md).
-- Only the DS923+ is supported. Support for more models is being planned in
-  [#7](https://github.com/rylos/synodeb/discussions/7).
+- Only the DS923+ is supported. The DS920+ works in tests but is still work in progress
+  (`synodeb-setup.sh install --experimental`, see [platforms/geminilake](platforms/geminilake/README.md));
+  support for more models is being planned in [#7](https://github.com/rylos/synodeb/discussions/7).
 
 ## Related projects
 

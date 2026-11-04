@@ -12,10 +12,22 @@ eSATA) and on the SoC AHCI (bays 3-4).
 Kernel:
 - `kernel/src/drivers/platform/x86/synology_ds923.c` (shared, table `ds920plus`): bay power
   (GPIO 20-23) and spin-up groups 2,1,1, bay presence (35-38, active low), USB VBUS (29, 30),
-  fan tachometers (39, 40), the RTC (the ACPI RTC35390 client is replaced by an s35390a one
-  with the INT1 alarm) and the microcontroller restart/power-off bytes on LPSS UART 0
+  fan tachometers (39, 40), the disk LED enable line (17, high at probe), the RTC (the ACPI
+  RTC35390 client is replaced by an s35390a one with the INT1 alarm), the microcontroller
+  restart/power-off bytes on LPSS UART 0, and the MAC addresses of both ports (the NICs come up
+  with a Realtek default address; the right ones are passed by the DOM boot loader in `macs=`)
 - `kernel/src` here: `drivers/leds/leds-synology-lp3943.c`, the disk LEDs (ACPI LED3943),
   Kconfig in `kernel/patches/<x.y>/*-leds-synology-lp3943.patch`
+
+Tested on a DS920+ with the 7.3 kernel: installation over SSH, boot from the DOM, network,
+bay power and presence, RTC, fan speed and the DS920+ fan curves, CPU and disk temperatures,
+power LED, disk LEDs, power-off, power and reset buttons. The microcontroller reports the power
+button only when it is held for about 3 seconds (as under DSM), the reset button on a short
+press; its id reply to `R` is not framed (`P...`, read by synohwd).
+
+The Realtek NICs ask for `rtl_nic/rtl8168h-2.fw` and work without it; the installer adds
+`firmware-realtek` (Debian non-free-firmware) when the kernel asked for it during the
+installation, on an existing system: `apt install firmware-realtek`.
 
 Not done yet: the DX517 on the eSATA port (the expansion-unit driver matches DMI vendor
 "Synology Inc.", this BIOS says "Synology"), the iGPU (the slim kernel has no DRM).
