@@ -1,6 +1,6 @@
 #!/bin/sh
 # synodeb-dom — the Debian side of the Synology DOM (the 128 MB USB flash module the
-# DS923+ firmware always boots). The Synology GRUB on synoboot1 loads the Debian kernel
+# firmware always boots). The Synology GRUB on synoboot1 loads the Debian kernel
 # and initrd from synoboot2:/synodeb; everything else lives on the data disks.
 #
 #   synodeb-dom sync               copy the current (and previous) kernel + initrd to the DOM
@@ -163,8 +163,13 @@ root_spec() {
 #  softlockup_panic=1   a kernel stuck in a soft lockup panics and reboots (panic=30)
 #                       instead of hanging: on a trial boot that is the fallback to DEBIAN_OLD
 #  raid=noautodetect    the kernel never assembles md arrays by itself (DSM's 0.90 md0/md1)
+#  vender /vender -s    the Synology GRUB adds sn= and macs= (from the DOM) to the command
+#                       line, as for DSM: the DS920+ NICs take their MAC addresses from it
 block() {
-    opts="root=$ROOT ro panic=30 softlockup_panic=1 raid=noautodetect console=tty0 console=uart8250,mmio32,0xfedc9000,115200n8${CMDLINE:+ $CMDLINE}"
+    # the kernel console of this model (board file); the DS923+ one if it cannot be read
+    console=$(/usr/lib/synodeb/board CONSOLE 2>/dev/null) ||
+        console="console=tty0 console=uart8250,mmio32,0xfedc9000,115200n8"
+    opts="root=$ROOT ro panic=30 softlockup_panic=1 raid=noautodetect $console${CMDLINE:+ $CMDLINE}"
     echo "$BEGIN (written by synodeb-dom setup; settings in $DEFAULTS)"
     for e in DEBIAN:vmlinuz:initrd.img DEBIAN_OLD:vmlinuz.old:initrd.img.old; do
         IFS=: read -r title k i <<EOT
@@ -173,6 +178,7 @@ EOT
         cat <<EOT
 menuentry "$title" {
         search --fs-uuid --no-floppy --set=root ${P2}
+        vender /vender -s
         linux /synodeb/$k $opts synodeb.entry=$title
         initrd /synodeb/$i
 }

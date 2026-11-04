@@ -30,6 +30,16 @@ jobs:
           cmp synohwd/synohwd.py pkg/synology-ds923/usr/sbin/synohwd ||
               { echo "pkg/synology-ds923/usr/sbin/synohwd differs from synohwd/synohwd.py: copy it" >&2; exit 1; }
 
+      - name: Board files (boards/*.conf) and their copy in synodeb-setup.sh
+        run: |
+          python3 -I tools/sync-boards.py --check
+          # the generated profiles load, and a wip model is marked as such
+          bash -c 'set -eu
+              eval "$(sed -n "/^### boards begin/,/^### boards end/p" synodeb-setup.sh)"
+              model_profile DS923+ && [ "$TIER" = supported ] && [ "$PLATFORM" = r1000 ]
+              model_profile DS920+ && [ "$TIER" = wip ] && [ "$PLATFORM" = geminilake ]
+              ! model_profile DS218+'
+
       - name: Shell scripts
         run: |
           # every tracked file starting with a sh/bash shebang, plus lib.sh (sourced, no shebang)

@@ -1,5 +1,5 @@
 #!/bin/sh
-# synodeb installer, preseed/early_command. The DS923+ has no screen: the front panel
+# synodeb installer, preseed/early_command. The NAS has no screen: the front panel
 # tells what is going on and the DOM falls back to DSM unless the installation completes.
 #  - power LED on, status LED green blinking, fans at a fixed 50 %;
 #  - the DOM default goes back to the Synology entry right away, so any failure or reboot
@@ -9,7 +9,7 @@
 #  - the DOM is mounted read-only on /hd-media, so the partitioner does not offer it;
 #  - mdadm never assembles arrays found on the disks (DSM's included): only the ones
 #    created in the partitioner exist in the installer;
-#  - one long beep when SSH is ready; no SSH within 20 minutes (no network): three beeps
+#  - one long beep when SSH is ready; no SSH within 8 minutes (no network): three beeps
 #    and a reboot into DSM (five short beeps and no reboot if the DOM still boots the
 #    installer).
 # The background part must not keep any descriptor of the installer open (debconf talks on
@@ -33,7 +33,7 @@ printf '%s\n' '# synodeb installer: never assemble arrays found on the disks' 'A
     fi
     dom_protect
     i=0
-    while [ $i -lt 600 ]; do
+    while [ $i -lt 240 ]; do
         if pidof sshd >/dev/null 2>&1 || pidof sshd-session >/dev/null 2>&1; then
             log "SSH is ready"
             up 3
@@ -42,11 +42,11 @@ printf '%s\n' '# synodeb installer: never assemble arrays found on the disks' 'A
         sleep 2; i=$((i + 1))
     done
     if [ $dsm = 0 ]; then
-        log "no SSH after 20 minutes, the DOM still starts the installer: not rebooting"
+        log "no SSH after 8 minutes, the DOM still starts the installer: not rebooting"
         up 2 2 2 2 2
         exit 0
     fi
-    log "no SSH after 20 minutes: rebooting into DSM"
+    log "no SSH after 8 minutes: rebooting into DSM"
     up 3 2 3 2 3
     sleep 5
     reboot

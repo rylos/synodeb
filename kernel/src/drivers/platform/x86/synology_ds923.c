@@ -1,6 +1,16 @@
 // SPDX-License-Identifier: GPL-2.0
 /*
- * Synology DS923+ platform driver.
+ * Synology NAS platform driver (DS923+, and the models in ds923_dmi[]).
+ *
+ * The description below is that of the DS923+ (platform r1000). Other models
+ * differ in the GPIO chip and pins, the bay count, the spin-up groups, the I2C
+ * devices and the microcontroller UART: those are in a per-model table,
+ * selected by DMI (struct ds923_model). The DS920+ (platform geminilake) has
+ * its GPIOs on INT3453:00 (bay power 20-23, presence 35-38, USB VBUS 29/30,
+ * fan tachometers 39/40, disk LED enable 17), its RTC described in ACPI (RTC35390 on LPSS I2C 0)
+ * and its microcontroller on LPSS UART 0 (PCI 00:18.0). Its Realtek NICs
+ * carry no MAC address of their own: the Synology GRUB passes them on the
+ * command line (macs=, from "vender" on the DOM), and DSM's order is kept.
  *
  * Implements, following the DSM 7.4 GPL kernel sources and the model.dtb of
  * the DS923+ (platform "r1000", board "Bilby"), the parts of the hardware DSM
@@ -41,6 +51,7 @@
 #include <linux/dmi.h>
 #include <linux/gpio/consumer.h>
 #include <linux/gpio/machine.h>
+#include <linux/hex.h>
 #include <linux/hwmon.h>
 #include <linux/i2c.h>
 #include <linux/interrupt.h>
@@ -48,6 +59,10 @@
 #include <linux/jiffies.h>
 #include <linux/module.h>
 #include <linux/mutex.h>
+#include <linux/netdevice.h>
+#include <linux/etherdevice.h>
+#include <linux/pci.h>
+#include <linux/pm_runtime.h>
 #include <linux/platform_device.h>
 #include <linux/property.h>
 #include <linux/reboot.h>
@@ -55,24 +70,37 @@
 #include <linux/workqueue.h>
 
 #define DRV_NAME	"synology-ds923"
-#define NUM_BAYS	4
+#define MAX_BAYS	5
 #define NUM_USB		2
 #define NUM_FANS	2
-#define GPIO_CHIP	"AMDI0030:00"
-
-/* Microcontroller UART: dw-apb-uart, reg-shift 2, 48 MHz clock */
-#define UP_UART_BASE	0xfedca000
-#define UP_UART_SIZE	0x100
-#define UP_UART_CLK	48000000
 #define UP_UART_BAUD	9600	/* the microcontroller only answers at 9600 */
+
+/* r1000: microcontroller on AMDI0020:01, dw-apb-uart, reg-shift 2, 48 MHz clock */
+#define AMD_UP_BASE	0xfedca000
+#define AMD_UP_SIZE	0x100
+#define AMD_UP_CLK	48000000
+
+/*
+ * geminilake: microcontroller on LPSS UART 0 (PCI 00:18.0), 16550 registers
+ * with reg-shift 2 in BAR 0 and the LPSS private registers at 0x200. Its
+ * 100 MHz clock goes through an M/N divider: 100 MHz * 576 / 31250 is
+ * 1.8432 MHz, divisor 12 for 9600 baud.
+ */
+#define LPSS_UP_DEVFN	PCI_DEVFN(0x18, 0)
+#define LPSS_PRIV	0x200
+#define LPSS_CLOCK	(LPSS_PRIV + 0x00)	/* bit 0 enable, M 1-15, N 16-30, bit 31 update */
+#define LPSS_RESETS	(LPSS_PRIV + 0x04)	/* bits 0-1: out of reset */
+#define LPSS_UP_M	576
+#define LPSS_UP_N	31250
+#define LPSS_UP_CLK	1843200
 
 static bool force;
 module_param(force, bool, 0444);
-MODULE_PARM_DESC(force, "Load even if DMI does not report a Synology DS923+");
+MODULE_PARM_DESC(force, "Load as a DS923+ even if DMI does not report a supported model");
 
-static char *spinup_groups = "2,1,1";
+static char *spinup_groups;
 module_param(spinup_groups, charp, 0444);
-MODULE_PARM_DESC(spinup_groups, "Bays powered together per spin-up group (DSM: 2,1,1)");
+MODULE_PARM_DESC(spinup_groups, "Bays powered together per spin-up group (default: the model's, DS923+ 2,1,1)");
 
 static unsigned int spinup_delay = 11;
 module_param(spinup_delay, uint, 0444);
@@ -111,24 +139,102 @@ static unsigned int fan_pulses = 2;
 module_param(fan_pulses, uint, 0444);
 MODULE_PARM_DESC(fan_pulses, "Tachometer pulses per fan revolution");
 
+#define AMD_GPIO	"AMDI0030:00"
+#define GLK_GPIO	"INT3453:00"	/* Gemini Lake community northwest (UID 1) */
+
 static struct gpiod_lookup_table ds923_gpios = {
 	.dev_id = DRV_NAME,
 	.table = {
-		GPIO_LOOKUP_IDX(GPIO_CHIP, 42, "usb-vbus", 0, GPIO_ACTIVE_HIGH),
-		GPIO_LOOKUP_IDX(GPIO_CHIP, 40, "usb-vbus", 1, GPIO_ACTIVE_HIGH),
-		GPIO_LOOKUP_IDX(GPIO_CHIP, 4, "power", 0, GPIO_ACTIVE_HIGH),
-		GPIO_LOOKUP_IDX(GPIO_CHIP, 5, "power", 1, GPIO_ACTIVE_HIGH),
-		GPIO_LOOKUP_IDX(GPIO_CHIP, 8, "power", 2, GPIO_ACTIVE_HIGH),
-		GPIO_LOOKUP_IDX(GPIO_CHIP, 9, "power", 3, GPIO_ACTIVE_HIGH),
-		GPIO_LOOKUP_IDX(GPIO_CHIP, 10, "present", 0, GPIO_ACTIVE_LOW),
-		GPIO_LOOKUP_IDX(GPIO_CHIP, 11, "present", 1, GPIO_ACTIVE_LOW),
-		GPIO_LOOKUP_IDX(GPIO_CHIP, 13, "present", 2, GPIO_ACTIVE_LOW),
-		GPIO_LOOKUP_IDX(GPIO_CHIP, 14, "present", 3, GPIO_ACTIVE_LOW),
-		GPIO_LOOKUP_IDX(GPIO_CHIP, 68, "fan-tach", 0, GPIO_ACTIVE_HIGH),
-		GPIO_LOOKUP_IDX(GPIO_CHIP, 69, "fan-tach", 1, GPIO_ACTIVE_HIGH),
+		GPIO_LOOKUP_IDX(AMD_GPIO, 42, "usb-vbus", 0, GPIO_ACTIVE_HIGH),
+		GPIO_LOOKUP_IDX(AMD_GPIO, 40, "usb-vbus", 1, GPIO_ACTIVE_HIGH),
+		GPIO_LOOKUP_IDX(AMD_GPIO, 4, "power", 0, GPIO_ACTIVE_HIGH),
+		GPIO_LOOKUP_IDX(AMD_GPIO, 5, "power", 1, GPIO_ACTIVE_HIGH),
+		GPIO_LOOKUP_IDX(AMD_GPIO, 8, "power", 2, GPIO_ACTIVE_HIGH),
+		GPIO_LOOKUP_IDX(AMD_GPIO, 9, "power", 3, GPIO_ACTIVE_HIGH),
+		GPIO_LOOKUP_IDX(AMD_GPIO, 10, "present", 0, GPIO_ACTIVE_LOW),
+		GPIO_LOOKUP_IDX(AMD_GPIO, 11, "present", 1, GPIO_ACTIVE_LOW),
+		GPIO_LOOKUP_IDX(AMD_GPIO, 13, "present", 2, GPIO_ACTIVE_LOW),
+		GPIO_LOOKUP_IDX(AMD_GPIO, 14, "present", 3, GPIO_ACTIVE_LOW),
+		GPIO_LOOKUP_IDX(AMD_GPIO, 68, "fan-tach", 0, GPIO_ACTIVE_HIGH),
+		GPIO_LOOKUP_IDX(AMD_GPIO, 69, "fan-tach", 1, GPIO_ACTIVE_HIGH),
 		{ }
 	},
 };
+
+/* DS920+ (model.dtb of DSM 7.4.1, pins checked under DSM with a disk in bay 1) */
+static struct gpiod_lookup_table ds920_gpios = {
+	.dev_id = DRV_NAME,
+	.table = {
+		GPIO_LOOKUP_IDX(GLK_GPIO, 29, "usb-vbus", 0, GPIO_ACTIVE_HIGH),
+		GPIO_LOOKUP_IDX(GLK_GPIO, 30, "usb-vbus", 1, GPIO_ACTIVE_HIGH),
+		GPIO_LOOKUP_IDX(GLK_GPIO, 20, "power", 0, GPIO_ACTIVE_HIGH),
+		GPIO_LOOKUP_IDX(GLK_GPIO, 21, "power", 1, GPIO_ACTIVE_HIGH),
+		GPIO_LOOKUP_IDX(GLK_GPIO, 22, "power", 2, GPIO_ACTIVE_HIGH),
+		GPIO_LOOKUP_IDX(GLK_GPIO, 23, "power", 3, GPIO_ACTIVE_HIGH),
+		GPIO_LOOKUP_IDX(GLK_GPIO, 35, "present", 0, GPIO_ACTIVE_LOW),
+		GPIO_LOOKUP_IDX(GLK_GPIO, 36, "present", 1, GPIO_ACTIVE_LOW),
+		GPIO_LOOKUP_IDX(GLK_GPIO, 37, "present", 2, GPIO_ACTIVE_LOW),
+		GPIO_LOOKUP_IDX(GLK_GPIO, 38, "present", 3, GPIO_ACTIVE_LOW),
+		GPIO_LOOKUP_IDX(GLK_GPIO, 39, "fan-tach", 0, GPIO_ACTIVE_HIGH),
+		GPIO_LOOKUP_IDX(GLK_GPIO, 40, "fan-tach", 1, GPIO_ACTIVE_HIGH),
+		/* DSM's disk_led_ctrl: the disk LEDs (LP3943) stay dark while it is low */
+		GPIO_LOOKUP_IDX(GLK_GPIO, 17, "disk-led-ctrl", 0, GPIO_ACTIVE_HIGH),
+		{ }
+	},
+};
+
+/* What differs between the models this driver supports. */
+enum ds923_up { UP_AMD, UP_LPSS };
+
+struct ds923_model {
+	const char *name;
+	unsigned int bays;		/* at most MAX_BAYS */
+	const char *spinup_groups;	/* DSM's spin-up groups */
+	struct gpiod_lookup_table *gpios;
+	const char *gpio_chip;		/* for messages */
+	/*
+	 * Where the S-35390A RTC is: an I2C adapter (by the ACPI HID/UID of its
+	 * controller) on which the client is created, or the HID of an ACPI
+	 * description of it, whose client is replaced by an "s35390a" one.
+	 */
+	const char *rtc_bus_hid, *rtc_bus_uid;
+	const char *rtc_acpi_hid;
+	bool atmega_leds;		/* ATmega1608 disk LED controller at 0x60 */
+	enum ds923_up up;		/* microcontroller UART */
+	/*
+	 * Onboard NICs without a MAC address of their own, in the order of
+	 * the macs= list (DSM's eth0, eth1): PCI device names.
+	 */
+	const char * const *nics;
+};
+
+static const struct ds923_model ds923plus = {
+	.name = "DS923+",
+	.bays = 4,
+	.spinup_groups = "2,1,1",
+	.gpios = &ds923_gpios,
+	.gpio_chip = AMD_GPIO,
+	.rtc_bus_hid = "AMDI0010", .rtc_bus_uid = "3",
+	.atmega_leds = true,
+	.up = UP_AMD,
+};
+
+/* DSM: eth0 (LAN 1) is 03:00.0, eth1 (LAN 2) is 02:00.0 */
+static const char * const ds920_nics[] = { "0000:03:00.0", "0000:02:00.0", NULL };
+
+static const struct ds923_model ds920plus = {
+	.name = "DS920+",
+	.bays = 4,
+	.spinup_groups = "2,1,1",
+	.gpios = &ds920_gpios,
+	.gpio_chip = GLK_GPIO,
+	.rtc_acpi_hid = "RTC35390",
+	.up = UP_LPSS,
+	.nics = ds920_nics,
+};
+
+/* the model found at init, used by probe and the I2C work */
+static const struct ds923_model *model;
 
 struct ds923_bay {
 	struct gpio_desc *power;
@@ -140,9 +246,11 @@ struct ds923_bay {
 
 struct ds923 {
 	struct device *dev;
-	struct ds923_bay bay[NUM_BAYS];
+	unsigned int nbays;
+	struct ds923_bay bay[MAX_BAYS];
 	struct gpio_desc *vbus[NUM_USB];
 	struct gpio_desc *tach[NUM_FANS];
+	struct gpio_desc *disk_led_ctrl;	/* optional */
 	atomic_t pulses[NUM_FANS];
 	long fan_rpm[NUM_FANS];
 	unsigned long fan_stamp;
@@ -151,6 +259,7 @@ struct ds923 {
 	struct mutex lock;		/* bay power and debounce state */
 	struct delayed_work poll;
 	void __iomem *up;
+	struct pci_dev *up_pci;		/* LPSS UART kept powered (UP_LPSS) */
 	struct notifier_block emergency_nb;
 };
 
@@ -184,30 +293,30 @@ static int bay_set_power(struct ds923 *ds, int bay, bool on)
 /* Same order and timing as DSM's ata_port_probe() spin-up groups. */
 static void ds923_spinup(struct ds923 *ds)
 {
-	unsigned int group[NUM_BAYS] = { 0 }, sum = 0;
+	unsigned int nbays = ds->nbays, group[MAX_BAYS] = { 0 }, sum = 0;
 	int ngroups = 0, bay = 0, g, i;
 	char *s, *buf, *tok;
 
-	buf = kstrdup(spinup_groups, GFP_KERNEL);
+	buf = kstrdup(spinup_groups ?: model->spinup_groups, GFP_KERNEL);
 	s = buf;
-	while (buf && (tok = strsep(&s, ",")) && ngroups < NUM_BAYS) {
+	while (buf && (tok = strsep(&s, ",")) && ngroups < nbays) {
 		unsigned int n;
 
 		if (kstrtouint(tok, 10, &n) || !n)
 			continue;
-		n = min_t(unsigned int, n, NUM_BAYS);
+		n = min_t(unsigned int, n, nbays);
 		group[ngroups++] = n;
 		sum += n;
 	}
 	kfree(buf);
 	/* bays beyond the configured groups: one more group, delayed like the others */
-	if (sum < NUM_BAYS)
-		group[ngroups++] = NUM_BAYS - sum;
+	if (sum < nbays)
+		group[ngroups++] = nbays - sum;
 
-	for (g = 0; g < ngroups && bay < NUM_BAYS; g++) {
+	for (g = 0; g < ngroups && bay < nbays; g++) {
 		bool powered_any = false;
 
-		for (i = 0; i < group[g] && bay < NUM_BAYS; i++, bay++) {
+		for (i = 0; i < group[g] && bay < nbays; i++, bay++) {
 			bool present = bay_present(ds, bay);
 
 			ds->bay[bay].state = present;
@@ -239,7 +348,7 @@ static void ds923_bays_poll(struct ds923 *ds)
 	int bay;
 
 	mutex_lock(&ds->lock);
-	for (bay = 0; bay < NUM_BAYS; bay++) {
+	for (bay = 0; bay < ds->nbays; bay++) {
 		struct ds923_bay *b = &ds->bay[bay];
 		bool present;
 
@@ -330,7 +439,8 @@ static void ds923_up_wait(void __iomem *p, u32 bit, unsigned int us)
  */
 static void ds923_up_write(struct ds923 *ds, u8 c)
 {
-	unsigned int div = DIV_ROUND_CLOSEST(UP_UART_CLK, 16 * UP_UART_BAUD);
+	unsigned int clk = model->up == UP_LPSS ? LPSS_UP_CLK : AMD_UP_CLK;
+	unsigned int div = DIV_ROUND_CLOSEST(clk, 16 * UP_UART_BAUD);
 	void __iomem *p = ds->up;
 
 	if (!p)
@@ -340,6 +450,13 @@ static void ds923_up_write(struct ds923 *ds, u8 c)
 	 * mid-character garbles it. A full 64-byte FIFO at 9600 is ~67 ms.
 	 */
 	ds923_up_wait(p, UART_LSR_TEMT, 100000);
+	if (model->up == UP_LPSS) {
+		u32 v = BIT(0) | (LPSS_UP_M << 1) | (LPSS_UP_N << 16);
+
+		writel(3, p + LPSS_RESETS);
+		writel(v, p + LPSS_CLOCK);
+		writel(v | BIT(31), p + LPSS_CLOCK);
+	}
 	writel(UART_LCR_DLAB | UART_LCR_WLEN8, p + (UART_LCR << 2));
 	writel(div & 0xff, p + (UART_DLL << 2));
 	writel(div >> 8, p + (UART_DLM << 2));
@@ -431,6 +548,7 @@ BAY_ATTRS(1);
 BAY_ATTRS(2);
 BAY_ATTRS(3);
 BAY_ATTRS(4);
+BAY_ATTRS(5);
 
 static int vbus_get(struct ds923 *ds, int port)
 {
@@ -501,10 +619,26 @@ static struct attribute *ds923_attrs[] = {
 	&dev_attr_bay2_power.attr, &dev_attr_bay2_present.attr,
 	&dev_attr_bay3_power.attr, &dev_attr_bay3_present.attr,
 	&dev_attr_bay4_power.attr, &dev_attr_bay4_present.attr,
+	&dev_attr_bay5_power.attr, &dev_attr_bay5_present.attr,
 	&dev_attr_usb_vbus.attr, &dev_attr_usb1_vbus.attr, &dev_attr_usb2_vbus.attr,
 	NULL
 };
-ATTRIBUTE_GROUPS(ds923);
+
+/* bayN_* only for the bays the model has */
+static umode_t ds923_attr_visible(struct kobject *kobj, struct attribute *attr, int n)
+{
+	struct ds923 *ds = dev_get_drvdata(kobj_to_dev(kobj));
+
+	if (!strncmp(attr->name, "bay", 3) && attr->name[3] - '1' >= ds->nbays)
+		return 0;
+	return attr->mode;
+}
+
+static const struct attribute_group ds923_group = {
+	.attrs = ds923_attrs,
+	.is_visible = ds923_attr_visible,
+};
+__ATTRIBUTE_GROUPS(ds923);
 
 /* ---------------------------------------------------------------- hwmon */
 
@@ -576,16 +710,41 @@ static const struct software_node ds923_rtc_swnode = {
 	.properties = ds923_rtc_props,
 };
 
-/* I2C bus AMDI0010 with _UID 3 carries the RTC and the LED controller. */
+/*
+ * r1000: the I2C bus AMDI0010 with _UID 3 carries the RTC and the LED
+ * controller, which the BIOS does not describe.
+ */
 static bool is_ds923_adapter(struct device *dev)
 {
 	struct i2c_adapter *adap = i2c_verify_adapter(dev);
 	struct acpi_device *adev;
 
-	if (!adap || !adap->dev.parent)
+	if (!model->rtc_bus_hid || !adap || !adap->dev.parent)
 		return false;
 	adev = ACPI_COMPANION(adap->dev.parent);
-	return adev && acpi_dev_hid_uid_match(adev, "AMDI0010", "3");
+	return adev && acpi_dev_hid_uid_match(adev, model->rtc_bus_hid, model->rtc_bus_uid);
+}
+
+/*
+ * geminilake: the BIOS describes the RTC in ACPI (RTC35390), but no RTC
+ * driver knows that ID, and the S-35390A INT1 pin needs a property. The
+ * ACPI client is an empty shell: it is replaced by an "s35390a" client at
+ * the same address, with the property.
+ */
+static bool is_rtc_acpi_client(struct device *dev)
+{
+	struct i2c_client *client = i2c_verify_client(dev);
+	struct acpi_device *adev;
+
+	if (!model->rtc_acpi_hid || !client || client->dev.driver)
+		return false;
+	adev = ACPI_COMPANION(&client->dev);
+	return adev && acpi_dev_hid_uid_match(adev, model->rtc_acpi_hid, NULL);
+}
+
+static int match_rtc_acpi_client(struct device *dev, const void *data)
+{
+	return is_rtc_acpi_client(dev);
 }
 
 static int match_adapter(struct device *dev, const void *data)
@@ -627,11 +786,27 @@ static void ds923_i2c_register(struct work_struct *work)
 	struct i2c_board_info leds = { I2C_BOARD_INFO("atmega1608", 0x60) };
 	struct device *dev;
 
+	dev = bus_find_device(&i2c_bus_type, NULL, NULL, match_rtc_acpi_client);
+	if (dev) {
+		struct i2c_client *client = i2c_verify_client(dev);
+		struct i2c_adapter *adap = i2c_get_adapter(i2c_adapter_id(client->adapter));
+
+		rtc.addr = client->addr;
+		if (adap)
+			i2c_unregister_device(client);
+		put_device(dev);
+		if (adap) {
+			ds923_i2c_add(adap, &rtc, "S-35390A RTC");
+			i2c_put_adapter(adap);
+		}
+	}
+
 	dev = bus_find_device(&i2c_bus_type, NULL, NULL, match_adapter);
 	if (!dev)
 		return;
 	ds923_i2c_add(i2c_verify_adapter(dev), &rtc, "S-35390A RTC");
-	ds923_i2c_add(i2c_verify_adapter(dev), &leds, "ATmega1608 LEDs");
+	if (model->atmega_leds)
+		ds923_i2c_add(i2c_verify_adapter(dev), &leds, "ATmega1608 LEDs");
 	put_device(dev);
 }
 
@@ -645,7 +820,8 @@ static DECLARE_WORK(ds923_i2c_work, ds923_i2c_register);
  */
 static int ds923_i2c_notify(struct notifier_block *nb, unsigned long action, void *data)
 {
-	if (action == BUS_NOTIFY_ADD_DEVICE && is_ds923_adapter(data))
+	if (action == BUS_NOTIFY_ADD_DEVICE &&
+	    (is_ds923_adapter(data) || is_rtc_acpi_client(data)))
 		schedule_work(&ds923_i2c_work);
 	return NOTIFY_DONE;
 }
@@ -654,7 +830,97 @@ static struct notifier_block ds923_i2c_nb = {
 	.notifier_call = ds923_i2c_notify,
 };
 
+/* ---------------------------------------------------------------- MAC addresses */
+
+#define MAX_NICS	4
+static u8 ds923_macs[MAX_NICS][ETH_ALEN];
+static unsigned int ds923_nmacs;
+
+/* macs=001132aabbcc,001132aabbcd: added by the Synology GRUB ("vender" command) */
+static int __init ds923_macs_setup(char *str)
+{
+	while (str && *str && ds923_nmacs < MAX_NICS) {
+		char *next = strchr(str, ',');
+
+		if (next)
+			*next++ = '\0';
+		if (strlen(str) == 2 * ETH_ALEN &&
+		    !hex2bin(ds923_macs[ds923_nmacs], str, ETH_ALEN) &&
+		    is_valid_ether_addr(ds923_macs[ds923_nmacs]))
+			ds923_nmacs++;
+		str = next;
+	}
+	return 1;
+}
+__setup("macs=", ds923_macs_setup);
+
+static int ds923_netdev_event(struct notifier_block *nb, unsigned long action, void *ptr)
+{
+	struct net_device *ndev = netdev_notifier_info_to_dev(ptr);
+	struct device *parent = ndev->dev.parent;
+	struct sockaddr_storage ss = { .ss_family = ndev->type };
+	unsigned int i;
+	int ret;
+
+	if (action != NETDEV_REGISTER || !parent || !dev_is_pci(parent))
+		return NOTIFY_DONE;
+	for (i = 0; model->nics[i] && i < ds923_nmacs; i++) {
+		if (strcmp(dev_name(parent), model->nics[i]))
+			continue;
+		memcpy(ss.__data, ds923_macs[i], ETH_ALEN);
+		ret = dev_set_mac_address(ndev, &ss, NULL);
+		if (ret)
+			pr_warn(DRV_NAME ": %s: MAC address from macs=: %d\n", ndev->name, ret);
+		else
+			pr_info(DRV_NAME ": %s (%s): MAC address %pM from macs=\n",
+				ndev->name, model->nics[i], ds923_macs[i]);
+		break;
+	}
+	return NOTIFY_DONE;
+}
+
+static struct notifier_block ds923_netdev_nb = {
+	.notifier_call = ds923_netdev_event,
+};
+
 /* ---------------------------------------------------------------- probe */
+
+static void ds923_up_release(void *data)
+{
+	struct pci_dev *pdev = data;
+
+	pm_runtime_put(&pdev->dev);
+	pci_dev_put(pdev);
+}
+
+/*
+ * Map the microcontroller UART for the polled writes at restart/power-off.
+ * The LPSS UART is a PCI device that runtime PM may power down when its tty
+ * is closed (as it is at power-off): it is kept powered from here on.
+ */
+static void ds923_up_map(struct ds923 *ds)
+{
+	struct pci_dev *up;
+
+	if (model->up == UP_AMD) {
+		ds->up = devm_ioremap(ds->dev, AMD_UP_BASE, AMD_UP_SIZE);
+	} else {
+		up = pci_get_domain_bus_and_slot(0, 0, LPSS_UP_DEVFN);
+		if (up && up->vendor == PCI_VENDOR_ID_INTEL &&
+		    pci_resource_len(up, 0) >= LPSS_PRIV + 0x10) {
+			pm_runtime_get_sync(&up->dev);
+			if (devm_add_action_or_reset(ds->dev, ds923_up_release, up))
+				return;
+			ds->up_pci = up;
+			ds->up = devm_ioremap(ds->dev, pci_resource_start(up, 0),
+					      LPSS_PRIV + 0x10);
+		} else {
+			pci_dev_put(up);
+		}
+	}
+	if (!ds->up)
+		dev_warn(ds->dev, "microcontroller UART not mapped\n");
+}
 
 static int ds923_probe(struct platform_device *pdev)
 {
@@ -667,6 +933,7 @@ static int ds923_probe(struct platform_device *pdev)
 	if (!ds)
 		return -ENOMEM;
 	ds->dev = dev;
+	ds->nbays = model->bays;
 	mutex_init(&ds->lock);
 	ds->last_power_on = jiffies - spinup_delay * HZ - 1;
 	platform_set_drvdata(pdev, ds);
@@ -676,7 +943,8 @@ static int ds923_probe(struct platform_device *pdev)
 		ds->vbus[i] = devm_gpiod_get_index(dev, "usb-vbus", i, GPIOD_ASIS);
 		/* pinctrl-amd not bound yet: come back later, never give up on USB */
 		if (PTR_ERR(ds->vbus[i]) == -EPROBE_DEFER)
-			return dev_err_probe(dev, -EPROBE_DEFER, "waiting for %s\n", GPIO_CHIP);
+			return dev_err_probe(dev, -EPROBE_DEFER, "waiting for %s\n",
+					     model->gpio_chip);
 		if (IS_ERR(ds->vbus[i])) {
 			dev_err(dev, "usb vbus gpio %d: %pe\n", i, ds->vbus[i]);
 			ds->vbus[i] = NULL;
@@ -689,7 +957,7 @@ static int ds923_probe(struct platform_device *pdev)
 		}
 	}
 
-	for (i = 0; i < NUM_BAYS; i++) {
+	for (i = 0; i < ds->nbays; i++) {
 		struct ds923_bay *b = &ds->bay[i];
 
 		b->present = devm_gpiod_get_index(dev, "present", i, GPIOD_IN);
@@ -709,6 +977,13 @@ static int ds923_probe(struct platform_device *pdev)
 			dev_err(dev, "bay %d power output: %d\n", i + 1, ret);
 			b->power = NULL;
 		}
+	}
+
+	/* models with a disk LED enable (DS920+): on, as DSM leaves it */
+	ds->disk_led_ctrl = devm_gpiod_get_optional(dev, "disk-led-ctrl", GPIOD_OUT_HIGH);
+	if (IS_ERR(ds->disk_led_ctrl)) {
+		dev_warn(dev, "disk LED enable gpio: %pe\n", ds->disk_led_ctrl);
+		ds->disk_led_ctrl = NULL;
 	}
 
 	for (i = 0; i < NUM_FANS; i++) {
@@ -733,9 +1008,7 @@ static int ds923_probe(struct platform_device *pdev)
 	}
 	ds->fan_stamp = jiffies;
 
-	ds->up = devm_ioremap(dev, UP_UART_BASE, UP_UART_SIZE);
-	if (!ds->up)
-		dev_warn(dev, "microcontroller UART not mapped\n");
+	ds923_up_map(ds);
 	/*
 	 * PRIO_DEFAULT: for the *_PREPARE chains any other priority must be unique, and
 	 * PRIO_PLATFORM is already taken on the DS923+ (-EBUSY).
@@ -760,7 +1033,7 @@ static int ds923_probe(struct platform_device *pdev)
 
 	INIT_DELAYED_WORK(&ds->poll, ds923_poll);
 	queue_delayed_work(system_freezable_wq, &ds->poll, msecs_to_jiffies(ds923_poll_ms()));
-	dev_info(dev, "Synology DS923+ platform ready\n");
+	dev_info(dev, "Synology %s platform ready\n", model->name);
 	return 0;
 }
 
@@ -781,7 +1054,7 @@ static void ds923_shutdown(struct platform_device *pdev)
 	if (system_state != SYSTEM_POWER_OFF)
 		return;
 	/* The disks are already stopped by sd_shutdown(). */
-	for (bay = 0; bay < NUM_BAYS; bay++) {
+	for (bay = 0; bay < ds->nbays; bay++) {
 		if (!bay_powered(ds, bay))
 			continue;
 		bay_set_power(ds, bay, false);
@@ -807,6 +1080,15 @@ static const struct dmi_system_id ds923_dmi[] = {
 			DMI_EXACT_MATCH(DMI_SYS_VENDOR, "Synology Inc."),
 			DMI_EXACT_MATCH(DMI_PRODUCT_NAME, "DS923+"),
 		},
+		.driver_data = (void *)&ds923plus,
+	},
+	{
+		/* this BIOS (M.412.00) says "Synology", not "Synology Inc." */
+		.matches = {
+			DMI_EXACT_MATCH(DMI_SYS_VENDOR, "Synology"),
+			DMI_EXACT_MATCH(DMI_PRODUCT_NAME, "DS920+"),
+		},
+		.driver_data = (void *)&ds920plus,
 	},
 	{ }
 };
@@ -815,11 +1097,18 @@ MODULE_DEVICE_TABLE(dmi, ds923_dmi);
 /* Built in only (Kconfig bool): there is no exit path. */
 static int __init ds923_init(void)
 {
+	const struct dmi_system_id *id = dmi_first_match(ds923_dmi);
 	struct platform_device *pdev;
 	int ret;
 
-	if (!dmi_check_system(ds923_dmi) && !force)
+	if (id)
+		model = id->driver_data;
+	else if (force)
+		model = &ds923plus;
+	else
 		return -ENODEV;
+	if (model->bays > MAX_BAYS)
+		return -EINVAL;
 
 	/*
 	 * The notifier stays registered for good, so the clients come back
@@ -833,7 +1122,14 @@ static int __init ds923_init(void)
 	schedule_work(&ds923_i2c_work);
 	flush_work(&ds923_i2c_work);
 
-	gpiod_add_lookup_table(&ds923_gpios);
+	/* NIC drivers are modules: their devices register long after this */
+	if (model->nics && ds923_nmacs) {
+		ret = register_netdevice_notifier(&ds923_netdev_nb);
+		if (ret)
+			pr_warn(DRV_NAME ": netdevice notifier: %d\n", ret);
+	}
+
+	gpiod_add_lookup_table(model->gpios);
 	ret = platform_driver_register(&ds923_driver);
 	if (ret)
 		goto err_table;
@@ -848,11 +1144,11 @@ static int __init ds923_init(void)
 err_drv:
 	platform_driver_unregister(&ds923_driver);
 err_table:
-	gpiod_remove_lookup_table(&ds923_gpios);
+	gpiod_remove_lookup_table(model->gpios);
 	return ret;
 }
 module_init(ds923_init);
 
 MODULE_AUTHOR("Marco Ziliani <508111+rylos@users.noreply.github.com>");
-MODULE_DESCRIPTION("Synology DS923+ platform: bays, USB VBUS, fans, RTC/LED devices, microcontroller shutdown");
+MODULE_DESCRIPTION("Synology NAS platform (DS923+, DS920+): bays, USB VBUS, fans, RTC/LED devices, microcontroller shutdown");
 MODULE_LICENSE("GPL");

@@ -71,6 +71,14 @@ f = Feed(); f.want("R"); f.bytes("+9ab").wait(0.6).bytes("a")
 check("truncated frame, then reset", (f.replies, f.events), ([], ["a"]))
 f = Feed(); f.bytes("+3abc")
 check("unsolicited '+'", f.events, list("+3abc"))
+f = Feed(); f.want("R"); f.bytes("P31_1_****11*1_d***", step=0.001).wait(0.2)
+check("unframed id (DS920+)", (f.replies, f.events), (["P31_1_****11*1_d***"], []))
+f = Feed(); f.want("R"); f.bytes("P31_1_0")
+check("unframed id ended by power '0'", (f.replies, f.events), (["P31_1_"], ["0"]))
+f = Feed(); f.want("R"); f.bytes("P31").wait(0.2).bytes("a")
+check("unframed id, then reset", (f.replies, f.events), (["P31"], ["a"]))
+f = Feed(); f.bytes("P0")
+check("unsolicited 'P': power not lost", f.events, ["P", "0"])
 
 # real reader on a pipe, MicroP without UART
 r, w = os.pipe()
@@ -179,6 +187,12 @@ with tempfile.TemporaryDirectory() as d:
     m.SYS_BLOCK = f"{d}/block"
     check("bay_disks", m.bay_disks(), {2: ("sda", 2), 3: ("sdb", 7), 4: ("sdc", 8)})
     check("bay_block_devices", m.bay_block_devices(), {2: "sda", 3: "sdb", 4: "sdc"})
+    check("model_bays DS923+", m.model_bays("DS923+"), m.MODEL_BAYS["DS923+"])
+    check("model_bays other model", m.model_bays("DS9999+"), m.MODEL_BAYS["DS923+"])
+    saved, m.BAYS = m.BAYS, m.model_bays("DS1522+")
+    check("bay_disks DS1522+", m.bay_disks(), {2: ("sda", 2), 4: ("sdb", 7), 5: ("sdc", 8)})
+    m.BAYS = saved
+
     # fake LEDs and presence
     m.LEDS, m.PLATFORM = f"{d}/leds", f"{d}/platform"
     os.makedirs(m.PLATFORM)
@@ -398,6 +412,47 @@ with tempfile.TemporaryDirectory() as d:
         except SystemExit as e:
             got = str(e)
         check(f"status with {content!r}", want in got, True)
+
+
+# DS920+: Marvell 88SE9235 (01:00.0 behind 00:13.0) ata3..ata6, SoC SATA (00:12.0) ata1, ata2
+with tempfile.TemporaryDirectory() as d:
+    mv = f"{d}/devices/pci0000:00/0000:00:13.0/0000:01:00.0"
+    soc = f"{d}/devices/pci0000:00/0000:00:12.0"
+    for c, ports in ((mv, (3, 4, 5, 6)), (soc, (1, 2))):
+        for n in ports:
+            os.makedirs(f"{c}/ata{n}/host{n}/target{n}:0:0/{n}:0:0:0")
+    os.makedirs(f"{d}/block")
+    # disks in bay 1 (Marvell port 1 = ata4), the eSATA port (ata6) and bay 4 (SoC port 1 = ata2)
+    for dev, c, n in (("sda", mv, 4), ("sdb", mv, 6), ("sdc", soc, 2)):
+        os.makedirs(f"{d}/block/{dev}")
+        os.symlink(f"{c}/ata{n}/host{n}/target{n}:0:0/{n}:0:0:0", f"{d}/block/{dev}/device")
+    saved_blk, saved, m.SYS_BLOCK, m.BAYS = m.SYS_BLOCK, m.BAYS, f"{d}/block", m.model_bays("DS920+")
+    check("bay_disks DS920+", m.bay_disks(), {1: ("sda", 4), 4: ("sdc", 2)})
+    m.SYS_BLOCK, m.BAYS = saved_blk, saved
+
+# --- fan curves per model ---
+check("fan tables DS923+", m.model_fan_tables("DS923+") is m.MODEL_FAN_TABLES.get("DS923+", m.model_fan_tables("x")), True)
+check("fan tables DS920+ low disk", m.model_fan_tables("DS920+")["low"]["disk"][0], (0, 20))
+for name, tables in [("DS923+", m.model_fan_tables("DS923+"))] + list(m.MODEL_FAN_TABLES.items()):
+    for mode, t in tables.items():
+        for k in ("disk", "nvme", "cpu", "nic"):
+            th = [x for x, _ in t[k]]
+            check(f"fan table {name} {mode} {k} ordered, below shutdown",
+                  th == sorted(th) and th[-1] < t[f"{k}_shutdown"], True)
+
+# --- CPU temperature on Intel (coretemp, DS920+): the package sensor ---
+with tempfile.TemporaryDirectory() as d:
+    real_by_name = m.hwmon_by_name
+    os.makedirs(f"{d}/coretemp")
+    for fn, v in {"temp1_input": "41000", "temp1_label": "Package id 0",
+                  "temp2_input": "45000", "temp2_label": "Core 0"}.items():
+        with open(f"{d}/coretemp/{fn}", "w") as fh:
+            fh.write(v)
+    m.hwmon_by_name = lambda n: [f"{d}/coretemp"] if n == "coretemp" else []
+    try:
+        check("sensors: coretemp package", m.sensors({})["cpu"], 41.0)
+    finally:
+        m.hwmon_by_name = real_by_name
 
 
 def test_all():

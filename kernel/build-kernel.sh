@@ -33,7 +33,8 @@ want=$(awk -v f="linux-$VER.tar.xz" '$2 == f { print $1 }' /work/build/sha256sum
 [ -n "$want" ] && [ "$(sha256sum "$TB" | cut -d' ' -f1)" = "$want" ] || { echo "$TB: wrong sha256" >&2; exit 1; }
 # Sources: a linux-$VER tree under git (commit "vanilla" = the tarball). The patches
 # (kernel/patches/<x.y>) are applied again only when they change, after resetting the files
-# they touch to vanilla; the new drivers (kernel/src) are copied only when different.
+# they touch to vanilla; the new drivers (kernel/src: shared; platforms/*/kernel/src: one
+# platform each) are copied only when different.
 # So make rebuilds only what changed. FULL=1 starts again from the tarball.
 export GIT_AUTHOR_NAME=synodeb GIT_AUTHOR_EMAIL=synodeb@localhost
 export GIT_COMMITTER_NAME=synodeb GIT_COMMITTER_EMAIL=synodeb@localhost
@@ -68,10 +69,14 @@ else
     echo "patches unchanged"
 fi
 rsync -rc --itemize-changes /work/kernel/src/ ./
+for d in /work/platforms/*/kernel/src; do
+    [ ! -d "$d" ] || rsync -rc --itemize-changes "$d/" ./
+done
 cp "$CONFIG" .config
 scripts/kconfig/merge_config.sh -m .config /work/kernel/ds923.config /work/kernel/ds923-slim.config
 make olddefconfig
 for o in SYNOLOGY_DS923=y LEDS_ATMEGA1608=m RTC_DRV_S35390A=y RTC_DRV_CMOS=m PINCTRL_AMD=y \
+         PINCTRL_GEMINILAKE=y MFD_INTEL_LPSS_PCI=y LEDS_SYNOLOGY_LP3943=m \
          SERIAL_8250_DW=y I2C_DESIGNWARE_PLATFORM=y EFI_VARS_PSTORE_DEFAULT_DISABLE=y \
          ATA_LEDS=y LEDS_TRIGGER_TIMER DEBUG_INFO_NONE \
          SYNOLOGY_EUNIT_9705=m SATA_PMP_VENDOR_EH=y; do

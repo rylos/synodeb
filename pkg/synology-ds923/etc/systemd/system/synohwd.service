@@ -1,9 +1,10 @@
 [Unit]
-Description=Synology DS923+ hardware daemon (fan, LEDs, buttons, beep)
+Description=Synology NAS hardware daemon (fan, LEDs, buttons, beep)
 After=systemd-modules-load.service systemd-udevd.service
 Wants=systemd-modules-load.service
-# microcontroller UART in the ACPI tables (absent in QEMU and on other machines)
-ConditionPathExists=/sys/bus/acpi/devices/AMDI0020:01
+# the synodeb platform driver bound to a supported model (DMI): absent in QEMU and on other
+# machines. Was the DS923+ microcontroller UART (ACPI AMDI0020:01), which the DS920+ has not.
+ConditionPathExists=/sys/devices/platform/synology-ds923
 # fans and LEDs also in UPS Safe Mode (synodeb-ups-safe.target)
 IgnoreOnIsolate=yes
 

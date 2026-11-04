@@ -1,10 +1,10 @@
 #!/usr/bin/python3 -I
-"""synohwd — Synology DS923+ hardware daemon for Debian.
+"""synohwd — Synology NAS hardware daemon for Debian (DS923+; DS920+ and DS1522+ wip).
 
-Takes over the hardware management DSM does on this model, using the front-panel
-microcontroller (uP) on the AMD UART at MMIO 0xFEDCA000 (AMDI0020:01) and the
-DS923+ drivers built into the synodeb kernel (synology_ds923,
-leds-atmega1608, rtc-s35390a).
+Takes over the hardware management DSM does, using the front-panel microcontroller
+(uP: on the DS923+ the AMD UART at MMIO 0xFEDCA000, AMDI0020:01; on the DS920+ LPSS
+UART 0, PCI 00:18.0; /dev/synology-up from the udev rules) and the drivers of the
+synodeb kernel (synology_ds923, leds-atmega1608 or leds-synology-lp3943, rtc-s35390a).
 
 uP protocol (9600 8N1, ASCII):
   host -> uP   '4' power LED on   '5' blink   '6' off
@@ -14,7 +14,7 @@ uP protocol (9600 8N1, ASCII):
                'D' read a current sensor -> reply 'D<digits>X'; '*' reads as '0'.
                    synohwd reports raw * 16.13 (unit unknown). It is NOT the fan
                    speed: the kernel measures that on GPIO 68/69.
-               'R' microP id  -> reply framed '+<n><n bytes>'
+               'R' microP id  -> reply framed '+<n><n bytes>' (DS923+) or 'P...' unframed (DS920+)
                't' / 'u' disable / enable fan-fail check
                'q' / 'p' power back on / stay off after an AC loss
                's' / 'r' enable / disable scheduled power-on (RTC alarm)
@@ -73,11 +73,14 @@ FAN_EVENT_HOLD = 60             # s a uP 'f'/'g' event keeps fan_fail set
 REPLY_TIMEOUT = 0.5             # s for a 'D' / '+' reply to complete
 D_MAX = 8                       # max digits in a 'D...X' reply
 FRAME_MAX = 16                  # max length of a '+' frame
+ID_MAX = 32                     # max length of an unframed 'R' reply (DS920+)
+ID_GAP = 0.1                    # s of silence that ends an unframed 'R' reply
 SEND_TRIES = 3                  # attempts for a uP write failing with EIO/EAGAIN
 NVME_CLASS = "/sys/class/nvme"
 
 # Same fan curves as DSM 7.4 for the DS923+, as
 # (threshold °C, duty %); the last threshold of each list is the shutdown one.
+# Other models: MODEL_FAN_TABLES.
 FAN_TABLES = {
     "high": {  # DSM "cool mode"
         "disk": [(0, 50), (41, 60), (46, 70), (50, 80), (53, 99)], "disk_shutdown": 61,
@@ -93,9 +96,37 @@ FAN_TABLES = {
     },
 }
 
-# Bay -> (PCI function of the SATA controller, port index) from model.dtb:
-# bays 1-2 on the JMB585 behind 00:01.5, bays 3-4 on the FCH SATA behind 00:08.2.
-BAYS = {1: ("00:01.5", 0), 2: ("00:01.5", 1), 3: ("00:08.2", 0), 4: ("00:08.2", 1)}
+# DS920+ (scemd.xml of DSM 7.4.1): DUAL_MODE_HIGH/LOW; no NIC sensor, so "nic" is the
+# DS923+ one (it never has a reading there).
+MODEL_FAN_TABLES = {
+    "DS920+": {
+        "high": {
+            "disk": [(0, 20), (41, 30), (46, 50), (51, 70), (53, 99)], "disk_shutdown": 61,
+            "nvme": [(0, 20), (51, 50), (60, 99)], "nvme_shutdown": 70,
+            "cpu": [(0, 20), (60, 50), (70, 99)], "cpu_shutdown": 90,
+            "nic": FAN_TABLES["high"]["nic"], "nic_shutdown": FAN_TABLES["high"]["nic_shutdown"],
+        },
+        "low": {
+            "disk": [(0, 20), (46, 30), (51, 50), (56, 70), (58, 99)], "disk_shutdown": 61,
+            "nvme": [(0, 20), (56, 50), (65, 99)], "nvme_shutdown": 70,
+            "cpu": [(0, 20), (65, 50), (75, 99)], "cpu_shutdown": 90,
+            "nic": FAN_TABLES["low"]["nic"], "nic_shutdown": FAN_TABLES["low"]["nic_shutdown"],
+        },
+    },
+}
+
+# Bay -> (PCI function of the SATA controller, port index), per model (DMI product name).
+MODEL_BAYS = {
+    # bays 1-2 on the JMB585 behind 00:01.5, bays 3-4 on the FCH SATA behind 00:08.2
+    "DS923+": {1: ("00:01.5", 0), 2: ("00:01.5", 1), 3: ("00:08.2", 0), 4: ("00:08.2", 1)},
+    # bays 1-3 on JMB585 ports 2, 1, 0, bays 4-5 on the FCH SATA
+    "DS1522+": {1: ("00:01.5", 2), 2: ("00:01.5", 1), 3: ("00:01.5", 0),
+                4: ("00:08.2", 0), 5: ("00:08.2", 1)},
+    # bays 1-2 on Marvell 88SE9235 ports 1, 2 (behind 00:13.0; port 3 is the eSATA),
+    # bays 3-4 on the SoC SATA 00:12.0
+    "DS920+": {1: ("00:13.0", 1), 2: ("00:13.0", 2), 3: ("00:12.0", 0), 4: ("00:12.0", 1)},
+}
+DMI_PRODUCT = "/sys/class/dmi/id/product_name"
 
 DEFAULTS = {
     "fan_mode": "low",          # low (quiet, DSM default) | high (cool) | full
@@ -155,6 +186,20 @@ def read(path, default=None):
             return f.read().strip()
     except OSError:
         return default
+
+
+def model_bays(product):
+    """Bay map of a model; any other product gets the DS923+ one."""
+    return MODEL_BAYS.get(product, MODEL_BAYS["DS923+"])
+
+
+def model_fan_tables(product):
+    """Fan curves of a model; any other product gets the DS923+ ones."""
+    return MODEL_FAN_TABLES.get(product, FAN_TABLES)
+
+
+BAYS = model_bays(read(DMI_PRODUCT, ""))
+FAN_TABLES = model_fan_tables(read(DMI_PRODUCT, ""))
 
 
 def write(path, value):
@@ -236,7 +281,7 @@ def up_tty():
 class Parser:
     """uP byte stream parser, matches DSM behaviour but is loss-tolerant.
 
-    'D<digits>X' and '+<n><data>' are only parsed while the matching query is
+    'D<digits>X', '+<n><data>' and the unframed 'P...' id (DS920+) are only parsed while the matching query is
     pending, are bounded in length and time out after REPLY_TIMEOUT: a lost 'X'
     or a garbage length byte can never swallow the bytes that follow. A byte that
     ends a reply early is handled again as an event, so '0' (power) and 'a'
@@ -257,7 +302,9 @@ class Parser:
         self.state, self.buf, self.frame_len = None, "", 0
 
     def tick(self, now):
-        if self.state and now - self.since > REPLY_TIMEOUT:
+        if self.state == "P" and now - self.since > ID_GAP:
+            self.done(self.buf)
+        elif self.state and now - self.since > REPLY_TIMEOUT:
             self.reset("timeout")
 
     def done(self, value):
@@ -283,6 +330,13 @@ class Parser:
                 self.state, self.frame_len, self.buf = "+data", n, ""
                 return
             self.reset(f"bad frame length {b!r}")   # fall through: b is an event
+        elif self.state == "P":                     # unframed id: 'P31_1_...' (DS920+)
+            # '0' and 'a' never occur in it (the uP writes '0' as '*'): they stay events
+            if b not in "0a" and (b.isalnum() or b in "_*") and len(self.buf) < ID_MAX:
+                self.buf += b
+                self.since = now
+                return
+            self.done(self.buf)                     # fall through: b is an event
         elif self.state == "+data":
             self.buf += b
             if len(self.buf) >= self.frame_len:
@@ -293,6 +347,8 @@ class Parser:
             self.state, self.buf, self.since = "D", "", now
         elif b == "+" and pending == "R":
             self.state, self.since = "+len", now
+        elif b == "P" and pending == "R":
+            self.state, self.buf, self.since = "P", "P", now
         else:
             self.on_event(b)
 
@@ -410,7 +466,9 @@ def bay_disks():
     found = {}
     for blk in glob.glob(f"{SYS_BLOCK}/sd*"):
         path = os.path.realpath(f"{blk}/device")
-        m = re.search(r"/(0000:[0-9a-f:.]+)/(?:0000:[0-9a-f:.]+/)*.*?/ata(\d+)/", path)
+        # the ataN directory may sit right under the controller's PCI function (DS920+
+        # SoC SATA) or further down (behind a bridge)
+        m = re.search(r"/(0000:[0-9a-f:.]+)/(?:.*/)?ata(\d+)/", path)
         if not m:
             continue
         ata = int(m.group(2))
@@ -468,8 +526,11 @@ def sensors(bays, last_disk=None):
     last_disk = {} if last_disk is None else last_disk
     s = {"cpu": None, "disk": {}, "nvme": {}, "nic": {}, "asleep": []}
     nosensor = []
-    for d in hwmon_by_name("k10temp"):
+    for d in hwmon_by_name("k10temp"):            # AMD (r1000)
         t = hwmon_temp(d, "Tctl")
+        s["cpu"] = hwmon_temp(d) if t is None else t
+    for d in hwmon_by_name("coretemp"):           # Intel (geminilake): the package sensor
+        t = hwmon_temp(d, "Package id 0")
         s["cpu"] = hwmon_temp(d) if t is None else t
     for bay, dev in bays.items():
         key = f"bay{bay}"
@@ -747,7 +808,7 @@ class Daemon:
 
     def write_status(self, s):
         bays = {}
-        for n in range(1, 5):
+        for n in sorted(BAYS):
             bays[n] = {"present": read(f"{PLATFORM}/bay{n}_present") == "1",
                        "power": read(f"{PLATFORM}/bay{n}_power") == "1",
                        "device": self.bays.get(n)}
@@ -809,7 +870,7 @@ class Daemon:
 
     def led_step(self, shown, on):
         disks = bay_disks()
-        for bay in range(1, 5):
+        for bay in sorted(BAYS):
             dev, ata = disks.get(bay, (None, None))
             present = read(f"{PLATFORM}/bay{bay}_present") == "1"
             st = read(f"{SYS_BLOCK}/{dev}/device/state") if dev else None
@@ -905,7 +966,7 @@ class Daemon:
                 step()
             except OSError as e:
                 log.error("shutdown: %s", e)
-        for bay in range(1, 5):
+        for bay in sorted(BAYS):
             self.led(bay, "green", 0)            # 0 also detaches the ataN trigger
             self.led(bay, "orange", 0)
         remove_status()

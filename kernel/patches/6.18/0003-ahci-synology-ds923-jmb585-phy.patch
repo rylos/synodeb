@@ -2,28 +2,72 @@ diff --git a/drivers/ata/ahci.c b/drivers/ata/ahci.c
 index d287c84..6307b45 100644
 --- a/drivers/ata/ahci.c
 +++ b/drivers/ata/ahci.c
-@@ -835,6 +835,62 @@ static int ahci_pci_reset_controller(struct ata_host *host)
+@@ -835,6 +835,106 @@ static int ahci_pci_reset_controller(struct ata_host *host)
  	return 0;
  }
  
 +/*
-+ * Synology DS923+: DSM tunes the SATA PHY of the JMicron JMB585 (bays 1-2 on
-+ * ports 0-1, eSATA on port 4) from model.dtb (signal_data_gen2/gen3,
-+ * set_ssc_off) in its kernel (DSM GPL sources), right after the
-+ * controller init. The vendor registers are reached through an index/data
-+ * pair in ABAR: 0xC0 = 0x40000 | reg, 0xC8 = value. Per-port registers:
++ * Synology DS923+ and DS1522+: the SATA PHY of the JMicron JMB585 is tuned
++ * per port with the values DSM programs on each model, right after the
++ * controller init, and spread spectrum clocking is turned off. The vendor
++ * registers are reached through an index/data pair in ABAR:
++ * 0xC0 = 0x40000 | reg, 0xC8 = value. Per-port registers:
 + * gen2 0x73 0x75 0x77 0x79 0x7B, gen3 0x04 0x11 0x1E 0x2B 0x38.
 + */
 +#define JMB58X_IDX		0xc0
 +#define JMB58X_DATA		0xc8
 +#define JMB58X_IDX_PHY		0x40000
 +
-+static const struct dmi_system_id synology_ds923_dmi[] = {
++struct synology_jmb585_tune {
++	u8 port;
++	u16 gen2, gen3;
++};
++
++struct synology_jmb585 {
++	const struct synology_jmb585_tune *tune;
++	unsigned int n;
++};
++
++/* DS923+: bays 1-2 on ports 0-1, eSATA on port 4 */
++static const struct synology_jmb585_tune synology_ds923plus_tune[] = {
++	{ 0, 0x1e4, 0x3e5 },	/* bay 1 */
++	{ 1, 0x1e4, 0x3e5 },	/* bay 2 */
++	{ 4, 0x1e5, 0x7e7 },	/* eSATA */
++};
++
++/* DS1522+: bays 1-3 on ports 2, 1, 0, eSATA on ports 3-4 */
++static const struct synology_jmb585_tune synology_ds1522plus_tune[] = {
++	{ 0, 0x1e4, 0x3e5 },	/* bay 3 */
++	{ 1, 0x1e4, 0x3e5 },	/* bay 2 */
++	{ 2, 0x1e5, 0x7e5 },	/* bay 1 */
++	{ 3, 0x1e4, 0x1ef },	/* eSATA */
++	{ 4, 0x1e5, 0x3ef },	/* eSATA */
++};
++
++static const struct synology_jmb585 synology_ds923plus_jmb585 = {
++	synology_ds923plus_tune, ARRAY_SIZE(synology_ds923plus_tune)
++};
++
++static const struct synology_jmb585 synology_ds1522plus_jmb585 = {
++	synology_ds1522plus_tune, ARRAY_SIZE(synology_ds1522plus_tune)
++};
++
++static const struct dmi_system_id synology_jmb585_dmi[] = {
 +	{
++		.ident = "DS923+",
 +		.matches = {
 +			DMI_EXACT_MATCH(DMI_SYS_VENDOR, "Synology Inc."),
 +			DMI_EXACT_MATCH(DMI_PRODUCT_NAME, "DS923+"),
 +		},
++		.driver_data = (void *)&synology_ds923plus_jmb585,
++	},
++	{
++		.ident = "DS1522+",
++		.matches = {
++			DMI_EXACT_MATCH(DMI_SYS_VENDOR, "Synology Inc."),
++			DMI_EXACT_MATCH(DMI_PRODUCT_NAME, "DS1522+"),
++		},
++		.driver_data = (void *)&synology_ds1522plus_jmb585,
 +	},
 +	{ }
 +};
@@ -35,41 +79,41 @@ index d287c84..6307b45 100644
 +	msleep(100);		/* as DSM */
 +}
 +
-+static void ahci_synology_ds923_jmb585(struct ata_host *host)
++static void ahci_synology_jmb585(struct ata_host *host)
 +{
-+	static const struct { u8 port; u16 gen2, gen3; } tune[] = {
-+		{ 0, 0x1e4, 0x3e5 },	/* bay 1 */
-+		{ 1, 0x1e4, 0x3e5 },	/* bay 2 */
-+		{ 4, 0x1e5, 0x7e7 },	/* eSATA */
-+	};
 +	static const u8 gen2_reg[] = { 0x73, 0x75, 0x77, 0x79, 0x7b };
 +	static const u8 gen3_reg[] = { 0x04, 0x11, 0x1e, 0x2b, 0x38 };
 +	struct ahci_host_priv *hpriv = host->private_data;
 +	struct pci_dev *pdev = to_pci_dev(host->dev);
++	const struct synology_jmb585 *m;
++	const struct dmi_system_id *id;
 +	int i;
 +
-+	if (pdev->vendor != PCI_VENDOR_ID_JMICRON || pdev->device != 0x0585 ||
-+	    !dmi_check_system(synology_ds923_dmi))
++	if (pdev->vendor != PCI_VENDOR_ID_JMICRON || pdev->device != 0x0585)
 +		return;
++	id = dmi_first_match(synology_jmb585_dmi);
++	if (!id)
++		return;
++	m = id->driver_data;
 +
-+	for (i = 0; i < ARRAY_SIZE(tune); i++)
-+		ahci_jmb585_write(hpriv, gen2_reg[tune[i].port], tune[i].gen2);
-+	for (i = 0; i < ARRAY_SIZE(tune); i++)
-+		ahci_jmb585_write(hpriv, gen3_reg[tune[i].port], tune[i].gen3);
++	for (i = 0; i < m->n; i++)
++		ahci_jmb585_write(hpriv, gen2_reg[m->tune[i].port], m->tune[i].gen2);
++	for (i = 0; i < m->n; i++)
++		ahci_jmb585_write(hpriv, gen3_reg[m->tune[i].port], m->tune[i].gen3);
 +	/* spread spectrum clocking off (as DSM) */
 +	writel(JMB58X_IDX_PHY | 0x2, hpriv->mmio + JMB58X_IDX);
 +	writel(0x3813, hpriv->mmio + JMB58X_DATA);
-+	dev_info(&pdev->dev, "Synology DS923+ JMB585 PHY tuning applied\n");
++	dev_info(&pdev->dev, "Synology %s JMB585 PHY tuning applied\n", id->ident);
 +}
 +
  static void ahci_pci_init_controller(struct ata_host *host)
  {
  	struct ahci_host_priv *hpriv = host->private_data;
-@@ -860,6 +916,7 @@ static void ahci_pci_init_controller(struct ata_host *host)
+@@ -860,6 +960,7 @@ static void ahci_pci_init_controller(struct ata_host *host)
  	}
  
  	ahci_init_controller(host);
-+	ahci_synology_ds923_jmb585(host);
++	ahci_synology_jmb585(host);
  }
  
  static int ahci_vt8251_hardreset(struct ata_link *link, unsigned int *class,

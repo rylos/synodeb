@@ -1,5 +1,5 @@
 [Unit]
-Description=synodeb: M.2 SSD power limit like DSM (14.85 W / 9.9 W)
+Description=synodeb: M.2 SSD power limit like DSM (per model)
 After=systemd-modules-load.service local-fs.target
 ConditionPathExistsGlob=/sys/class/nvme/nvme*
 

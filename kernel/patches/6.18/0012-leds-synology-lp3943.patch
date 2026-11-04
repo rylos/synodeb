@@ -1,0 +1,30 @@
+diff --git a/drivers/leds/Kconfig b/drivers/leds/Kconfig
+index cc16be5..c563181 100644
+--- a/drivers/leds/Kconfig
++++ b/drivers/leds/Kconfig
+@@ -114,6 +114,13 @@ config LEDS_ATMEGA1608
+ 	  The ATmega1608 microcontroller that drives the green/orange disk
+ 	  LEDs of Synology NAS such as the DS923+ (I2C address 0x60).
+ 
++config LEDS_SYNOLOGY_LP3943
++	tristate "LED support for the disk LEDs of Synology NAS on a TI LP3943"
++	depends on LEDS_CLASS && I2C && ACPI
++	help
++	  The TI LP3943 that drives the green/orange disk LEDs of Synology NAS
++	  such as the DS920+, described in ACPI as LED3943.
++
+ config LEDS_AW200XX
+ 	tristate "LED support for Awinic AW20036/AW20054/AW20072/AW20108"
+ 	depends on LEDS_CLASS
+diff --git a/drivers/leds/Makefile b/drivers/leds/Makefile
+index 92bb166..ea6d409 100644
+--- a/drivers/leds/Makefile
++++ b/drivers/leds/Makefile
+@@ -16,6 +16,7 @@ obj-$(CONFIG_LEDS_AN30259A)		+= leds-an30259a.o
+ obj-$(CONFIG_LEDS_APU)			+= leds-apu.o
+ obj-$(CONFIG_LEDS_ARIEL)		+= leds-ariel.o
+ obj-$(CONFIG_LEDS_ATMEGA1608)		+= leds-atmega1608.o
++obj-$(CONFIG_LEDS_SYNOLOGY_LP3943)	+= leds-synology-lp3943.o
+ obj-$(CONFIG_LEDS_AW200XX)		+= leds-aw200xx.o
+ obj-$(CONFIG_LEDS_AW2013)		+= leds-aw2013.o
+ obj-$(CONFIG_LEDS_BCM6328)		+= leds-bcm6328.o
