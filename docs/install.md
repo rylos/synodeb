@@ -96,6 +96,13 @@ the end of the installation and has `AUTO -all`, so DSM's arrays are never assem
 created later is assembled at boot once its line is added there: copy it from
 `sudo mdadm --detail --scan`, then run `sudo update-initramfs -u`.
 
+Data volumes added later (any filesystem that is not the root) must not stop the boot when a
+drive is missing: mount them with `nofail` in `/etc/fstab`. A failed mount without it ends in
+emergency mode, which on a NAS without a screen means no network until the automatic reboot
+10 minutes later, and the same again on every boot. Keep the redundancy of data volumes in md
+(btrfs on top of an md array), or mount a multi-device btrfs volume only after checking that
+all its devices are there: unlike the root, it is not mounted `degraded` by itself.
+
 To use the DSM disks for Debian instead, select them in the partitioner and let it erase them:
 DSM and its data on those disks are gone. DSM volumes can be read from Debian before that
 (`synodeb-dsm`, see [usage](usage.md)).
