@@ -35,6 +35,26 @@ matched on its MAC address, as Proxmox VE does). The installer sets this up; the
 `.synodeb-net` copy) and reboot. Wake-on-LAN (`wol` in `/etc/synohwd.toml`) applies to the
 `lan*` ports. USB adapters keep their `enx<MAC>` names, which are stable already.
 
+## Hardware video (Intel iGPU)
+
+On models with an Intel iGPU (DS920+) the kernel loads i915 and the GPU is
+`/dev/dri/renderD128`. For VA-API (Jellyfin, Immich, Frigate, ffmpeg):
+
+- firmware: `firmware-misc-nonfree` (installed by the installer; on an older system
+  `sudo apt install firmware-misc-nonfree`, then reboot);
+- access: the render node belongs to the group `render`. The installer adds its user to it;
+  other users: `sudo usermod -aG render <user>`. Containers: `--device /dev/dri` and
+  `--group-add` with the GID of `render` (`getent group render`);
+- driver on the host, if ffmpeg runs there: `intel-media-va-driver` (H.264 encoding, decoding),
+  or `intel-media-va-driver-non-free` from Debian's `non-free` component for VPP scaling and
+  HEVC encoding. Jellyfin's own ffmpeg brings its driver;
+- check: `vainfo --display drm --device /dev/dri/renderD128`, `intel_gpu_top`
+  (package `intel-gpu-tools`).
+
+Low-power H.264 encoding needs the HuC firmware, loaded through `options i915 enable_guc=2`
+in `/etc/modprobe.d/synodeb.conf` (the kernel logs it as a "dangerous option" and marks itself
+tainted; it changes nothing else).
+
 ## Emergency mode
 
 If the boot stops in emergency or rescue mode (typically a filesystem in `/etc/fstab` without

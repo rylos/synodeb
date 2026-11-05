@@ -83,6 +83,17 @@ if [ -x $T/sbin/mdadm ] || [ -x $T/usr/sbin/mdadm ]; then
 fi
 # lan1, lan2... for the onboard ports (synodeb-net): not fatal, the system boots with the
 # systemd names otherwise
+# Intel iGPU (DS920+): DMC, GuC and HuC firmware for i915 (power management, low-power
+# encoding), from Debian's non-free-firmware component
+igpu=
+for d in /sys/bus/pci/devices/*; do
+    case "$(cat $d/class 2>/dev/null):$(cat $d/vendor 2>/dev/null)" in 0x0300*:0x8086) igpu=1 ;; esac
+done
+if [ -n "$igpu" ]; then
+    step "firmware-misc-nonfree"
+    chroot_run apt-get -y install firmware-misc-nonfree >> $LOG 2>&1 ||
+        log "firmware-misc-nonfree not installed (non-free-firmware not enabled?): the GPU works without it, without low-power encoding"
+fi
 step "network port names"
 chroot_run synodeb-net pin --no-initramfs >> $LOG 2>&1 || log "synodeb-net pin failed: systemd port names kept"
 step "update-initramfs"

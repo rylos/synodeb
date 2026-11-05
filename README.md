@@ -48,6 +48,7 @@ and want to help, say hello there.
   the previous one by itself.
 - **Notifications** by e-mail, Telegram or ntfy (SMART, RAID, fans, UPS, failed services).
 - **DSM volumes** readable from Debian, to copy the data over.
+- **Hardware video transcoding** on the DS920+ (Intel iGPU, VA-API/QSV).
 
 ## Quick start
 

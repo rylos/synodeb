@@ -34,5 +34,12 @@ The Realtek NICs ask for `rtl_nic/rtl8168h-2.fw` and work without it; the instal
 `firmware-realtek` (Debian non-free-firmware) when the kernel asked for it during the
 installation, on an existing system: `apt install firmware-realtek`.
 
+iGPU (Intel UHD 600, PCI 00:02.0, device 3185): i915 as a module, `/dev/dri/renderD128`.
+With `firmware-misc-nonfree` (the installer adds it) the DMC, GuC 70.1.1 and HuC 4.0.0
+firmware load; `enable_guc=2` (modprobe.d/synodeb.conf) makes HuC authenticate, which the
+low-power H.264 encoder needs. Measured on a DS920+ with 7.3 and iHD 25.2.3: 1080p H.264
+decode + low-power encode at about 140 fps, 1080p to 720p with VPP scaling about 200 fps,
+HEVC encode about 40 fps (non-free driver); `intel_gpu_top` works.
+
 Not done yet: the DX517 on the eSATA port (the expansion-unit driver matches DMI vendor
-"Synology Inc.", this BIOS says "Synology"), the iGPU (the slim kernel has no DRM).
+"Synology Inc.", this BIOS says "Synology").
