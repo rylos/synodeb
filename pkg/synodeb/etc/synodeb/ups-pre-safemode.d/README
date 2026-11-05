@@ -1,0 +1,8 @@
+Executables here run before the UPS Safe Mode stops the services (synodeb-ups), in name
+order, with the reason (lowbatt, waittimeup, nocomm, fsd, shutdowncmd) as $1, all together
+within PRE_SAFEMODE_TIMEOUT seconds (/etc/synodeb/ups.conf, default 120). Names: letters,
+digits, - and _ only (this file is not executable and not run). Output goes to the journal
+(journalctl -t synodeb-ups-hook). Example, 10-containers:
+
+    #!/bin/sh
+    docker ps -q | xargs -r docker stop -t 30

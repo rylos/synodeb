@@ -107,7 +107,11 @@ when mains power is back.
   the same.
 - Other options in the same file: dry run (`DRYRUN=1`, Safe Mode only logged), what to do when
   the UPS stops answering (`NOCOMM_SAFEMODE`), powering the UPS off at the end
-  (`SAFESHUTDOWN`).
+  (`SAFESHUTDOWN`), Safe Mode after a time on battery instead of only when the battery runs low
+  (`SAFEMODE_AFTER=600`, seconds, like DSM's "after N minutes").
+- **Before Safe Mode**: executables in `/etc/synodeb/ups-pre-safemode.d` run first, in name
+  order, all within `PRE_SAFEMODE_TIMEOUT` seconds (default 120), e.g. to stop VMs and
+  containers cleanly. See the README there.
 
 ## DSM data
 

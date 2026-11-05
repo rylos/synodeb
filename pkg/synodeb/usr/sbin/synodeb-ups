@@ -25,7 +25,12 @@
 #   microcontroller turns the NAS back on ('q', restore after power loss, sent by synohwd).
 #
 # Configuration: /etc/synodeb/ups.conf (DRYRUN, NOCOMM_SAFEMODE, SAFESHUTDOWN, UPS,
-# NETWORK_CLIENTS). Without NETWORK_CLIENTS upsd only listens on localhost; with it upsd
+# NETWORK_CLIENTS, SAFEMODE_AFTER, PRE_SAFEMODE_TIMEOUT).
+# SAFEMODE_AFTER=N: Safe Mode N seconds after the UPS went on battery (a systemd timer
+# started at ONBATT, stopped at ONLINE), not only when the battery runs low.
+# Hooks: the executables in /etc/synodeb/ups-pre-safemode.d (names of letters, digits, - and _,
+# in order) run before the services are stopped, with the reason as $1 and all within
+# PRE_SAFEMODE_TIMEOUT seconds (e.g. stop VMs and containers cleanly). Not run with DRYRUN=1. Without NETWORK_CLIENTS upsd only listens on localhost; with it upsd
 # listens on the network and runs only while the nftables rules of synodeb-nut-firewall are
 # loaded (BindsTo= in the drop-in written by setup): no firewall, no upsd.
 set -u
@@ -48,6 +53,9 @@ DRYRUN=0                    # 1: log what would be done, no isolate/umount/stand
 NOCOMM_SAFEMODE=onbatt      # onbatt | always (DSM) | never
 SAFESHUTDOWN=no             # yes: when the UPS is exhausted, ask it to power off (DSM ups_safeshutdown)
 NETWORK_CLIENTS=            # IPs allowed on upsd (port 3493), e.g. Home Assistant or another NAS
+SAFEMODE_AFTER=0            # >0: Safe Mode after this many seconds on battery (DSM "after N minutes")
+PRE_SAFEMODE_TIMEOUT=120    # seconds for all the hooks in $HOOKS together
+HOOKS=/etc/synodeb/ups-pre-safemode.d
 LOOP_SECONDS=10
 # shellcheck source=/dev/null
 [ -r "$CONF" ] && . "$CONF"
@@ -73,6 +81,38 @@ statelog() {
     log "$1: status=$(var ups.status) charge=$(var battery.charge)% runtime=$(var battery.runtime)s load=$(var ups.load)%"
 }
 
+# the executables in $HOOKS, in order, all within PRE_SAFEMODE_TIMEOUT seconds; never fails
+pre_safemode_hooks() { # $1 = reason
+    hooks=
+    for h in "$HOOKS"/*; do
+        [ -f "$h" ] && [ -x "$h" ] || continue
+        case ${h##*/} in *[!A-Za-z0-9_-]*) continue ;; esac
+        hooks="$hooks $h"
+    done
+    [ -n "$hooks" ] || return 0
+    if [ "$DRYRUN" = 1 ]; then
+        log "DRYRUN: hooks not run:$hooks"
+        return 0
+    fi
+    log "running the pre-Safe Mode hooks (at most $PRE_SAFEMODE_TIMEOUT s):$hooks"
+    # shellcheck disable=SC2086
+    # shellcheck disable=SC2016  # the inner script expands its own arguments
+    timeout -k 5 "$PRE_SAFEMODE_TIMEOUT" sh -c '
+        r=$1; shift
+        for h in "$@"; do
+            if "$h" "$r" </dev/null 2>&1 | logger -t synodeb-ups-hook; then :; fi
+        done' sh "$1" $hooks || log "pre-Safe Mode hooks: timeout or error (exit $?), going on"
+    return 0
+}
+# SAFEMODE_AFTER: a timer started when the UPS goes on battery
+start_wait_timer() {
+    [ "${SAFEMODE_AFTER:-0}" -gt 0 ] 2>/dev/null || return 0
+    systemd-run --unit=synodeb-ups-wait --on-active="${SAFEMODE_AFTER}s" --timer-property=AccuracySec=1s \
+        /usr/sbin/synodeb-ups waittimeup >/dev/null 2>&1 &&
+        log "Safe Mode in $SAFEMODE_AFTER s unless power returns (SAFEMODE_AFTER)"
+}
+stop_wait_timer() { systemctl stop synodeb-ups-wait.timer >/dev/null 2>&1 || true; }
+
 safemode() { # $1 = reason
     rm -f $KILLPOWER
     [ -f $SAFE ] && return 0
@@ -92,6 +132,8 @@ safemode() { # $1 = reason
     echo "$1 $(date '+%F %T')" > $SAFE
     log "Safe Mode ($1): stopping services and unmounting volumes; the NAS stays on"
     notify -f -p urgent "UPS: Safe Mode" "reason $1, battery $(var battery.charge)%, runtime $(var battery.runtime) s. Services stopped, volumes unmounted; reboot when power returns."
+    stop_wait_timer
+    pre_safemode_hooks "$1"
     if [ "$DRYRUN" = 1 ]; then
         log "DRYRUN: systemctl isolate synodeb-ups-safe.target (starting only synodeb-ups-safe.service)"
         systemctl --no-block start synodeb-ups-safe.service
@@ -165,6 +207,7 @@ safeloop() {
 }
 
 online() { # like DSM, on power restore
+    stop_wait_timer
     if [ -f $ONB ]; then
         rm -f $ONB
         [ -f $SAFE ] || { log "UPS back online, no Safe Mode"; notify -p normal "UPS: power restored" "battery $(var battery.charge)%"; }
@@ -357,6 +400,7 @@ onbatt)
         : > $ONB
         log "UPS on battery"
         notify -p high "UPS on battery" "battery $(var battery.charge)%, runtime $(var battery.runtime) s"
+        start_wait_timer
     fi ;;
 online) statelog online; online ;;
 lowbatt)
