@@ -24,8 +24,28 @@ start)
             why="$why Watchdog $(cat "$w/identity" 2>/dev/null) reset the board."
         fi
     done
+    # a btrfs root mounted "degraded": by the initramfs because a device was missing
+    # (scripts/local-premount/synodeb-degraded), or set by hand
+    # Once all the devices are back, the one that was missing holds stale copies of what was
+    # written meanwhile: a scrub rewrites them from the good device (in the background).
+    WAS=/var/lib/synodeb/root-was-degraded
+    if [ -e /run/synodeb/root-degraded ] || findmnt -n -o OPTIONS / 2>/dev/null | grep -q '\(^\|,\)degraded\(,\|$\)'; then
+        prio=high
+        why="$why The root filesystem is mounted degraded: a device is missing (btrfs filesystem show /). New data is written to the remaining device only: replace the drive (btrfs replace) as soon as possible."
+        mkdir -p "${WAS%/*}"
+        : > "$WAS"
+    elif [ -e "$WAS" ] && [ "$(findmnt -n -o FSTYPE /)" = btrfs ]; then
+        rm -f "$WAS"
+        if btrfs scrub start / >/dev/null 2>&1; then
+            why="$why The root filesystem has all its devices again after a degraded boot: a scrub was started to resync them (btrfs scrub status /)."
+        else
+            prio=high
+            why="$why The root filesystem has all its devices again after a degraded boot, but 'btrfs scrub start /' failed: run it by hand."
+        fi
+    fi
     mkdir -p "${MARK%/*}"
     { date '+%F %T'; } > "$MARK.tmp" && mv -f "$MARK.tmp" "$MARK"
+    why=${why# }
     msg="$(uname -r), $(ip -br -4 addr show scope global 2>/dev/null | awk '{printf "%s %s; ", $1, $3}')"
     [ -z "$why" ] || msg="$why
 $msg"

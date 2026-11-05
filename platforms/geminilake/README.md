@@ -9,9 +9,10 @@ SMBus (ACPI LED3943, address 0x60); bay power, bay presence, USB VBUS and fan-fa
 Gemini Lake GPIO community "northwest" (INT3453 UID 1); SATA on a Marvell 88SE9235 (bays 1-2,
 eSATA) and on the SoC AHCI (bays 3-4); M.2 NVMe slots on PCIe root ports 00:14.0 and 00:14.1.
 
-The NVMe names do not follow the M.2 slot numbers: the drive in M.2 slot 2 is
-behind 00:14.0 and becomes `nvme0n1`, the one in slot 1 is behind 00:14.1 and becomes `nvme1n1`
-(DS920+, checked with `readlink -f /sys/block/nvme*n1/device/device`).
+The NVMe names are not stable: `nvme0n1` and `nvme1n1` can swap from one boot to the next
+(DS920+, both seen). Use the PCI path to tell the slots apart: M.2 slot 1 is behind 00:14.1
+(`/dev/disk/by-path/pci-0000:05:00.0-nvme-1`), slot 2 behind 00:14.0
+(`/dev/disk/by-path/pci-0000:04:00.0-nvme-1`).
 
 Kernel:
 - `kernel/src/drivers/platform/x86/synology_nas.c` (shared, table `ds920plus`): bay power

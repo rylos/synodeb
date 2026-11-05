@@ -34,7 +34,7 @@ if [ "$rootfs" != btrfs ]; then
     rm -f "$DESTDIR/usr/bin/btrfs" "$DESTDIR/usr/sbin/fsck.btrfs" "$DESTDIR/usr/sbin/btrfs" \
         "$DESTDIR/usr/lib/udev/rules.d/64-btrfs.rules" "$DESTDIR/usr/lib/udev/rules.d/64-btrfs-dm.rules" \
         "$DESTDIR/lib/udev/rules.d/64-btrfs.rules" "$DESTDIR/lib/udev/rules.d/64-btrfs-dm.rules" \
-        "$DESTDIR/scripts/local-premount/btrfs"
+        "$DESTDIR/scripts/local-premount/btrfs" "$DESTDIR/scripts/local-premount/synodeb-degraded"
 fi
 if [ "$rootfs" != xfs ]; then
     rm -f "$DESTDIR/usr/sbin/xfs_repair" "$DESTDIR/usr/sbin/fsck.xfs"

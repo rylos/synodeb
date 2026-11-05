@@ -69,15 +69,15 @@ sudo update-initramfs -u -k all
 
 `sudo btrfs filesystem usage -T /` then shows RAID1 on both drives.
 
-**A failed drive**: a running system keeps working when one drive dies, but btrfs refuses to
-mount a RAID1 with a device missing, so the next boot stops (the kernel cannot find its root).
-Before rebooting, add `degraded` to the root mount options: `CMDLINE="rootflags=subvol=@rootfs,degraded"`
-in `/etc/default/synodeb`, then `sudo synodeb-dom setup`. Replace the drive
-(`sudo btrfs replace start <devid> /dev/<new partition> /`), then remove `degraded` and run
-`sudo synodeb-dom setup` again: a RAID1 mounted degraded writes new data to one drive only.
-A NAS switched off with a dead drive does not boot at all, not even with a new empty drive:
-the initramfs does not retry with `degraded` by itself (yet), so add it while the system
-still runs, as soon as btrfs reports the failure.
+**A failed or missing drive**: the system keeps running when a drive dies. At boot, if a
+device of the btrfs root is still missing after 60 s, the initramfs mounts the root
+`degraded` and the "boot completed" notification says so with high priority. While degraded,
+new data is written to the remaining drive only: replace the failed one as soon as possible
+(`sudo btrfs replace start <missing devid> /dev/<new partition> /`, devid from
+`sudo btrfs filesystem show /`; copy the partition table first as above). A drive that was
+only disconnected and comes back holds stale copies: on the first boot with all the devices
+present a scrub is started by itself to rewrite them from the good drive
+(`sudo btrfs scrub status /`).
 
 ## Keeping DSM
 

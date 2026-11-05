@@ -1,0 +1,42 @@
+#!/bin/sh
+# A btrfs root on more than one device (RAID1) is not mounted while one of them is missing,
+# unless with "degraded": a NAS switched off with a dead drive would not boot at all. Here,
+# after the btrfs device scan, the boot waits up to 60 s for all the devices of the root
+# filesystem; if one is still missing the root is mounted degraded (ROOTFLAGS through
+# /conf/param.conf, read by the initramfs after each local-premount script) and
+# /run/synodeb/root-degraded says so to the running system (boot-report sends a high
+# priority notification). A complete filesystem, a single device or a root that is not btrfs
+# change nothing, and an error here never stops the boot.
+PREREQ="btrfs"
+prereqs() { echo "$PREREQ"; }
+case "$1" in prereqs) prereqs; exit 0 ;; esac
+
+. /scripts/functions
+WAIT=60
+# the scripts get root= as given (UUID=...), not the device local_mount_root found
+[ -n "${ROOT:-}" ] || exit 0
+dev=$(resolve_device "$ROOT") && [ -b "$dev" ] || exit 0
+command -v btrfs >/dev/null 2>&1 || exit 0
+[ "$(blkid -o value -s TYPE "$dev" 2>/dev/null)" = btrfs ] || exit 0
+case ",${ROOTFLAGS#-o }," in *,degraded,*) exit 0 ;; esac
+
+i=0
+until btrfs device ready "$dev" >/dev/null 2>&1; do
+    if [ $i -ge $WAIT ]; then
+        echo "synodeb: a device of the btrfs root ($dev) is missing after ${WAIT} s: mounting it degraded"
+        if [ -n "${ROOTFLAGS:-}" ]; then
+            flags="$ROOTFLAGS,degraded"
+        else
+            flags="-o degraded"
+        fi
+        echo "ROOTFLAGS='$flags'" >> /conf/param.conf
+        mkdir -p /run/synodeb
+        echo "$dev" > /run/synodeb/root-degraded
+        exit 0
+    fi
+    [ $i -gt 0 ] || echo "synodeb: waiting up to ${WAIT} s for all the devices of the btrfs root ($dev)"
+    sleep 1
+    btrfs device scan >/dev/null 2>&1
+    i=$((i + 1))
+done
+exit 0

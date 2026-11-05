@@ -6,6 +6,7 @@
 /etc/initramfs-tools/conf.d/synodeb.conf
 /etc/initramfs-tools/hooks/synodeb
 /etc/initramfs-tools/scripts/init-premount/synodeb-trial
+/etc/initramfs-tools/scripts/local-premount/synodeb-degraded
 /etc/kernel/postinst.d/zz-synodeb-boot-links
 /etc/kernel/postrm.d/zz-synodeb-boot-links
 /etc/modprobe.d/synodeb.conf
