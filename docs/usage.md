@@ -2,14 +2,17 @@
 
 ## Commands
 
+They are in `/usr/sbin`, which is not in a normal user's `PATH`: run them with `sudo`
+(`synodeb-dom` needs root, it mounts the DOM).
+
 | command | |
 |---|---|
-| `synohwd status` | fan duty and speeds, temperatures, bays, recent events |
-| `synodeb-dom status` | boot entries and kernels on the DOM |
-| `synodeb-dom default debian\|debian-old\|dsm` | default boot entry (then reboot) |
-| `synodeb-dom setup` | rewrite the boot entries (after changing `/etc/default/synodeb`) |
-| `synodeb-ups status` | UPS and Safe Mode |
-| `synodeb-dsm` | mount DSM volumes read-only (`synodeb-dsm --help`) |
+| `sudo synohwd status` | fan duty and speeds, temperatures, bays, recent events |
+| `sudo synodeb-dom status` | boot entries, their command line and the kernels on the DOM |
+| `sudo synodeb-dom default debian\|debian-old\|dsm` | default boot entry (then reboot) |
+| `sudo synodeb-dom setup` | rewrite the boot entries (after changing `/etc/default/synodeb`, or when `status` says they are outdated) |
+| `sudo synodeb-ups status` | UPS and Safe Mode |
+| `sudo synodeb-dsm` | mount DSM volumes read-only (`synodeb-dsm --help`) |
 
 ## Switching between Debian and DSM
 
@@ -41,7 +44,7 @@ when mains power is back.
 
 - **Connected during the installation**: nothing to do, NUT is set up and enabled.
 - **Connected later**: plug it in and run `sudo synodeb-ups setup --keep-password`.
-- **Check**: `synodeb-ups status` (or `upsc ups@localhost`).
+- **Check**: `sudo synodeb-ups status` (or `upsc ups@localhost`).
 - **Other machines using this UPS** (Home Assistant, another NAS, a PC with NUT): put their
   addresses in `/etc/synodeb/ups.conf`, set the password of the NUT user `monuser` and apply:
 

@@ -7,7 +7,11 @@ Common hardware (DS920+, measured under DSM 7.4.1): front-panel microcontroller 
 Seiko S-35390A RTC on LPSS I2C 0 (ACPI RTC35390, address 0x30); disk LEDs on a TI LP3943 on the
 SMBus (ACPI LED3943, address 0x60); bay power, bay presence, USB VBUS and fan-fail inputs on the
 Gemini Lake GPIO community "northwest" (INT3453 UID 1); SATA on a Marvell 88SE9235 (bays 1-2,
-eSATA) and on the SoC AHCI (bays 3-4).
+eSATA) and on the SoC AHCI (bays 3-4); M.2 NVMe slots on PCIe root ports 00:14.0 and 00:14.1.
+
+The NVMe names do not follow the M.2 slot numbers: the drive in M.2 slot 2 is
+behind 00:14.0 and becomes `nvme0n1`, the one in slot 1 is behind 00:14.1 and becomes `nvme1n1`
+(DS920+, checked with `readlink -f /sys/block/nvme*n1/device/device`).
 
 Kernel:
 - `kernel/src/drivers/platform/x86/synology_nas.c` (shared, table `ds920plus`): bay power

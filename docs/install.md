@@ -43,12 +43,41 @@ The short version is in the [README](../README.md#quick-start). This page has th
 
 - Any layout the Debian installer offers works: plain partitions, mdadm RAID, LVM, ext4, XFS,
   btrfs (also btrfs RAID1 across two disks or NVMe drives).
+- **btrfs RAID1 for the root**: the installer creates the filesystem on one disk; add the
+  second one afterwards (see [RAID1 root on two drives](#raid1-root-on-two-drives)).
 - **No encrypted root** (*encrypted LVM*): it cannot be unlocked at boot without a console.
   Encrypt data volumes instead, with a key file on the root filesystem.
 - **The DOM** (the 128 MB disk with two small partitions) is shown as installation media and
   locked: leave it alone, the NAS cannot boot without it. In manual partitioning the installer
   may propose its first partition (FAT) as `/boot/efi`: set it to *do not use*. The NAS does
   not boot with UEFI and needs no EFI partition.
+
+## RAID1 root on two drives
+
+Install on the first drive (btrfs root, Debian puts it in the subvolume `@rootfs`), then copy
+the partition table to the second, empty drive and convert the filesystem to RAID1. With two
+NVMe drives, the system on `nvme0n1` and the empty one `nvme1n1` (check with `lsblk` first:
+everything on the second drive is erased):
+
+```sh
+sudo sfdisk -d /dev/nvme0n1 | grep -v '^label-id:' | sed 's/, uuid=[0-9A-F-]*//' | sudo sfdisk /dev/nvme1n1
+sudo mkswap /dev/nvme1n1p1      # if the first drive has a swap partition: add it to /etc/fstab with nofail
+sudo btrfs device add -f /dev/nvme1n1p2 /
+sudo btrfs balance start -dconvert=raid1 -mconvert=raid1 -sconvert=raid1 -f /
+sudo update-initramfs -u -k all
+```
+
+`sudo btrfs filesystem usage -T /` then shows RAID1 on both drives.
+
+**A failed drive**: a running system keeps working when one drive dies, but btrfs refuses to
+mount a RAID1 with a device missing, so the next boot stops (the kernel cannot find its root).
+Before rebooting, add `degraded` to the root mount options: `CMDLINE="rootflags=subvol=@rootfs,degraded"`
+in `/etc/default/synodeb`, then `sudo synodeb-dom setup`. Replace the drive
+(`sudo btrfs replace start <devid> /dev/<new partition> /`), then remove `degraded` and run
+`sudo synodeb-dom setup` again: a RAID1 mounted degraded writes new data to one drive only.
+A NAS switched off with a dead drive does not boot at all, not even with a new empty drive:
+the initramfs does not retry with `degraded` by itself (yet), so add it while the system
+still runs, as soon as btrfs reports the failure.
 
 ## Keeping DSM
 

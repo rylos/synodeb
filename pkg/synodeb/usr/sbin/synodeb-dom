@@ -103,8 +103,23 @@ trial_state() { # none | armed | trying
 }
 running_entry() { sed -n 's/.*synodeb\.entry=\([A-Z_]*\).*/\1/p' /proc/cmdline 2>/dev/null || true; }
 # entries written before softlockup_panic/raid=noautodetect: setup rewrites them
-outdated() { grep -q "^$BEGIN" "$CONF" && ! grep -q '^[[:space:]]*linux /synodeb/vmlinuz .*raid=noautodetect' "$CONF"; }
-OUTDATED_MSG="the DEBIAN entries lack softlockup_panic=1 raid=noautodetect: rewrite them with 'synodeb-dom setup' (DEBIAN becomes the default)"
+# entries written by an older synodeb-dom: setup rewrites them (it is not run by itself, it
+# resets the default entry and the kernel trial). Before 3.4 a btrfs root in a subvolume got
+# no rootflags: that system boots only while the subvolume is the btrfs default.
+outdated() {
+    grep -q "^$BEGIN" "$CONF" || return 1
+    what=
+    grep -q '^[[:space:]]*linux /synodeb/vmlinuz .*raid=noautodetect' "$CONF" ||
+        what="softlockup_panic=1 raid=noautodetect"
+    # shellcheck source=/dev/null
+    if [ -z "$(ROOT=; [ ! -r $DEFAULTS ] || . $DEFAULTS; echo "$ROOT")" ] && [ -n "$(root_subvol)" ] &&
+       ! grep -q '^[[:space:]]*linux /synodeb/vmlinuz .*rootflags=' "$CONF"; then
+        what="${what:+$what and }rootflags=$(root_subvol)"
+    fi
+    [ -n "$what" ] || return 1
+    OUTDATED_MSG="the DEBIAN entries lack $what: rewrite them with 'sudo synodeb-dom setup' (DEBIAN becomes the default)"
+}
+OUTDATED_MSG=
 
 same() { cmp -s "/boot/$1-$2" "$S/$1$3"; }            # file version suffix
 pair_same() { same vmlinuz "$1" "$2" && same initrd.img "$1" "$2"; }
@@ -147,6 +162,10 @@ relax_panics() {
         [ ! -w /proc/sys/kernel/$p ] || echo 0 > /proc/sys/kernel/$p 2>/dev/null || true
     done
 }
+# subvol=... or subvolid=... of a btrfs root in /etc/fstab, empty otherwise
+root_subvol() {
+    awk '$1 !~ /^#/ && $2 == "/" && $3 == "btrfs" { n = split($4, o, ","); for (i = 1; i <= n; i++) if (o[i] ~ /^subvol(id)?=/) { print o[i]; exit } }' /etc/fstab
+}
 root_spec() {
     ROOT=
     CMDLINE=
@@ -158,7 +177,7 @@ root_spec() {
         case "$ROOT" in /dev/disk/by-uuid/*) ROOT=UUID=${ROOT#/dev/disk/by-uuid/} ;; esac
         # a btrfs root in a subvolume (the Debian installer uses @rootfs): the kernel mounts
         # the top level of the filesystem unless rootflags names the subvolume
-        sv=$(awk '$1 !~ /^#/ && $2 == "/" && $3 == "btrfs" { n = split($4, o, ","); for (i = 1; i <= n; i++) if (o[i] ~ /^subvol(id)?=/) { print o[i]; exit } }' /etc/fstab)
+        sv=$(root_subvol)
         case " ${CMDLINE:-} " in
         *" rootflags="*) ;;
         *) [ -z "$sv" ] || CMDLINE="${CMDLINE:+$CMDLINE }rootflags=$sv" ;;
@@ -195,6 +214,9 @@ EOT
 }
 
 cmd=${1:-status}
+[ "$(id -u)" = 0 ] || case $cmd in
+    sync|setup|default|boot-ok|status) die "must run as root (sudo synodeb-dom $cmd)" ;;
+esac
 # boot-ok --wait takes the lock only once the network is up: apt (sync) is not held up
 [ "$cmd" = boot-ok ] || lock
 
@@ -423,7 +445,8 @@ status)
     armed) echo "kernel trial armed: if the next DEBIAN boot fails, DEBIAN_OLD starts" ;;
     trying) echo "kernel trial in progress: DEBIAN_OLD starts if the new kernel fails" ;;
     esac
-    sed -n 's/^ *linux \/synodeb\/vmlinuz \(root=[^ ]*\).*/DEBIAN boots with \1/p' "$CONF"
+    # the whole command line of DEBIAN (the Synology GRUB adds sn= and macs= at boot)
+    sed -n 's/^ *linux \/synodeb\/vmlinuz \(.*\) synodeb\.entry=DEBIAN.*/DEBIAN command line: \1/p' "$CONF"
     ! outdated || echo "note: $OUTDATED_MSG"
     unmount
     withmount $P2 ext2 ro
