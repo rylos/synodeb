@@ -77,7 +77,7 @@ over ssh (`sudo systemctl stop 'synodeb-emergency-reboot*.timer'` to stay).
   disk that had a temperature sensor gives no reading.
 - `/etc/synodeb/notify.conf`: notifications by e-mail (SMTP), Telegram or ntfy, for SMART,
   RAID, fans, UPS, failed services and unclean shutdowns. Nothing is sent until a channel is
-  configured. While [rynas](https://github.com/rylos/rynas) runs (`/run/rynas/notify.sock`),
+  configured. While the rynas NAS manager runs (`/run/rynas/notify.sock`),
   every notification goes to it instead, with all priorities, and it applies its own rules;
   `FORWARD=off` in `notify.conf` keeps them on synodeb's channels.
 - `/etc/synodeb/ups.conf`: UPS behaviour, see below.
