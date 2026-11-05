@@ -8,7 +8,7 @@ They are in `/usr/sbin`, which is not in a normal user's `PATH`: run them with `
 | command | |
 |---|---|
 | `sudo synohwd status` | fan duty and speeds, temperatures, bays, recent events |
-| `sudo synodeb-dom status` | boot entries, their command line and the kernels on the DOM |
+| `sudo synodeb-dom status` | boot entries, their command line and the kernels on the DOM (`--json`: the same as one JSON object, for other tools) |
 | `sudo synodeb-dom default debian\|debian-old\|dsm` | default boot entry (then reboot) |
 | `sudo synodeb-dom setup` | rewrite the boot entries (after changing `/etc/default/synodeb`, or when `status` says they are outdated) |
 | `sudo synodeb-ups status` | UPS and Safe Mode |

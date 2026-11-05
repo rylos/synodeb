@@ -9,7 +9,7 @@
 #                                  the default and drop the INSTALLER entry and its files
 #   synodeb-dom default debian|debian-old|dsm
 #   synodeb-dom boot-ok [--wait]   boot succeeded (network and ssh up): confirm a new kernel
-#   synodeb-dom status
+#   synodeb-dom status [--json]    --json: one JSON object, schema 1 (see status_json)
 #
 # The DOM is written only when the kernel or initrd changes (sync), by setup and by the
 # kernel trial below; a normal boot never writes it. sync never removes the DEBIAN kernel:
@@ -102,7 +102,6 @@ trial_state() { # none | armed | trying
     case "$(head -n 1 "$TRIAL" 2>/dev/null)" in trying*) echo trying ;; *) echo armed ;; esac
 }
 running_entry() { sed -n 's/.*synodeb\.entry=\([A-Z_]*\).*/\1/p' /proc/cmdline 2>/dev/null || true; }
-# entries written before softlockup_panic/raid=noautodetect: setup rewrites them
 # entries written by an older synodeb-dom: setup rewrites them (it is not run by itself, it
 # resets the default entry and the kernel trial). Before 3.4 a btrfs root in a subvolume got
 # no rootflags: that system boots only while the subvolume is the btrfs default.
@@ -211,6 +210,56 @@ menuentry "$title" {
 EOT
     done
     echo "$END"
+}
+
+# JSON string, or null when empty
+js() {
+    if [ -z "$1" ]; then printf null; return 0; fi
+    printf '"%s"' "$(printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g' | tr -d '\n\r\t')"
+}
+jlist() { # words -> JSON list of strings
+    printf '['; sep=
+    for w in "$@"; do printf '%s' "$sep"; js "$w"; sep=,; done
+    printf ']'
+}
+jkernel() { # VERSION file -> {"release": ..., "version": ...} or null
+    [ -f "$1" ] || { printf null; return 0; }
+    read -r rel ver < "$1" || true
+    printf '{"release":%s,"version":%s}' "$(js "${rel:-}")" "$(js "${ver:-}")"
+}
+# status --json, schema 1 (fields are only added in later versions, never renamed):
+#   schema, entries (titles in GRUB order), default (title), default_index, fallback (titles),
+#   trial (none|armed|trying), running (entry of this boot: DEBIAN, DEBIAN_OLD or null),
+#   running_kernel (uname -r), cmdline (DEBIAN, without what the Synology GRUB adds),
+#   outdated (message or null), kernels.DEBIAN / kernels.DEBIAN_OLD ({release, version} or
+#   null), dom_free_kb (synoboot2)
+status_json() {
+    withmount $P1 vfat ro
+    # shellcheck disable=SC2046  # titles have no blanks
+    entries=$(jlist $(awk '/^[ \t]*menuentry / { s = $0; sub(/^[^"]*"/, "", s); sub(/".*/, "", s); print s }' "$CONF"))
+    def=$(cur_default)
+    fb=
+    # shellcheck disable=SC2013  # one line of numbers
+    for i in $(sed -n "s/^set fallback='\(.*\)'.*/\1/p" "$CONF"); do fb="$fb $(title_at "$i")"; done
+    # shellcheck disable=SC2086
+    fallback=$(jlist $fb)
+    trial=$(trial_state)
+    cmdline=$(sed -n 's/^ *linux \/synodeb\/vmlinuz \(.*\) synodeb\.entry=DEBIAN.*/\1/p' "$CONF" | head -n 1)
+    msg=
+    ! outdated 2>/dev/null || msg=$OUTDATED_MSG
+    title=$(default_title)
+    unmount
+    withmount $P2 ext2 ro
+    k1=$(jkernel $M/synodeb/VERSION)
+    k2=null
+    [ ! -f $M/synodeb/vmlinuz.old ] || k2=$(jkernel $M/synodeb/VERSION.old)
+    free=$(avail)
+    unmount
+    printf '{"schema":1,"entries":%s,"default":%s,"default_index":%s,"fallback":%s,"trial":%s,' \
+        "$entries" "$(js "$title")" "${def:-null}" "$fallback" "$(js "$trial")"
+    printf '"running":%s,"running_kernel":%s,"cmdline":%s,"outdated":%s,' \
+        "$(js "$(running_entry)")" "$(js "$(uname -r)")" "$(js "$cmdline")" "$(js "$msg")"
+    printf '"kernels":{"DEBIAN":%s,"DEBIAN_OLD":%s},"dom_free_kb":%s}\n' "$k1" "$k2" "${free:-null}"
 }
 
 cmd=${1:-status}
@@ -438,6 +487,10 @@ boot-ok)
     unmount
     ;;
 status)
+    if [ "${2:-}" = --json ]; then
+        status_json
+        exit 0
+    fi
     withmount $P1 vfat ro
     echo "default entry: $(default_title) ($(cur_default))"
     sed -n "s/^set fallback='\(.*\)'.*/fallback entries: \1/p" "$CONF"
