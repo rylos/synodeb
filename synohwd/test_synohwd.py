@@ -455,6 +455,24 @@ with tempfile.TemporaryDirectory() as d:
         m.hwmon_by_name = real_by_name
 
 
+# M.2 slots: slot -> root port -> NVMe controller and namespace (DS920+: slot 1 behind
+# 00:14.1, slot 2 behind 00:14.0; nvme0 is in slot 1 here, as seen on a DS920+)
+with tempfile.TemporaryDirectory() as d:
+    for ctrl, port, fn in (("nvme0", "0000:00:14.1", "0000:05:00.0"), ("nvme1", "0000:00:14.0", "0000:04:00.0")):
+        dev = f"{d}/devices/pci0000:00/{port}/{fn}"
+        os.makedirs(dev)
+        os.makedirs(f"{d}/class/nvme/{ctrl}/{ctrl}n1")
+        os.symlink(dev, f"{d}/class/nvme/{ctrl}/device")
+    got = m.m2_slots("DS920+", f"{d}/class/nvme")
+    check("m2 slot 1", got["1"], {"present": True, "controller": "nvme0", "device": "nvme0n1",
+                                  "pci": "0000:05:00.0", "port": "0000:00:14.1"})
+    check("m2 slot 2 device", got["2"]["device"], "nvme1n1")
+    check("m2 unknown model", m.m2_slots("DS1522+", f"{d}/class/nvme"), {})
+    os.remove(f"{d}/class/nvme/nvme1/device")
+    os.rename(f"{d}/class/nvme/nvme1", f"{d}/gone")
+    check("m2 empty slot", m.m2_slots("DS920+", f"{d}/class/nvme")["2"]["present"], False)
+
+
 def test_all():
     """pytest entry point: the checks above run at import time."""
     assert failures == 0, f"{failures} FAILED"

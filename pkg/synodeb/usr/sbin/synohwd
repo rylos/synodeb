@@ -129,6 +129,13 @@ MODEL_BAYS = {
     # bays 3-4 on the SoC SATA 00:12.0
     "DS920+": {1: ("00:13.0", 1), 2: ("00:13.0", 2), 3: ("00:12.0", 0), 4: ("00:12.0", 1)},
 }
+# M.2 slot -> PCIe root port of its NVMe controller, per model (model.dtb power_limit order,
+# as /usr/lib/synodeb/nvme-power-limit). The nvmeX names do not follow the slots (they can
+# swap between boots). Models not listed get no slot map: better none than a wrong one.
+MODEL_M2 = {
+    "DS923+": {1: "00:01.2", 2: "00:01.3"},
+    "DS920+": {1: "00:14.1", 2: "00:14.0"},
+}
 DMI_PRODUCT = "/sys/class/dmi/id/product_name"
 
 DEFAULTS = {
@@ -201,7 +208,35 @@ def model_fan_tables(product):
     return MODEL_FAN_TABLES.get(product, FAN_TABLES)
 
 
+def m2_slots(product, nvme_class=NVME_CLASS):
+    """M.2 slots of a model: {slot: {present, controller, device, pci, port}} from sysfs.
+
+    port: the PCIe root port of the slot; pci: the NVMe controller behind it; device: its
+    first namespace (nvme0n1); controller: nvme0 (the key of sensors.nvme)."""
+    slots = {}
+    ctrls = []
+    for c in sorted(glob.glob(f"{nvme_class}/nvme*")):
+        name = os.path.basename(c)
+        if not re.fullmatch(r"nvme\d+", name):
+            continue
+        ctrls.append((name, os.path.realpath(f"{c}/device")))
+    for n, port in sorted(MODEL_M2.get(product, {}).items()):
+        slot = {"present": False, "controller": None, "device": None, "pci": None,
+                "port": f"0000:{port}"}
+        for name, path in ctrls:
+            parts = path.split("/")
+            if f"0000:{port}" in parts[:-1]:
+                ns = sorted(os.path.basename(x) for x in glob.glob(f"{nvme_class}/{name}/{name}n*")
+                            if re.fullmatch(rf"{name}n\d+", os.path.basename(x)))
+                slot.update(present=True, controller=name, pci=parts[-1],
+                            device=ns[0] if ns else None)
+                break
+        slots[str(n)] = slot
+    return slots
+
+
 BAYS = model_bays(read(DMI_PRODUCT, ""))
+PRODUCT = read(DMI_PRODUCT, "")
 FAN_TABLES = model_fan_tables(read(DMI_PRODUCT, ""))
 
 
@@ -816,7 +851,8 @@ class Daemon:
                        "power": read(f"{PLATFORM}/bay{n}_power") == "1",
                        "device": self.bays.get(n)}
         data = {"time": time.strftime("%F %T"), "epoch": int(time.time()),
-                "period": self.conf["fan_period"], "sensors": s, "bays": bays, **self.state}
+                "period": self.conf["fan_period"], "sensors": s, "bays": bays,
+                "m2": m2_slots(PRODUCT), **self.state}
         tmp = STATUS + ".tmp"
         with open(tmp, "w") as f:
             json.dump(data, f, indent=1)
@@ -1035,6 +1071,10 @@ def print_status(d):
         print(f"bay {n}        {'disk' if b['present'] else 'empty'}  "
               f"power {'on' if b['power'] else 'off'}  {b['device'] or ''}  "
               f"{deg(t) if b['device'] else ''}{sleep}")
+    for n, sl in d.get("m2", {}).items():
+        t = s["nvme"].get(sl["controller"]) if sl["controller"] else None
+        print(f"M.2 slot {n}   {'nvme' if sl['present'] else 'empty'}  {sl['device'] or ''}  "
+              f"{deg(t) if sl['present'] else ''}")
     for when, what in d["events"][-5:]:
         print(f"event        {when} {what}")
 
