@@ -39,9 +39,13 @@ if [ "$1" = configure ]; then
     if [ -z "$prev" ] || [ -e $removed ]; then
         rm -f $removed
         systemctl enable synohwd.service synodeb-nvme-power-limit.service synodeb-boot-ok.service \
-            synodeb-nut-firewall.service || true
-    elif [ -d /run/systemd/system ]; then
-        systemctl try-restart synohwd.service || true
+            synodeb-nut-firewall.service synodeb-emergency.service || true
+    else
+        # added in 4.1: network and ssh in emergency/rescue mode
+        if dpkg --compare-versions "$prev" lt 4.1~; then
+            systemctl enable synodeb-emergency.service || true
+        fi
+        [ ! -d /run/systemd/system ] || systemctl try-restart synohwd.service || true
     fi
     # UPS (NUT): 'synodeb-ups setup' writes /etc/nut once, when NUT is installed and not
     # configured yet (MODE=none, the Debian default); never over the admin's configuration,

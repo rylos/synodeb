@@ -1,0 +1,23 @@
+[Unit]
+Description=synodeb: network and ssh in emergency and rescue mode (no screen on a NAS)
+# runs only as part of emergency.target / rescue.target, where the normal units are stopped:
+# no default dependencies (sysinit.target can be what failed)
+DefaultDependencies=no
+After=emergency.service rescue.service
+Conflicts=shutdown.target
+Before=shutdown.target
+
+[Service]
+ExecStartPre=-/usr/lib/synodeb/emergency net
+# its own sshd with the system configuration and host keys
+ExecStart=/usr/sbin/sshd -D -e -o PidFile=/run/synodeb-emergency-sshd.pid
+# pam_nologin: /run/nologin can come back while the mode is entered
+ExecStartPost=-/usr/bin/rm -f /run/nologin
+RuntimeDirectory=sshd
+RuntimeDirectoryPreserve=yes
+# leaving the mode (systemctl default) stops this unit but not the ssh session that ran it
+KillMode=process
+Restart=on-failure
+
+[Install]
+WantedBy=emergency.target rescue.target

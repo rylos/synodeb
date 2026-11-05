@@ -24,6 +24,20 @@ They are in `/usr/sbin`, which is not in a normal user's `PATH`: run them with `
 
 The choice stays until it is changed again.
 
+## Emergency mode
+
+If the boot stops in emergency or rescue mode (typically a filesystem in `/etc/fstab` without
+`nofail` whose disk is missing, or a failed fsck), the NAS still brings up its network (as in
+`/etc/network/interfaces`, DHCP on the wired ports if that gives no address) and an ssh
+server, and sends an urgent notification with the cause and the address. Log in as usual,
+look at `sudo journalctl -xb`, fix the cause, then `sudo systemctl default` (or reboot).
+`systemctl` needs `sudo` there (D-Bus is not running).
+
+With the root account locked, the default when the installer set up `sudo`, systemd retries
+the normal boot every few minutes on its own; the ssh session stays up meanwhile. With a root
+password the NAS reboots by itself after 10 minutes, postponed while someone is logged in
+over ssh (`sudo systemctl stop 'synodeb-emergency-reboot*.timer'` to stay).
+
 ## Configuration
 
 - `/etc/synohwd.toml`: fan mode (the DSM quiet or cool curve, or full speed) and minimum fan

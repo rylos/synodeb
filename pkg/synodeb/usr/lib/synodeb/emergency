@@ -1,0 +1,56 @@
+#!/bin/sh
+# Emergency and rescue mode on a NAS without a screen (from synodeb-emergency.service and the
+# emergency/rescue drop-ins). systemd stops the network and ssh there, so the shell would be
+# reachable only on the internal serial port:
+#   emergency net      bring the network up as configured (/etc/network/interfaces), DHCP on
+#                      the wired ports if that gives no address; notify (urgent) with the
+#                      failed units and the address
+#   emergency reboot   the automatic reboot (10 minutes after entering the mode): postponed by
+#                      10 minutes while someone is logged in over ssh
+# Leaving the mode (systemctl default, or reboot) stops all this.
+set -u
+PATH=/usr/sbin:/usr/bin:/sbin:/bin
+addr() { ip -4 -o addr show scope global 2>/dev/null | awk '{ sub("/.*", "", $4); printf "%s%s %s", sep, $2, $4; sep = ", " }'; }
+case "${1:-}" in
+net)
+    mkdir -p /run/network
+    ifup -a --allow=auto >/dev/null 2>&1 || true
+    ifup -a --allow=hotplug >/dev/null 2>&1 || true
+    i=0
+    while [ -z "$(addr)" ] && [ $i -lt 20 ]; do sleep 1; i=$((i + 1)); done
+    if [ -z "$(addr)" ]; then
+        # nothing configured, or the configuration does not work: DHCP on every wired port
+        for d in /sys/class/net/*; do
+            n=${d##*/}
+            [ -e "$d/device" ] && [ ! -e "$d/wireless" ] || continue
+            ip link set "$n" up 2>/dev/null || true
+            dhcpcd -4 -b "$n" >/dev/null 2>&1 || true
+        done
+        i=0
+        while [ -z "$(addr)" ] && [ $i -lt 40 ]; do sleep 1; i=$((i + 1)); done
+    fi
+    # stopping systemd-user-sessions wrote /run/nologin: without this only root could log in
+    rm -f /run/nologin
+    # what stopped the boot: failed units, and units whose dependency failed (a mount waiting
+    # for a missing device fails that way, without being a failed unit)
+    failed=$( { systemctl --failed --plain --no-legend 2>/dev/null | awk '{ print $1 }'
+                journalctl -b -q -o cat 2>/dev/null | sed -n 's/^Dependency failed for \(.*\)\.$/\1/p'
+              } | awk '!seen[$0]++' | head -n 5 | awk '{ printf "%s%s", sep, $0; sep = "; " }')
+    a=$(addr)
+    echo "synodeb: emergency mode (${failed:-cause unknown}); network: ${a:-no address}; ssh is running"
+    /usr/lib/synodeb/notify -f -p urgent "emergency mode" \
+        "The boot stopped in emergency mode (${failed:-cause unknown}). ssh is available on ${a:-no address}: log in, fix the cause (journalctl -xb), then 'sudo systemctl default' or reboot. With the root account locked (the default with sudo) systemd retries the boot every few minutes; otherwise the NAS reboots by itself after 10 minutes without anyone logged in over ssh." || true
+    ;;
+reboot)
+    # logged-in ssh sessions only ("sshd-session: user@pts/0", "sshd: user@notty" before
+    # OpenSSH 9.8): a connection still logging in, or failing to, does not count
+    if pgrep -f '^sshd(-session)?: [^ []+@' >/dev/null 2>&1; then
+        echo "synodeb: emergency mode: someone is logged in over ssh, reboot postponed by 10 minutes"
+        systemd-run --unit="synodeb-emergency-reboot-$(date +%s)" --on-active=10min /usr/lib/synodeb/emergency reboot
+    else
+        systemctl reboot
+    fi
+    ;;
+*) sed -n '2,11p' "$0" >&2; exit 2 ;;
+esac
+exit 0
