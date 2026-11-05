@@ -9,8 +9,8 @@ Health|FailedHealthCheck|CurrentPendingSector|OfflineUncorrectableSector|FailedR
 *) prio=high ;;
 esac
 if [ -n "${1:-}" ] && [ -r "$1" ]; then
-    /usr/lib/synodeb/notify -p $prio "SMART ${SMART_DEVICE:-?}: ${SMART_FAILTYPE:-error}" - < "$1"
+    /usr/lib/synodeb/notify -s smart -p $prio "SMART ${SMART_DEVICE:-?}: ${SMART_FAILTYPE:-error}" - < "$1"
 else
-    /usr/lib/synodeb/notify -p $prio "SMART ${SMART_DEVICE:-?}: ${SMART_FAILTYPE:-error}" "${SMART_FULLMESSAGE:-${SMART_MESSAGE:-}}"
+    /usr/lib/synodeb/notify -s smart -p $prio "SMART ${SMART_DEVICE:-?}: ${SMART_FAILTYPE:-error}" "${SMART_FULLMESSAGE:-${SMART_MESSAGE:-}}"
 fi
 exit 0

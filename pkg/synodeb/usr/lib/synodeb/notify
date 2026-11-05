@@ -1,8 +1,9 @@
 #!/bin/sh
 # Single synodeb notifier: smartd, mdadm, synohwd, failed units, boot completed.
-#   /usr/lib/synodeb/notify [-p low|normal|high|urgent] [-f] TITLE [MESSAGE|-]
+#   /usr/lib/synodeb/notify [-p low|normal|high|urgent] [-f] [-s SOURCE] TITLE [MESSAGE|-]
 #     -p  priority (default normal); messages below MIN_PRIORITY are dropped
 #     -f  send even if the same message went out recently (repeat suppression)
+#     -s  what sends it (smart, raid, hw, ups, boot, dom, unit, emergency): for rynas
 #     -   read the message from standard input
 # Backends in /etc/synodeb/notify.conf: email (msmtp), Telegram, ntfy. With no backend
 # configured it only writes to the journal. Exits 0 if at least one backend worked (or there
@@ -11,16 +12,17 @@ set -u
 CONF=${SYNODEB_NOTIFY_CONF:-/etc/synodeb/notify.conf}
 STATE=/run/synodeb/notify
 
-prio=normal force=0
-while getopts p:f o; do
+prio=normal force=0 source=synodeb
+while getopts p:fs: o; do
     case $o in
     p) prio=$OPTARG ;;
     f) force=1 ;;
-    *) sed -n '3,6p' "$0" >&2; exit 2 ;;
+    s) source=$OPTARG ;;
+    *) sed -n '3,7p' "$0" >&2; exit 2 ;;
     esac
 done
 shift $((OPTIND - 1))
-[ $# -ge 1 ] || { sed -n '3,6p' "$0" >&2; exit 2; }
+[ $# -ge 1 ] || { sed -n '3,7p' "$0" >&2; exit 2; }
 # valid UTF-8 only (a cut multibyte character at the end is dropped): Telegram rejects the rest
 utf8() { if command -v iconv >/dev/null; then iconv -c -f UTF-8 -t UTF-8 2>/dev/null; else cat; fi; }
 # the title goes into a mail header: one line
@@ -49,6 +51,8 @@ rank() { case $1 in low) echo 1 ;; high) echo 3 ;; urgent) echo 4 ;; *) echo 2 ;
 # defaults (notify.conf overrides them)
 MIN_PRIORITY=normal
 REPEAT_MINUTES=30
+FORWARD=auto
+RYNAS_SOCKET=/run/rynas/notify.sock
 EMAIL_TO='' EMAIL_FROM='' SMTP_HOST='' SMTP_PORT=587 SMTP_TLS=starttls
 SMTP_USER='' SMTP_PASSWORD_FILE=''
 TELEGRAM_TOKEN='' TELEGRAM_CHAT_ID=''
@@ -59,6 +63,21 @@ NTFY_URL='' NTFY_TOKEN=''
 host=$(hostname 2>/dev/null || echo nas)
 logger -t synodeb-notify -p "user.$(case $prio in low) echo info ;; normal) echo notice ;; high) echo warning ;; *) echo crit ;; esac)" \
     -- "[$prio] $title${msg:+: $msg}" 2>/dev/null || true
+# rynas (NAS manager): while rynasd runs, it takes every notification (all priorities: its
+# own rules apply MIN_PRIORITY and the repeat suppression) and these channels are not used.
+# Anything but "202 Accepted" (rynasd stopped, an error) falls back to them.
+# FORWARD=off in notify.conf: never forward.
+if [ "$FORWARD" != off ] && [ -S "$RYNAS_SOCKET" ] && command -v curl >/dev/null; then
+    code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 --unix-socket "$RYNAS_SOCKET" \
+        --data-urlencode "title=$title" --data-urlencode "message=$msg" --data-urlencode "priority=$prio" \
+        --data-urlencode "source=$source" --data-urlencode "force=$force" \
+        http://localhost/v1/notify 2>/dev/null) || true
+    if [ "$code" = 202 ]; then
+        logger -t synodeb-notify -- "forwarded to rynas: $title" 2>/dev/null || true
+        exit 0
+    fi
+    logger -t synodeb-notify -- "rynas did not take it (HTTP ${code:-none}): own channels" 2>/dev/null || true
+fi
 [ "$(rank "$prio")" -ge "$(rank "$MIN_PRIORITY")" ] || exit 0
 [ -n "$EMAIL_TO$TELEGRAM_TOKEN$NTFY_URL" ] || exit 0
 

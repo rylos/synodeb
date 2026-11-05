@@ -37,7 +37,7 @@ BEGIN='### synodeb begin'
 END='### synodeb end'
 FAIL_NOTIFY=                               # notification title for a failure (sync)
 
-notify() { [ ! -x $NOTIFY ] || $NOTIFY "$@" >/dev/null 2>&1 || true; }
+notify() { [ ! -x $NOTIFY ] || $NOTIFY -s dom "$@" >/dev/null 2>&1 || true; }
 die() {
     echo "synodeb-dom: $*" >&2
     [ -z "$FAIL_NOTIFY" ] || notify -p high "$FAIL_NOTIFY" "$*"

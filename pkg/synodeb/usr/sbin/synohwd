@@ -177,7 +177,7 @@ def notify(title, message="", priority="high", then=None):
     def run():
         if os.access(NOTIFY, os.X_OK):
             try:
-                subprocess.run([NOTIFY, "-p", priority, title, message], timeout=NOTIFY_WAIT,
+                subprocess.run([NOTIFY, "-s", "hw", "-p", priority, title, message], timeout=NOTIFY_WAIT,
                                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                                stderr=subprocess.DEVNULL, check=False)
             except (OSError, subprocess.SubprocessError) as e:

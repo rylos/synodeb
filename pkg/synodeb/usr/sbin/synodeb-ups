@@ -54,7 +54,7 @@ LOOP_SECONDS=10
 
 mkdir -p $RUN
 log() { logger -p daemon.warning -t synodeb-ups -- "$*" 2>/dev/null || echo "synodeb-ups: $*" >&2; }
-notify() { [ -x $NOTIFY ] && $NOTIFY "$@" >/dev/null 2>&1 || true; }
+notify() { [ -x $NOTIFY ] && $NOTIFY -s ups "$@" >/dev/null 2>&1 || true; }
 run() {
     if [ "$DRYRUN" = 1 ]; then log "DRYRUN: $*"; else "$@"; fi
 }

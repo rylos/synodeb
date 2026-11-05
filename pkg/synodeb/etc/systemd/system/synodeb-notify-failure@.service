@@ -10,5 +10,5 @@ Before=shutdown.target
 
 [Service]
 Type=oneshot
-ExecStart=/bin/sh -c 'systemctl status --no-pager -l -n 15 "$1" 2>&1 | /usr/lib/synodeb/notify -p high "unit failed: $1" -' sh %i
+ExecStart=/bin/sh -c 'systemctl status --no-pager -l -n 15 "$1" 2>&1 | /usr/lib/synodeb/notify -s unit -p high "unit failed: $1" -' sh %i
 TimeoutStartSec=2min
