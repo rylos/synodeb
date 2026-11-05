@@ -1,0 +1,117 @@
+#!/bin/sh
+# synodeb-net — stable names for the onboard network ports: lan1, lan2... as labelled on the
+# back of the NAS (the order of DSM's eth0, eth1). Like Proxmox VE's interface pinning: a
+# systemd .link file per port, matched on its MAC address, so the names no longer depend on
+# the PCI layout, the kernel or the systemd naming scheme.
+#
+#   synodeb-net status               onboard ports, MAC, current and pinned name, link
+#   synodeb-net pin [--dry-run] [--no-initramfs]
+#                                    write /etc/systemd/network/10-synodeb-lanN.link, rename
+#                                    the ports in /etc/network/interfaces(.d) (backup *.synodeb-net),
+#                                    update the initramfs; the names change at the next boot
+#
+# The MAC addresses come from macs= on the kernel command line, which the Synology boot loader
+# adds from the DOM in DSM's port order (on the DS920+ the platform driver gives them to the
+# NICs, which have none of their own). Other network devices (USB adapters, PCIe cards) keep
+# the systemd names: enx<MAC> for USB is stable already.
+set -eu
+LINKDIR=/etc/systemd/network
+die() { echo "synodeb-net: $*" >&2; exit 1; }
+
+# MAC addresses of the onboard ports, in order, one per line (aa:bb:cc:dd:ee:ff)
+macs() {
+    tr ' ' '\n' < /proc/cmdline | sed -n 's/^macs=//p' | tr ',' '\n' | tr 'A-F' 'a-f' | sed -n 's/^\([0-9a-f]\{2\}\)\([0-9a-f]\{2\}\)\([0-9a-f]\{2\}\)\([0-9a-f]\{2\}\)\([0-9a-f]\{2\}\)\([0-9a-f]\{2\}\)$/\1:\2:\3:\4:\5:\6/p'
+}
+# current name of the interface with this MAC address (empty if none)
+ifname() {
+    for d in /sys/class/net/*; do
+        [ "$(cat "$d/address" 2>/dev/null)" = "$1" ] && [ -e "$d/device" ] && { echo "${d##*/}"; return 0; }
+    done
+    return 0
+}
+pinned() { # mac: name in an existing synodeb .link, empty if none
+    grep -l -i "^MACAddress=$1\$" $LINKDIR/10-synodeb-lan*.link 2>/dev/null | head -n 1 |
+        xargs -r sed -n 's/^Name=//p'
+}
+
+cmd=${1:-status}
+[ $# -eq 0 ] || shift
+dry=0 initramfs=1
+for a in "$@"; do
+    case $a in
+    --dry-run) dry=1 ;;
+    --no-initramfs) initramfs=0 ;;
+    *) die "unknown option $a" ;;
+    esac
+done
+list=$(macs)
+
+case $cmd in
+status)
+    [ -n "$list" ] || die "no macs= on the kernel command line (not booted from the DOM?)"
+    n=0
+    echo "$list" | while read -r mac; do
+        n=$((n + 1))
+        cur=$(ifname "$mac")
+        p=$(pinned "$mac")
+        link=
+        [ -z "$cur" ] || link=$(cat "/sys/class/net/$cur/operstate" 2>/dev/null)
+        printf 'LAN %s  %s  now %-16s pinned %-6s %s\n' "$n" "$mac" "${cur:--}" "${p:--}" "$link"
+    done
+    ;;
+pin)
+    [ "$(id -u)" = 0 ] || [ $dry = 1 ] || die "must run as root (sudo synodeb-net pin)"
+    [ -n "$list" ] || die "no macs= on the kernel command line (not booted from the DOM?): nothing pinned"
+    n=0 renames=
+    for mac in $list; do
+        n=$((n + 1))
+        new=lan$n
+        f=$LINKDIR/10-synodeb-$new.link
+        content="# synodeb-net pin: the onboard port labelled LAN $n (DSM eth$((n - 1)))
+[Match]
+MACAddress=$mac
+Type=ether
+
+[Link]
+Name=$new
+AlternativeNamesPolicy=database onboard slot path mac
+MACAddressPolicy=none"
+        if [ "$(cat "$f" 2>/dev/null)" != "$content" ]; then
+            echo "$f: $mac -> $new"
+            if [ $dry = 0 ]; then
+                mkdir -p $LINKDIR
+                printf '%s\n' "$content" > "$f.tmp" && mv -f "$f.tmp" "$f"
+            fi
+        fi
+        cur=$(ifname "$mac")
+        [ -z "$cur" ] || [ "$cur" = "$new" ] || renames="$renames $cur:$new"
+    done
+    # the network configuration follows the new names (also VLANs: enp3s0.10 -> lan1.10)
+    for f in /etc/network/interfaces /etc/network/interfaces.d/*; do
+        [ -f "$f" ] || continue
+        case $f in *.synodeb-net|*~|*.dpkg-*) continue ;; esac
+        expr=
+        for r in $renames; do
+            old=${r%%:*} new=${r#*:}
+            expr="$expr -e s/\\(^\\|[^[:alnum:]_.-]\\)$old\\([^[:alnum:]_-]\\|\$\\)/\\1$new\\2/g"
+        done
+        [ -n "$expr" ] || continue
+        # shellcheck disable=SC2086
+        out=$(sed $expr "$f")
+        [ "$out" != "$(cat "$f")" ] || continue
+        echo "$f: $(echo "$renames" | sed 's/^ //; s/:/ -> /g; s/ \([^ ]* -> \)/, \1/g')"
+        if [ $dry = 0 ]; then
+            cp -p "$f" "$f.synodeb-net"
+            printf '%s\n' "$out" > "$f.tmp" && chmod --reference="$f" "$f.tmp" && mv -f "$f.tmp" "$f"
+        fi
+    done
+    if [ $dry = 1 ]; then
+        echo "synodeb-net: dry run, nothing written"
+    else
+        # the initramfs renames the ports too: it must have the same .link files
+        [ $initramfs = 0 ] || update-initramfs -u -k all
+        [ -z "$renames" ] || echo "synodeb-net: the new names take effect at the next boot"
+    fi
+    ;;
+*) sed -n '2,12p' "$0"; exit 2 ;;
+esac

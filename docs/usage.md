@@ -12,6 +12,7 @@ They are in `/usr/sbin`, which is not in a normal user's `PATH`: run them with `
 | `sudo synodeb-dom default debian\|debian-old\|dsm` | default boot entry (then reboot) |
 | `sudo synodeb-dom setup` | rewrite the boot entries (after changing `/etc/default/synodeb`, or when `status` says they are outdated) |
 | `sudo synodeb-ups status` | UPS and Safe Mode |
+| `sudo synodeb-net status` | onboard network ports: MAC, name, link |
 | `sudo synodeb-dsm` | mount DSM volumes read-only (`synodeb-dsm --help`) |
 
 ## Switching between Debian and DSM
@@ -23,6 +24,16 @@ They are in `/usr/sbin`, which is not in a normal user's `PATH`: run them with `
 | Debian | Debian, previous kernel | `sudo synodeb-dom default debian-old && sudo reboot` |
 
 The choice stays until it is changed again.
+
+## Network port names
+
+The onboard ports are called `lan1`, `lan2`... as labelled on the back of the NAS, whatever
+the kernel or systemd version (one systemd `.link` file per port in `/etc/systemd/network`,
+matched on its MAC address, as Proxmox VE does). The installer sets this up; the systemd name
+(e.g. `enp3s0`) stays as an alternative name. On a system installed before, run
+`sudo synodeb-net pin` (it also renames the ports in `/etc/network/interfaces`, keeping a
+`.synodeb-net` copy) and reboot. Wake-on-LAN (`wol` in `/etc/synohwd.toml`) applies to the
+`lan*` ports. USB adapters keep their `enx<MAC>` names, which are stable already.
 
 ## Emergency mode
 

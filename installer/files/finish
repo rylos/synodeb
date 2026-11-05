@@ -5,7 +5,8 @@
 #  2. linux-image-synodeb + synodeb (+ openssh-server; firmware-realtek if a Realtek
 #     NIC asked for its firmware);
 #  3. mdadm.conf: this system's arrays + "AUTO -all" (arrays of other systems, such as
-#     DSM's, are never assembled), then a new initramfs;
+#     DSM's, are never assembled), lan1/lan2 port names (synodeb-net pin), then a new
+#     initramfs;
 #  4. the DOM is unlocked (early mounted it read-only on /hd-media), the installer files
 #     are removed from it (room for the kernel), then synodeb-dom sync + setup: kernel and
 #     initrd on the DOM, DEBIAN entry with root=... as the default, INSTALLER entry (with
@@ -80,6 +81,10 @@ if [ -x $T/sbin/mdadm ] || [ -x $T/usr/sbin/mdadm ]; then
         [ -z "$arrays" ] || printf '%s\n' "$arrays"
     } > $T/etc/mdadm/mdadm.conf
 fi
+# lan1, lan2... for the onboard ports (synodeb-net): not fatal, the system boots with the
+# systemd names otherwise
+step "network port names"
+chroot_run synodeb-net pin --no-initramfs >> $LOG 2>&1 || log "synodeb-net pin failed: systemd port names kept"
 step "update-initramfs"
 chroot_run update-initramfs -u -k all >> $LOG 2>&1 || fail "update-initramfs"
 
