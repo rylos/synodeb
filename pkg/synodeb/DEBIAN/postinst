@@ -64,4 +64,5 @@ if [ "$1" = configure ]; then
         : > $mark
     fi
     [ ! -d /etc/nut ] || /usr/sbin/synodeb-ups netbind || true
+    [ ! -d /etc/nut ] || /usr/sbin/synodeb-ups admin-user || true
 fi

@@ -8,9 +8,14 @@
 #   synodeb-ups passwd                    ask for the monuser password (e.g. Home Assistant: the
 #                                         same as DSM) and write it to upsd.users and upsmon.conf
 #   synodeb-ups status                    UPS and Safe Mode status
+#   synodeb-ups test quick|deep|stop|result
+#                                         UPS battery test (NUT user admin, local): start the
+#                                         quick or deep test, stop it, show ups.test.result
 #   synodeb-ups firewall                  nftables rules for upsd (synodeb-nut-firewall.service)
 #   synodeb-ups netbind                   (postinst) bind nut-server to the firewall unit when
 #                                         upsd listens on the network and the drop-in is missing
+#   synodeb-ups admin-user                (postinst) add the NUT user admin of 'test' to an
+#                                         upsd.users written by setup before 4.3
 #   events (from upssched, CMDSCRIPT):     onbatt online lowbatt nocomm fsd waittimeup
 #   safemode-shutdowncmd                   upsmon SHUTDOWNCMD (critical UPS: OB+LB, FSD,
 #                                          OB and then unreachable)
@@ -41,6 +46,7 @@ NOTIFY=/usr/lib/synodeb/notify
 RUN=/run/synodeb-ups
 SAFE=$RUN/safemode          # Safe Mode flag
 ONB=$RUN/onbatt             # on-battery flag
+TESTING=$RUN/testing        # battery test started by 'synodeb-ups test' (quick|deep)
 REBOOTING=$RUN/rebooting
 # upsmon POWERDOWNFLAG (critical UPS): if it exists at shutdown, the Debian hook
 # /usr/lib/systemd/system-shutdown/nutshutdown powers the UPS off (upsdrvctl shutdown). DSM does
@@ -107,11 +113,22 @@ pre_safemode_hooks() { # $1 = reason
 # SAFEMODE_AFTER: a timer started when the UPS goes on battery
 start_wait_timer() {
     [ "${SAFEMODE_AFTER:-0}" -gt 0 ] 2>/dev/null || return 0
-    systemd-run --unit=synodeb-ups-wait --on-active="${SAFEMODE_AFTER}s" --timer-property=AccuracySec=1s \
-        /usr/sbin/synodeb-ups waittimeup >/dev/null 2>&1 &&
-        log "Safe Mode in $SAFEMODE_AFTER s unless power returns (SAFEMODE_AFTER)"
+    wait_timer "$SAFEMODE_AFTER" && log "Safe Mode in $SAFEMODE_AFTER s unless power returns (SAFEMODE_AFTER)"
 }
-stop_wait_timer() { systemctl stop synodeb-ups-wait.timer >/dev/null 2>&1 || true; }
+wait_timer() { # seconds; a new unit each time (the elapsed one may still exist)
+    systemd-run --unit="synodeb-ups-wait-$(date +%s%N)" --on-active="${1}s" --timer-property=AccuracySec=1s \
+        /usr/sbin/synodeb-ups waittimeup >/dev/null 2>&1
+}
+stop_wait_timer() { systemctl stop 'synodeb-ups-wait*.timer' >/dev/null 2>&1 || true; }
+# a battery test started here is running: the UPS may report OB until it ends (cleared at
+# ONLINE; at most 10 min for the quick test, 3 h for the deep one)
+testing() {
+    [ -f $TESTING ] || return 1
+    case $(cat $TESTING 2>/dev/null) in deep) max=10800 ;; *) max=600 ;; esac
+    [ $(($(date +%s) - $(date -r $TESTING +%s))) -lt $max ] && return 0
+    rm -f $TESTING
+    return 1
+}
 
 safemode() { # $1 = reason
     rm -f $KILLPOWER
@@ -210,8 +227,13 @@ online() { # like DSM, on power restore
     stop_wait_timer
     if [ -f $ONB ]; then
         rm -f $ONB
-        [ -f $SAFE ] || { log "UPS back online, no Safe Mode"; notify -p normal "UPS: power restored" "battery $(var battery.charge)%"; }
+        if testing; then
+            log "UPS back online: end of the battery test ($(var ups.test.result))"
+        elif [ ! -f $SAFE ]; then
+            log "UPS back online, no Safe Mode"; notify -p normal "UPS: power restored" "battery $(var battery.charge)%"
+        fi
     fi
+    rm -f $TESTING
     [ -f $SAFE ] || return 0
     # in Safe Mode: confirm with a second reading (like the loop) and reboot
     sleep "$LOOP_SECONDS"
@@ -219,19 +241,70 @@ online() { # like DSM, on power restore
     return 0
 }
 
-subst_password() { # $1 = password; writes upsd.users and upsmon.conf from the templates
+subst_password() { # $1 = monuser password; writes upsd.users and upsmon.conf from the templates
     umask 027
+    apw=$(admin_password)
+    case $apw in ''|__ADMIN_PASSWORD__) apw=$(randpw) ;; esac
     for f in upsd.users upsmon.conf; do
-        python3 -I -c 'import sys; t=open(sys.argv[1]).read(); open(sys.argv[2],"w").write(t.replace("__PASSWORD__", sys.argv[3]))' \
-            "$TPL/$f" "/etc/nut/$f.new" "$1"
+        python3 -I -c 'import sys; t=open(sys.argv[1]).read(); open(sys.argv[2],"w").write(t.replace("__PASSWORD__", sys.argv[3]).replace("__ADMIN_PASSWORD__", sys.argv[4]))' \
+            "$TPL/$f" "/etc/nut/$f.new" "$1" "$apw"
         chown root:nut "/etc/nut/$f.new" 2>/dev/null || true
         chmod 640 "/etc/nut/$f.new"
         mv "/etc/nut/$f.new" "/etc/nut/$f"
     done
 }
 
-current_password() {
-    sed -n 's/^[[:space:]]*password[[:space:]]*=[[:space:]]*//p' /etc/nut/upsd.users 2>/dev/null | head -1
+current_password() { user_password monuser; }
+admin_password() { user_password admin; }
+user_password() { # password of [$1] in upsd.users
+    awk -v u="[$1]" '$1 ~ /^\[/ { in_u = ($1 == u); next }
+        in_u && $1 == "password" && $2 == "=" { print $3; exit }' /etc/nut/upsd.users 2>/dev/null
+}
+randpw() { head -c 18 /dev/urandom | base64 | tr -d '/+='; }
+
+# the battery test, through upsd as the local NUT user admin (the password never on a command
+# line: upscmd would show it in ps)
+test_cmd() {
+    case ${1:-} in
+    quick) c=test.battery.start.quick ;;
+    deep) c=test.battery.start.deep ;;
+    stop) c=test.battery.stop ;;
+    result) echo "${UPS%@*}: $(var ups.test.result || echo 'no ups.test.result')"; return 0 ;;
+    *) echo "usage: synodeb-ups test quick|deep|stop|result" >&2; return 2 ;;
+    esac
+    [ "$(id -u)" = 0 ] || { echo "synodeb-ups: must run as root (sudo synodeb-ups test $1)" >&2; return 1; }
+    pw=$(admin_password)
+    case $pw in ''|__ADMIN_PASSWORD__)
+        echo "synodeb-ups: no NUT user admin in /etc/nut/upsd.users: run 'sudo synodeb-ups setup --keep-password'" >&2
+        return 1 ;;
+    esac
+    upscmd -l "$UPS" 2>/dev/null | grep -q "^$c " || { echo "synodeb-ups: the UPS does not support $c" >&2; return 1; }
+    if [ "$1" != stop ]; then
+        [ "$(status)" = OL ] || { echo "synodeb-ups: the UPS is not on mains power: no battery test" >&2; return 1; }
+        echo "$1" > $TESTING
+    fi
+    log "battery test: $c"
+    if ! out=$(PW=$pw python3 -I - "$UPS" "$c" <<'EOT'
+import os, socket, sys
+ups, host = (sys.argv[1].split("@") + ["localhost"])[:2]
+host, _, port = host.partition(":")
+s = socket.create_connection((host, int(port or 3493)), timeout=10)
+f = s.makefile("rw", newline="\n")
+for line in ("USERNAME admin", "PASSWORD " + os.environ["PW"], "INSTCMD %s %s" % (ups, sys.argv[2])):
+    f.write(line + "\n"); f.flush()
+    r = f.readline().strip()
+    if not r.startswith("OK"):
+        print("%s: %s" % (line.split()[0], r)); sys.exit(1)
+f.write("LOGOUT\n"); f.flush()
+print(r)
+EOT
+    ); then
+        rm -f $TESTING
+        echo "synodeb-ups: $c refused by upsd: $out" >&2
+        return 1
+    fi
+    [ "$1" != stop ] || rm -f $TESTING
+    echo "$c: $out"
 }
 
 setup() {
@@ -251,7 +324,7 @@ setup() {
     fi
     pw=
     [ -z "$keep" ] || pw=$(current_password)
-    case $pw in ''|__PASSWORD__) pw=$(head -c 18 /dev/urandom | base64 | tr -d '/+=') ;; esac
+    case $pw in ''|__PASSWORD__) pw=$(randpw) ;; esac
     [ -f /etc/nut/.synodeb-orig.tar ] || tar -C /etc/nut -cf /etc/nut/.synodeb-orig.tar . 2>/dev/null || true
     for f in nut.conf ups.conf upsd.conf upssched.conf; do
         install -m 640 -o root -g nut "$TPL/$f" "/etc/nut/$f" 2>/dev/null || install -m 640 "$TPL/$f" "/etc/nut/$f"
@@ -271,6 +344,8 @@ setup() {
         systemctl enable nut.target nut-driver.target nut-server.service nut-monitor.service \
             synodeb-nut-firewall.service >/dev/null 2>&1 || true
         echo "USB UPS found ($u): NUT enabled"
+        # upsd reads upsd.users only at start or reload
+        [ ! -d /run/systemd/system ] || systemctl try-reload-or-restart nut-server.service >/dev/null 2>&1 || true
         echo "monuser password: for network clients set it with 'synodeb-ups passwd'"
     else
         # without a UPS the NUT driver would fail and restart forever (and notify each time)
@@ -375,10 +450,24 @@ passwd_cmd() {
 case "${1:-}" in
 setup) shift; setup "$@"; exit 0 ;;
 passwd) passwd_cmd; exit 0 ;;
+test) shift; test_cmd "$@"; exit $? ;;
 firewall) firewall; exit $? ;;
 netbind)    # postinst: a configuration from before the binding (3.1) that listens on the network
     if [ ! -f "$NETBIND" ] && grep -q '^# synodeb' /etc/nut/upsmon.conf 2>/dev/null && listens_network; then
         netbind; echo "synodeb-ups: nut-server now bound to synodeb-nut-firewall ($NETBIND)"
+    fi
+    exit 0 ;;
+admin-user) # postinst: a configuration from before 4.3, written by setup, without the user admin
+    if grep -q '^# synodeb' /etc/nut/upsd.users 2>/dev/null && ! grep -q '^\[admin\]' /etc/nut/upsd.users; then
+        umask 027
+        { cat /etc/nut/upsd.users; echo
+          sed -n '/^# Local only/,$p' "$TPL/upsd.users" | sed "s/__ADMIN_PASSWORD__/$(randpw)/"
+        } > /etc/nut/upsd.users.new
+        chown root:nut /etc/nut/upsd.users.new 2>/dev/null || true
+        chmod 640 /etc/nut/upsd.users.new
+        mv /etc/nut/upsd.users.new /etc/nut/upsd.users
+        [ ! -d /run/systemd/system ] || systemctl try-reload-or-restart nut-server.service >/dev/null 2>&1 || true
+        echo "synodeb-ups: NUT user admin added to /etc/nut/upsd.users (battery test)"
     fi
     exit 0 ;;
 status)
@@ -398,8 +487,12 @@ onbatt)
     statelog onbatt
     if [ ! -f $ONB ]; then
         : > $ONB
-        log "UPS on battery"
-        notify -p high "UPS on battery" "battery $(var battery.charge)%, runtime $(var battery.runtime) s"
+        if testing; then
+            log "UPS on battery: battery test running"
+        else
+            log "UPS on battery"
+            notify -p high "UPS on battery" "battery $(var battery.charge)%, runtime $(var battery.runtime) s"
+        fi
         start_wait_timer
     fi ;;
 online) statelog online; online ;;
@@ -419,8 +512,17 @@ nocomm)
     onbatt) [ -f $ONB ] && safemode nocomm ;;
     esac ;;
 fsd) statelog fsd; safemode fsd ;;
-waittimeup) statelog waittimeup; safemode waittimeup ;;
+waittimeup)
+    statelog waittimeup
+    # during a battery test the UPS reports OB with mains present: wait for the test to end
+    # (ONLINE stops the timer), then the real outage, if any, gets Safe Mode a minute later
+    if testing; then
+        log "SAFEMODE_AFTER elapsed during the battery test: checking again in 60 s"
+        wait_timer 60
+    else
+        safemode waittimeup
+    fi ;;
 safemode-shutdowncmd) statelog shutdowncmd; safemode shutdowncmd ;;
-*) sed -n '2,27p' "$0" >&2; exit 2 ;;
+*) sed -n '2,33p' "$0" >&2; exit 2 ;;
 esac
 exit 0

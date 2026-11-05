@@ -3,3 +3,11 @@
 [monuser]
 	password = __PASSWORD__
 	upsmon primary
+
+# Local only (synodeb-ups test): may start and stop the UPS battery test, nothing else.
+# Random password, kept by 'synodeb-ups setup --keep-password'; not for network clients.
+[admin]
+	password = __ADMIN_PASSWORD__
+	instcmds = test.battery.start.quick
+	instcmds = test.battery.start.deep
+	instcmds = test.battery.stop

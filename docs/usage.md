@@ -12,6 +12,7 @@ They are in `/usr/sbin`, which is not in a normal user's `PATH`: run them with `
 | `sudo synodeb-dom default debian\|debian-old\|dsm` | default boot entry (then reboot) |
 | `sudo synodeb-dom setup` | rewrite the boot entries (after changing `/etc/default/synodeb`, or when `status` says they are outdated) |
 | `sudo synodeb-ups status` | UPS and Safe Mode |
+| `sudo synodeb-ups test quick` | UPS battery self-test (`deep`, `stop`, `result`) |
 | `sudo synodeb-net status` | onboard network ports: MAC, name, link |
 | `sudo synodeb-dsm` | mount DSM volumes read-only (`synodeb-dsm --help`) |
 
@@ -112,6 +113,14 @@ when mains power is back.
 - **Before Safe Mode**: executables in `/etc/synodeb/ups-pre-safemode.d` run first, in name
   order, all within `PRE_SAFEMODE_TIMEOUT` seconds (default 120), e.g. to stop VMs and
   containers cleanly. See the README there.
+- **Battery test**: `sudo synodeb-ups test quick` (or `deep`, `stop`; `test result` shows the
+  last result) asks the UPS for its self-test, if it supports it, as the NUT user `admin`.
+  That user exists only for this, may run nothing but the battery test commands and has a
+  random password that `setup` keeps (the upgrade to synodeb 4.3 adds it to a configuration
+  written before). While a test started this way runs, the UPS
+  going on battery is not notified and `SAFEMODE_AFTER` waits for the end of the test; low
+  battery still means Safe Mode, so a deep test, which discharges the battery, is better run
+  only with the NAS attended.
 
 ## DSM data
 
