@@ -49,9 +49,9 @@ sudo synodeb-dom sync --root /mnt/snapshot
 It copies the two kernels that root had chosen (its `/boot/vmlinuz` and `vmlinuz.old` links),
 only if their modules are in it, makes DEBIAN the default boot entry and arms a kernel trial
 when DEBIAN_OLD is there. The DOM is not touched when the snapshot lacks the modules of its
-kernel, e.g. with `/boot` on a separate partition. The snapshot must then become the subvolume
-the boot entries name (`rootflags=subvol=@rootfs`, see `sudo synodeb-dom status`), or the
-entries must be rewritten with `sudo synodeb-dom setup` once it runs.
+kernel, e.g. with `/boot` on a separate partition. To boot, the snapshot must then take the
+place of the subvolume the boot entries name (`rootflags=subvol=@rootfs`, see
+`sudo synodeb-dom status`).
 
 ## Headers and modules
 
