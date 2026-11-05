@@ -6,6 +6,8 @@ import stat
 import tempfile
 import threading
 import time
+import json
+import types
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 spec = importlib.util.spec_from_file_location("synohwd", os.path.join(HERE, "synohwd.py"))
@@ -234,6 +236,7 @@ with tempfile.TemporaryDirectory() as d:
 # --- synohwd send without the daemon ---
 with tempfile.TemporaryDirectory() as d:
     m.CMD_FIFO = f"{d}/cmd"
+    m.CTL_SOCK = f"{d}/control.sock"              # none: send falls back to the FIFO
 
     def send(cmd):
         try:
@@ -255,6 +258,74 @@ with tempfile.TemporaryDirectory() as d:
     finally:
         m.os.write = real_write
     os.close(rd)
+
+# --- control socket ---
+with tempfile.TemporaryDirectory() as d:
+    import socket, threading
+    m.CTL_SOCK = f"{d}/control.sock"
+    m.STATUS = f"{d}/status.json"
+
+    class FakeUp:
+        def __init__(self):
+            self.sent = []
+
+        def send(self, cmd):
+            m.check_cmd(cmd)
+            self.sent.append(cmd)
+
+    fake = types.SimpleNamespace(up=FakeUp(), stop=threading.Event())
+    for name in ("ctl_request", "ctl_conn", "ctl_loop"):
+        setattr(fake, name, types.MethodType(getattr(m.Daemon, name), fake))
+    t = threading.Thread(target=fake.ctl_loop, daemon=True)
+    t.start()
+    for _ in range(50):
+        if os.path.exists(m.CTL_SOCK):
+            break
+        time.sleep(0.05)
+    check("ctl socket mode 0600", oct(os.stat(m.CTL_SOCK).st_mode & 0o777), "0o600")
+
+    def ctl(*lines):
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as c:
+            c.settimeout(5)
+            c.connect(m.CTL_SOCK)
+            c.sendall("".join(x + "\n" for x in lines).encode())
+            buf = b""
+            while buf.count(b"\n") < len(lines):
+                data = c.recv(4096)
+                if not data:
+                    break
+                buf += data
+        return [json.loads(x) for x in buf.decode().splitlines()]
+
+    check("ctl ping", ctl('{"cmd": "ping"}'), [{"ok": True, "schema": 1}])
+    check("ctl status before the first write", ctl('{"cmd": "status"}')[0]["ok"], False)
+    with open(m.STATUS, "w") as fh:
+        json.dump({"fan_duty": 30}, fh)
+    check("ctl status", ctl('{"cmd": "status"}'), [{"ok": True, "status": {"fan_duty": 30}}])
+    r = ctl('{"cmd": "send", "up": "V40"}', '{"cmd": "send", "up": "1"}', "nonsense",
+            '{"cmd": "reboot"}', '{"cmd": "send", "up": 2}', "[1]")
+    check("ctl send ok", r[0], {"ok": True})
+    check("ctl send '1' refused with the reason", "hard power-off" in r[1]["error"], True)
+    check("ctl not JSON", r[2]["ok"] is False and "not JSON" in r[2]["error"], True)
+    check("ctl unknown cmd", r[3]["ok"], False)
+    check("ctl send without a string", r[4]["ok"], False)
+    check("ctl not an object", r[5]["ok"], False)
+    check("ctl only the valid command reached the uP", fake.up.sent, ["V40"])
+
+    def send(cmd):
+        try:
+            m.send(cmd); return "ok"
+        except SystemExit as e:
+            return str(e)
+
+    m.CMD_FIFO = f"{d}/no-fifo"
+    check("synohwd send through the socket", send("2"), "ok")
+    check("synohwd send through the socket, read back", fake.up.sent[-1], "2")
+    fake.up.send = lambda cmd: (_ for _ in ()).throw(ValueError("uP says no"))
+    check("synohwd send: daemon refusal shown", send("2"), "refused: uP says no")
+    fake.stop.set()
+    t.join(5)
+    check("ctl socket removed at exit", os.path.exists(m.CTL_SOCK), False)
 
 # --- malformed uP commands ---
 for cmd in ("VV11", "V", "V9", "VX1", "C", "2C", "LA1", "x", "V10 ", "V1a", "VVV"):

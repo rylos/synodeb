@@ -37,6 +37,14 @@ Sub-commands:
   synohwd run            the daemon (systemd)
   synohwd status         sensors, fans, bays (from /run/synohwd/status.json)
   synohwd send CMD       raw uP command through the daemon, e.g. 'synohwd send 2'
+
+Control socket /run/synohwd/control.sock (root only), for other programs: one JSON object
+per line in each direction, schema 1.
+  {"cmd": "ping"}               -> {"ok": true, "schema": 1}
+  {"cmd": "status"}             -> {"ok": true, "status": <the content of status.json>}
+  {"cmd": "send", "up": "2"}    -> {"ok": true}, the commands 'synohwd send' accepts
+  anything else or an error     -> {"ok": false, "error": "<text>"}
+The FIFO /run/synohwd/cmd (one command per line, no reply) stays for scripts.
 """
 
 import errno
@@ -48,6 +56,7 @@ import re
 import select
 import shutil
 import signal
+import socket
 import subprocess
 import sys
 import termios
@@ -59,6 +68,8 @@ CONF_PATH = "/etc/synohwd.toml"
 RUN_DIR = "/run/synohwd"
 STATUS = f"{RUN_DIR}/status.json"
 CMD_FIFO = f"{RUN_DIR}/cmd"
+CTL_SOCK = f"{RUN_DIR}/control.sock"
+CTL_SCHEMA = 1
 # the synodeb platform driver: synology-nas, synology-ds923 in the kernels before 6.18.60-7 /
 # 7.3.1-7 (one of them may still be DEBIAN_OLD on the DOM)
 PLATFORM = next((p for p in ("/sys/devices/platform/synology-nas", "/sys/devices/platform/synology-ds923")
@@ -952,6 +963,94 @@ class Daemon:
                     log.warning("%s", e)
             buf = buf[-256:]
 
+    def ctl_request(self, line):
+        """One control socket request (a JSON line) -> the reply object."""
+        try:
+            req = json.loads(line)
+        except ValueError as e:
+            return {"ok": False, "error": f"not JSON: {e}"}
+        if not isinstance(req, dict):
+            return {"ok": False, "error": "not a JSON object"}
+        cmd = req.get("cmd")
+        if cmd == "ping":
+            return {"ok": True, "schema": CTL_SCHEMA}
+        if cmd == "status":
+            try:
+                with open(STATUS) as f:
+                    return {"ok": True, "status": json.load(f)}
+            except (OSError, ValueError) as e:
+                return {"ok": False, "error": f"no status yet: {e}"}
+        if cmd == "send":
+            up = req.get("up")
+            if not isinstance(up, str):
+                return {"ok": False, "error": "send: 'up' must be a string"}
+            try:
+                self.up.send(up)
+            except ValueError as e:
+                return {"ok": False, "error": str(e)}
+            except OSError as e:
+                return {"ok": False, "error": f"uP write: {e.strerror}"}
+            log.info("sent %r (control socket)", up)
+            return {"ok": True}
+        return {"ok": False, "error": f"unknown cmd {cmd!r}"}
+
+    def ctl_conn(self, conn):
+        """A control socket client: requests until it closes, idle 30 s, lines of 4 KB."""
+        with conn:
+            conn.settimeout(30)
+            buf = b""
+            try:
+                while not self.stop.is_set():
+                    data = conn.recv(4096)
+                    if not data:
+                        return
+                    buf += data
+                    while b"\n" in buf:
+                        line, buf = buf.split(b"\n", 1)
+                        if line.strip():
+                            reply = self.ctl_request(line.decode("utf-8", "replace"))
+                            conn.sendall((json.dumps(reply) + "\n").encode())
+                    if len(buf) > 4096:
+                        conn.sendall(b'{"ok": false, "error": "line too long"}\n')
+                        return
+            except OSError:              # timeout, client gone
+                return
+
+    def ctl_loop(self):
+        """The control socket. Failing to create it is logged, not fatal: the FIFO works."""
+        try:
+            srv = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            try:
+                os.unlink(CTL_SOCK)
+            except FileNotFoundError:
+                pass
+            old = os.umask(0o177)        # root only from the start, no chmod race
+            try:
+                srv.bind(CTL_SOCK)
+            finally:
+                os.umask(old)
+            srv.listen(8)
+            srv.settimeout(1.0)
+        except OSError as e:
+            log.error("control socket %s: %s (the FIFO %s still works)", CTL_SOCK, e, CMD_FIFO)
+            return
+        with srv:
+            while not self.stop.is_set():
+                try:
+                    conn, _ = srv.accept()
+                except TimeoutError:
+                    continue
+                except OSError as e:
+                    log.warning("control socket: %s", e)
+                    self.stop.wait(1)
+                    continue
+                threading.Thread(target=self.ctl_conn, args=(conn,), name="ctl_conn",
+                                 daemon=True).start()
+        try:
+            os.unlink(CTL_SOCK)
+        except OSError:
+            pass
+
     def start_thread(self, target, *args):
         def run():
             try:
@@ -987,6 +1086,7 @@ class Daemon:
             self.apply_standby()
             self.apply_wol()
             self.start_thread(self.cmd_loop)
+            self.start_thread(self.ctl_loop)
             if self.conf["disk_leds"]:
                 self.start_thread(self.led_loop)
             self.control_loop()
@@ -1084,6 +1184,27 @@ def send(cmd):
         check_cmd(cmd)
     except ValueError as e:
         raise SystemExit(f"refused: {e}")
+    # the control socket answers; a daemon from before it (during an upgrade) has the FIFO only
+    try:
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as c:
+            c.settimeout(10)
+            c.connect(CTL_SOCK)
+            c.sendall((json.dumps({"cmd": "send", "up": cmd}) + "\n").encode())
+            reply = b""
+            while not reply.endswith(b"\n"):
+                data = c.recv(4096)
+                if not data:
+                    break
+                reply += data
+        r = json.loads(reply)
+    except (FileNotFoundError, ConnectionRefusedError):
+        pass
+    except (OSError, ValueError) as e:
+        raise SystemExit(f"{CTL_SOCK}: {e}")
+    else:
+        if not r.get("ok"):
+            raise SystemExit(f"refused: {r.get('error')}")
+        return
     try:
         fd = os.open(CMD_FIFO, os.O_WRONLY | os.O_NONBLOCK)
     except FileNotFoundError:

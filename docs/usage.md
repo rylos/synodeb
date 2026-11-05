@@ -77,6 +77,9 @@ over ssh (`sudo systemctl stop 'synodeb-emergency-reboot*.timer'` to stay).
   duty, beeper, disk LEDs, power on after AC loss, Wake-on-LAN. The curves themselves are
   fixed. The fans go to full speed while a fan has failed, or when the CPU, an NVMe drive or a
   disk that had a temperature sensor gives no reading.
+  Other programs can read `/run/synohwd/status.json`, or use the control socket
+  `/run/synohwd/control.sock` (root only, one JSON object per line: `ping`, `status`, `send`
+  with the reply or the reason of a refusal; see `synohwd --help`).
 - `/etc/synodeb/notify.conf`: notifications by e-mail (SMTP), Telegram or ntfy, for SMART,
   RAID, fans, UPS, failed services and unclean shutdowns. Nothing is sent until a channel is
   configured. While the rynas NAS manager runs (`/run/rynas/notify.sock`),
