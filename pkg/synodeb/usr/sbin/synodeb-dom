@@ -4,6 +4,10 @@
 # and initrd from synoboot2:/synodeb; everything else lives on the data disks.
 #
 #   synodeb-dom sync               copy the current (and previous) kernel + initrd to the DOM
+#   synodeb-dom sync --root DIR    the same from the root filesystem mounted on DIR, before
+#                                  it becomes / (rollback to a snapshot): its kernels, chosen
+#                                  as when it ran, with their modules; DEBIAN becomes the
+#                                  default, with a kernel trial if DEBIAN_OLD is there
 #   synodeb-dom setup [--root R]   write the DEBIAN / DEBIAN_OLD boot entries (root= from
 #                                  /etc/default/synodeb, else from /etc/fstab), make DEBIAN
 #                                  the default and drop the INSTALLER entry and its files
@@ -120,11 +124,11 @@ outdated() {
 }
 OUTDATED_MSG=
 
-same() { cmp -s "/boot/$1-$2" "$S/$1$3"; }            # file version suffix
+same() { cmp -s "$B/$1-$2" "$S/$1$3"; }            # file version suffix
 pair_same() { same vmlinuz "$1" "$2" && same initrd.img "$1" "$2"; }
 pair_need() { # KB needed to copy the pair (only the files that differ) + margin
     n=512
-    for f in vmlinuz initrd.img; do same $f "$1" "$2" || n=$(( n + $(kb "/boot/$f-$1") )); done
+    for f in vmlinuz initrd.img; do same $f "$1" "$2" || n=$(( n + $(kb "$B/$f-$1") )); done
     echo $n
 }
 old_kb() { # KB freed by removing DEBIAN_OLD (a hard link to DEBIAN frees nothing)
@@ -141,8 +145,8 @@ drop() { rm -f "$S/vmlinuz$1" "$S/initrd.img$1"; }
 pair() { # version suffix
     for f in vmlinuz initrd.img; do
         same $f "$1" "$2" && continue
-        cp "/boot/$f-$1" "$S/$f$2.tmp" ||
-            { echo "synodeb-dom: copying /boot/$f-$1 failed" >&2; rm -f "$S"/*.tmp; return 1; }
+        cp "$B/$f-$1" "$S/$f$2.tmp" ||
+            { echo "synodeb-dom: copying $B/$f-$1 failed" >&2; rm -f "$S"/*.tmp; return 1; }
     done
     sync
     for f in vmlinuz initrd.img; do
@@ -272,14 +276,30 @@ esac
 case "$cmd" in
 sync)
     FAIL_NOTIFY="DOM update failed"
-    cd /boot
+    # --root DIR: a root filesystem that is not running yet (a snapshot about to replace /)
+    R=
+    if [ "${2:-}" = --root ]; then
+        R=${3:-}
+        [ -n "$R" ] || die "usage: synodeb-dom sync [--root DIR]"
+        R=$(readlink -f "$R") && [ -d "$R" ] || die "--root: no directory ${3:-}"
+        [ "$R" != / ] || R=
+    fi
+    B=$R/boot
+    cd "$B" || die "$B missing"
+    # the links zz-synodeb-boot-links left in that /boot: the kernels it chose when it ran
     new=$(readlink vmlinuz 2>/dev/null | sed 's/^vmlinuz-//') || true
-    [ -n "$new" ] || die "/boot/vmlinuz is not a symlink to vmlinuz-<version>"
+    [ -n "$new" ] || die "$B/vmlinuz is not a symlink to vmlinuz-<version>"
     old=$(readlink vmlinuz.old 2>/dev/null | sed 's/^vmlinuz-//') || true
     [ -n "$old" ] || old=$new
-    for f in "vmlinuz-$new" "initrd.img-$new"; do [ -f "$f" ] || die "/boot/$f missing"; done
+    for f in "vmlinuz-$new" "initrd.img-$new"; do [ -f "$f" ] || die "$B/$f missing"; done
+    # a kernel without its modules boots without network, disks or iGPU drivers
+    if [ -n "$R" ]; then
+        [ -d "$R/lib/modules/$new" ] || die "$R/lib/modules/$new missing: $R is not a complete root (a separate /boot?); DOM unchanged"
+        [ -d "$R/lib/modules/$old" ] || {
+            echo "synodeb-dom: $R/lib/modules/$old missing: no DEBIAN_OLD" >&2; old=$new; }
+    fi
     [ -f "vmlinuz-$old" ] && [ -f "initrd.img-$old" ] || {
-        echo "synodeb-dom: previous kernel $old incomplete in /boot: no DEBIAN_OLD" >&2
+        echo "synodeb-dom: previous kernel $old incomplete in $B: no DEBIAN_OLD" >&2
         old=$new; }
     # boot state, read before anything is written
     withmount $P1 vfat ro
@@ -295,7 +315,7 @@ sync)
     rm -f $S/*.tmp                       # leftovers of an interrupted copy
     # during a kernel trial the running kernel (DEBIAN) is not confirmed yet: DEBIAN_OLD stays
     # the kernel already there, the last one known to boot (boot-kernels picks the running one)
-    if [ "$st" != none ] && [ "$(running_entry)" = DEBIAN ] && [ -f $S/VERSION.old ]; then
+    if [ -z "$R" ] && [ "$st" != none ] && [ "$(running_entry)" = DEBIAN ] && [ -f $S/VERSION.old ]; then
         k=$(cut -d' ' -f1 $S/VERSION.old)
         if [ -n "$k" ] && [ "$k" != "$new" ] && [ -f "vmlinuz-$k" ] && [ -f "initrd.img-$k" ]; then
             [ "$k" = "$old" ] || echo "synodeb-dom: kernel trial in progress: DEBIAN_OLD stays $k (not $old)" >&2
@@ -328,7 +348,7 @@ sync)
     # a crash or power cut during the copy still boots it as a trial (removed below if no
     # DEBIAN_OLD is left after all)
     prearm=0
-    if [ $changed = 1 ] && [ $block = 1 ] && [ "$d" = DEBIAN ] && [ "$old" != "$new" ]; then
+    if [ $changed = 1 ] && [ $block = 1 ] && { [ "$d" = DEBIAN ] || [ -n "$R" ]; } && [ "$old" != "$new" ]; then
         unmount
         withmount $P1 vfat
         echo armed | put "$TRIAL"
@@ -354,7 +374,7 @@ sync)
             drop .old; echo "synodeb-dom: copying DEBIAN_OLD ($old) failed: no DEBIAN_OLD" >&2
         fi
     fi
-    kv() { pv=$(dpkg-query -W -f='${Version}' "linux-image-$1" 2>/dev/null || true); echo "$1${pv:+ $pv}"; }
+    kv() { pv=$(dpkg-query --admindir="$R/var/lib/dpkg" -W -f='${Version}' "linux-image-$1" 2>/dev/null || true); echo "$1${pv:+ $pv}"; }
     kv "$new" | put $S/VERSION
     hasold=0
     if [ -f $S/vmlinuz.old ]; then hasold=1; kv "$old" | put $S/VERSION.old; else rm -f $S/VERSION.old; fi
@@ -364,7 +384,10 @@ sync)
 
     # what the new DOM content means for the boot entries
     act=
-    if [ $hasold = 0 ] && [ "$d" = DEBIAN_OLD ]; then
+    if [ -n "$R" ] && [ $block = 1 ] && { [ $changed = 1 ] || [ "$d" != DEBIAN ]; }; then
+        # the next boot is that root: its own DEBIAN, tried against its DEBIAN_OLD
+        if [ $hasold = 1 ]; then act=rearm; else act=debian; fi
+    elif [ $hasold = 0 ] && [ "$d" = DEBIAN_OLD ]; then
         act=debian                       # the default entry has no kernel any more
     elif [ $changed = 1 ] && [ $block = 1 ]; then
         case "$d" in
@@ -376,7 +399,9 @@ sync)
         *) act=other ;;
         esac
     fi
-    [ $prearm = 0 ] || [ "$act" = arm ] || act=disarm
+    # armed before the copy: kept for a trial (arm; rearm and debian only with --root),
+    # otherwise removed
+    case $act in arm|rearm|debian) ;; *) [ $prearm = 0 ] || act=disarm ;; esac
     case $act in
     disarm)
         withmount $P1 vfat
@@ -389,16 +414,24 @@ sync)
         debian)
             set_default DEBIAN
             rm -f "$TRIAL"
+            if [ -n "$R" ]; then
+                echo "synodeb-dom: DEBIAN ($new, from $R) is the default, no DEBIAN_OLD: no kernel trial" >&2
+            else
             echo "synodeb-dom: DEBIAN_OLD is gone: DEBIAN ($new) is the default again" >&2
             notify -p high "DEBIAN is the default boot entry again" \
-                "DEBIAN_OLD was the default but holds no kernel any more: DEBIAN ($new) boots, without a fallback kernel." ;;
+                "DEBIAN_OLD was the default but holds no kernel any more: DEBIAN ($new) boots, without a fallback kernel."
+            fi ;;
         arm)
             echo armed | put "$TRIAL"
             echo "synodeb-dom: new kernel or initrd $new: if its first boot fails, DEBIAN_OLD ($old) starts" ;;
         rearm)
             echo armed | put "$TRIAL"
             set_default DEBIAN
-            echo "synodeb-dom: DEBIAN changed during a kernel trial: $new is tried at the next boot" ;;
+            if [ -n "$R" ]; then
+                echo "synodeb-dom: DEBIAN ($new, from $R) is the default and tried at the next boot; DEBIAN_OLD: $old"
+            else
+                echo "synodeb-dom: DEBIAN changed during a kernel trial: $new is tried at the next boot"
+            fi ;;
         esac
         unmount ;;
     untried)
@@ -509,5 +542,5 @@ status)
     df -h $M | tail -1
     unmount
     ;;
-*) sed -n '2,13p' "$0"; exit 2 ;;
+*) sed -n '2,17p' "$0"; exit 2 ;;
 esac

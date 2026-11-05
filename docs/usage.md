@@ -10,6 +10,7 @@ They are in `/usr/sbin`, which is not in a normal user's `PATH`: run them with `
 | `sudo synohwd status` | fan duty and speeds, temperatures, bays, recent events |
 | `sudo synodeb-dom status` | boot entries, their command line and the kernels on the DOM (`--json`: the same as one JSON object, for other tools) |
 | `sudo synodeb-dom default debian\|debian-old\|dsm` | default boot entry (then reboot) |
+| `sudo synodeb-dom sync --root DIR` | copy the kernels of a root snapshot mounted on DIR to the DOM, before booting it ([kernel](kernel.md#rolling-the-root-back-to-a-snapshot)) |
 | `sudo synodeb-dom setup` | rewrite the boot entries (after changing `/etc/default/synodeb`, or when `status` says they are outdated) |
 | `sudo synodeb-ups status` | UPS and Safe Mode |
 | `sudo synodeb-ups test quick` | UPS battery self-test (`deep`, `stop`, `result`) |

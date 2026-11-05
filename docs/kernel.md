@@ -35,6 +35,24 @@ and you get a notification. A normal boot never writes the DOM. A kernel update 
 25 MB to the DOM; Synology does not publish its endurance, but even MLC flash should last
 thousands of updates.
 
+## Rolling the root back to a snapshot
+
+The kernels on the DOM come from `/boot` of the running root. A btrfs snapshot taken before a
+kernel update holds the older kernels and their `/lib/modules` only: booting it with the newer
+kernel on the DOM leaves the kernel without its modules (no network, no disk or GPU drivers).
+Before rebooting into a snapshot, mount it and copy its kernels to the DOM:
+
+```sh
+sudo synodeb-dom sync --root /mnt/snapshot
+```
+
+It copies the two kernels that root had chosen (its `/boot/vmlinuz` and `vmlinuz.old` links),
+only if their modules are in it, makes DEBIAN the default boot entry and arms a kernel trial
+when DEBIAN_OLD is there. The DOM is not touched when the snapshot lacks the modules of its
+kernel, e.g. with `/boot` on a separate partition. The snapshot must then become the subvolume
+the boot entries name (`rootflags=subvol=@rootfs`, see `sudo synodeb-dom status`), or the
+entries must be rewritten with `sudo synodeb-dom setup` once it runs.
+
 ## Headers and modules
 
 For DKMS modules install `linux-headers-synodeb` (or `linux-headers-synodeb-stable`): it follows the
