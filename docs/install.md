@@ -48,9 +48,9 @@ The short version is in the [README](../README.md#quick-start). This page has th
 - **No encrypted root** (*encrypted LVM*): it cannot be unlocked at boot without a console.
   Encrypt data volumes instead, with a key file on the root filesystem.
 - **The DOM** (the 128 MB disk with two small partitions) is shown as installation media and
-  locked: leave it alone, the NAS cannot boot without it. In manual partitioning the installer
-  may propose its first partition (FAT) as `/boot/efi`: set it to *do not use*. The NAS does
-  not boot with UEFI and needs no EFI partition.
+  locked: leave it alone, the NAS cannot boot without it. Its partitions are set to *do not
+  use*; the first one is an EFI system partition, but the NAS does not boot Debian through
+  UEFI and needs no EFI partition, so do not use it as `/boot/efi`.
 
 ## RAID1 root on two drives
 

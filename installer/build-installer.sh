@@ -166,6 +166,8 @@ mkdir -p "$S"
 cp $W/installer/files/preseed.cfg "$R/preseed.cfg"
 install -m 644 $W/installer/files/lib.sh "$S/"
 install -m 755 $W/installer/files/early $W/installer/files/finish "$S/"
+# the DOM is never proposed as /boot/efi (partman downloads partman-efi later; this file stays)
+install -D -m 755 $W/installer/files/partman-dom "$R/lib/partman/init.d/51synodeb-dom"
 install -m 644 $W/pkg/synodeb/etc/apt/sources.list.d/synodeb.sources \
     $W/pkg/synodeb/etc/apt/preferences.d/synodeb-no-debian-kernel \
     $W/pkg/synodeb/usr/share/keyrings/synodeb-archive-keyring.gpg "$S/"

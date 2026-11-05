@@ -1,0 +1,27 @@
+#!/bin/sh
+# synodeb: partman init script, runs after partman-efi's 50efi. synoboot1 on the DOM is an
+# EFI system partition (the firmware boots the Synology GRUB from it), so 50efi gives it the
+# method "efi" and the manual partitioner proposes it as /boot/efi. Debian does not boot
+# through UEFI here and needs no EFI partition: the DOM partitions go back to "do not use".
+# 50efi does not set "efi" again on a later run: it skips partitions marked old_efi.
+. /lib/partman/lib/base.sh
+. /usr/lib/synodeb-installer/lib.sh
+dom=$(blkid -U "$DOM_P1" 2>/dev/null) || exit 0
+dom=${dom%[0-9]}                           # /dev/sdc1 -> /dev/sdc: both DOM partitions
+for dev in /var/lib/partman/devices/*; do
+    [ -d "$dev" ] || continue
+    cd "$dev" || continue
+    ids=
+    open_dialog PARTITIONS
+    # shellcheck disable=SC2034,SC2154  # read_line (partman) assigns the fields
+    while { read_line num id size type fs path name; [ "$id" ]; }; do
+        case $path in "$dom"[0-9]*) ids="$ids $id" ;; esac
+    done
+    close_dialog
+    for id in $ids; do
+        [ -d "$id" ] || continue
+        rm -f "$id/method" "$id/mountpoint" "$id/format" "$id/use_filesystem" "$id/filesystem"
+        log "DOM partition $id on $dev set to do not use (never /boot/efi)"
+    done
+done
+exit 0
