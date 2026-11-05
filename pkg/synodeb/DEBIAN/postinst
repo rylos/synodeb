@@ -41,8 +41,8 @@ if [ "$1" = configure ]; then
         systemctl enable synohwd.service synodeb-nvme-power-limit.service synodeb-boot-ok.service \
             synodeb-nut-firewall.service synodeb-emergency.service || true
     else
-        # added in 4.1: network and ssh in emergency/rescue mode
-        if dpkg --compare-versions "$prev" lt 4.1~; then
+        # added in 4.2: network and ssh in emergency/rescue mode
+        if dpkg --compare-versions "$prev" lt 4.2~; then
             systemctl enable synodeb-emergency.service || true
         fi
         [ ! -d /run/systemd/system ] || systemctl try-restart synohwd.service || true

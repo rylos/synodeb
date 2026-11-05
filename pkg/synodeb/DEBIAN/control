@@ -1,5 +1,5 @@
 Package: synodeb
-Version: 4.1
+Version: 4.2
 Architecture: all
 Maintainer: Marco Ziliani <508111+rylos@users.noreply.github.com>
 Depends: linux-image-synodeb-longterm | linux-image-synodeb-stable | linux-image-synodeb | linux-image-ds923-longterm | linux-image-ds923-stable | linux-image-ds923, python3 (>= 3.11), hdparm, nvme-cli, ethtool, util-linux, iproute2, initramfs-tools, systemd, coreutils, xz-utils, mawk | gawk
