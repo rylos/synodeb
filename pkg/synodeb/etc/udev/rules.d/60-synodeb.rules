@@ -11,3 +11,10 @@ SUBSYSTEM=="tty", KERNEL=="ttyS*", KERNELS=="0000:00:18.2", ATTRS{vendor}=="0x80
 # "change" uevent on every trigger change, and without ACTION the rule would immediately
 # undo the ataN trigger set by synohwd
 ACTION=="add", SUBSYSTEM=="leds", KERNEL=="syno:*", ATTR{trigger}="none"
+# The internal boot flash (DOM, USB f400:f400, as DSM finds it): /dev/synoboot, synoboot1,
+# synoboot2 like DSM; SYNODEB_BOOT_FLASH=1 for other programs (rynas), and hidden from udisks
+# (desktops and file managers must not offer to mount or eject it). After
+# 60-persistent-storage.rules, which sets ID_VENDOR_ID and ID_MODEL_ID (partitions too).
+SUBSYSTEM=="block", ENV{ID_BUS}=="usb", ENV{ID_VENDOR_ID}=="f400", ENV{ID_MODEL_ID}=="f400", ENV{SYNODEB_BOOT_FLASH}="1", ENV{UDISKS_IGNORE}="1"
+SUBSYSTEM=="block", ENV{SYNODEB_BOOT_FLASH}=="1", ENV{DEVTYPE}=="disk", SYMLINK+="synoboot"
+SUBSYSTEM=="block", ENV{SYNODEB_BOOT_FLASH}=="1", ENV{DEVTYPE}=="partition", SYMLINK+="synoboot%n"

@@ -90,6 +90,9 @@ over ssh (`sudo systemctl stop 'synodeb-emergency-reboot*.timer'` to stay).
   the fallback.
 - `/etc/synodeb/ups.conf`: UPS behaviour, see below.
 - `/etc/default/synodeb`: extra kernel parameters (run `sudo synodeb-dom setup` after a change).
+- The internal boot flash (the DOM) is `/dev/synoboot` (partitions `synoboot1`, `synoboot2`), as
+  in DSM. udev marks it `SYNODEB_BOOT_FLASH=1` and `UDISKS_IGNORE=1`, so desktops and NAS
+  managers do not offer to mount or eject it.
 
 ## UPS
 
