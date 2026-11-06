@@ -350,7 +350,7 @@ Description: Linux kernel for Synology NAS, synodeb (image, default)
 
 Package: synodeb
 Architecture: all
-Version: 4.2
+Version: 4.3
 Priority: optional
 Section: admin
 Maintainer: Marco Ziliani <508111+rylos@users.noreply.github.com>
@@ -359,12 +359,12 @@ Recommends: nut-server, nut-client, nftables, smartmontools, lm-sensors, mdadm, 
 Conflicts: systemd-boot
 Breaks: synology-ds923 (<< 4.0~)
 Replaces: synology-ds923 (<< 4.0~)
-Filename: pool/main/synodeb_4.2_all.deb
-Size: 57152
-MD5sum: 345073efb7cf93d0109e804e58d769f5
-SHA1: d91a3a838df8e5745d730b8c0633b6f1b84ef3e4
-SHA256: d7513ea4dfc6c8c396df100f5f9c3c269cd35fc13318a081a35def43362b622a
-SHA512: 4f637543ad905a9f1ccfefcf525f22aa36195e0c5f78ae7abc1c18149fbf78df2fc3ba552fad6f53b94b67db28370514c7001d1f77631c139d486d4057630603
+Filename: pool/main/synodeb_4.3_all.deb
+Size: 60012
+MD5sum: 572b81b1e1f59e4d46b2f11e1d32e567
+SHA1: 53896a6f34e6997b964f36a0a23304a9eb118abf
+SHA256: 3d1bed72b61282a94a33567fc23cbfdfd0cb8d9139fc7a2940df3cb0875101c2
+SHA512: cad970afd72e2e08f0fb86a710fbe6c862e53ae797e10959a2b8ed4f5d75c780b6de2277c1cc3f2e93938575f51fe15507204827e3677de5240550d71695657f
 Homepage: https://github.com/rylos/synodeb
 Description: Debian on Synology NAS (DS920+, DS923+): hardware support
  The platform drivers (bay power with DSM-style staggered spin-up and hot-plug,
@@ -381,7 +381,7 @@ Description: Debian on Synology NAS (DS920+, DS923+): hardware support
 
 Package: synodeb
 Architecture: all
-Version: 4.3
+Version: 4.4
 Priority: optional
 Section: admin
 Maintainer: Marco Ziliani <508111+rylos@users.noreply.github.com>
@@ -390,12 +390,12 @@ Recommends: nut-server, nut-client, nftables, smartmontools, lm-sensors, mdadm, 
 Conflicts: systemd-boot
 Breaks: synology-ds923 (<< 4.0~)
 Replaces: synology-ds923 (<< 4.0~)
-Filename: pool/main/synodeb_4.3_all.deb
-Size: 60012
-MD5sum: 572b81b1e1f59e4d46b2f11e1d32e567
-SHA1: 53896a6f34e6997b964f36a0a23304a9eb118abf
-SHA256: 3d1bed72b61282a94a33567fc23cbfdfd0cb8d9139fc7a2940df3cb0875101c2
-SHA512: cad970afd72e2e08f0fb86a710fbe6c862e53ae797e10959a2b8ed4f5d75c780b6de2277c1cc3f2e93938575f51fe15507204827e3677de5240550d71695657f
+Filename: pool/main/synodeb_4.4_all.deb
+Size: 61340
+MD5sum: d788dc376787831f08f9d82bed9d3301
+SHA1: e67f5d94100f022f8551ca88dcf38515e7fb24e2
+SHA256: 66174bfcfc7f1be2796d1e3a2acf699a73e8ce2799d35f3f3c6ed40e1bfc2c90
+SHA512: 69b82766d6b41a2e45ce4d0e87610b239beb5a9d484166625720842d02bfba480eda56d0a256c6135edb9bb0727f54187fea5bcc8503a2a145062c32f5520ea5
 Homepage: https://github.com/rylos/synodeb
 Description: Debian on Synology NAS (DS920+, DS923+): hardware support
  The platform drivers (bay power with DSM-style staggered spin-up and hot-plug,
