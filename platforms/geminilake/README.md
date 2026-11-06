@@ -24,9 +24,10 @@ Kernel:
 - `kernel/src` here: `drivers/leds/leds-synology-lp3943.c`, the disk LEDs (ACPI LED3943),
   Kconfig in `kernel/patches/<x.y>/*-leds-synology-lp3943.patch`
 
-Tested on a DS920+ with the 7.3 kernel: installation over SSH, boot from the DOM, network,
+Fully tested on a DS920+ with the 7.3 kernel: installation over SSH, boot from the DOM, network,
 bay power and presence, RTC, fan speed and the DS920+ fan curves, CPU and disk temperatures,
-power LED, disk LEDs, power-off, power and reset buttons. The microcontroller reports the power
+power LED, disk LEDs, power-off, power and reset buttons, a btrfs RAID1 root on both NVMe
+drives, kernel updates from the apt repository with the kernel trial, hardware video (iGPU). The microcontroller reports the power
 button only when it is held for about 3 seconds (as under DSM), the reset button on a short
 press; its id reply to `R` is not framed (`P...`, read by synohwd).
 
