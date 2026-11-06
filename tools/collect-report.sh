@@ -47,19 +47,22 @@ if have journalctl; then run "journalctl -k -b --no-pager"; else run "dmesg"; fi
 } > "$tmp"
 # Mask MAC addresses and serial numbers before sharing. A serial reaches the report in three
 # shapes: "sn=VALUE" on a DSM kernel command line, "Serial Number: VALUE" from a listing tool,
-# and "SN: VALUE" from a DSM kernel ata message. A line that prints a version number keeps its
-# dotted numbers, because a four-part firmware version is not an IPv4 address: "JMB585 Header
-# Version: 09.00.00.01". The last rule takes the serial off the end of a DSM lsusb line,
-# "(Manufacturer Product SERIAL)": a token of six or more letters and digits that contains a
-# digit is a serial, a product name is not.
+# and "SN: VALUE" from a DSM kernel ata message. A four-part firmware version is not an IPv4
+# address, "JMB585 Header Version: 09.00.00.01": only the number right after "Version:" is kept,
+# hidden from the IPv4 rule, and any address elsewhere on that line is still masked. The last
+# rule takes the serial off the end of a DSM lsusb line, "(Manufacturer Product SERIAL)": a token
+# of six or more letters, digits, "-" or "_" that contains a digit counts as a serial. So a
+# product name such as RTL8153 goes too when no serial follows it; the USB ids stay on the line.
 sed -E '
 s/([0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}/xx:xx:xx:xx:xx:xx/g
 s/\b((sn|SN|mac[0-9]*|macs|MAC[0-9]*|vender|netif_num|hw_serial)=)[^ ]+/\1REDACTED/g
 s/([Ss][Ee][Rr][Ii][Aa][Ll][ _A-Za-z.]*[:=] *)[^ ,]+/\1REDACTED/g
 s/\b([Ss][Nn]:)( *)[^ ,]+/\1\2REDACTED/g
-/[Vv]ersion: *[0-9]/! s/\b([0-9]{1,3}\.){3}[0-9]{1,3}\b/x.x.x.x/g
+s/([Vv]ersion: *[0-9]{1,3})\.([0-9]{1,3})\.([0-9]{1,3})\.([0-9]{1,3})\b/\1@DOT@\2@DOT@\3@DOT@\4/g
+s/\b([0-9]{1,3}\.){3}[0-9]{1,3}\b/x.x.x.x/g
+s/@DOT@/./g
 s/[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}/UUID/g
-/^ *\|__.*[( ][0-9A-Za-z]*[0-9][0-9A-Za-z]*\)( hub)?$/ s/^( *\|__.*[( ])[0-9A-Za-z]{6,}\)( hub)?$/\1REDACTED)\2/
+/^ *\|__.*[( ][0-9A-Za-z_-]*[0-9][0-9A-Za-z_-]*\)( hub)?$/ s/^( *\|__.*[( ])[0-9A-Za-z_-]{6,}\)( hub)?$/\1REDACTED)\2/
 ' "$tmp" > "$out"
 # host name (full, then the part before the first dot), regex characters escaped
 for n in "$host" "${host%%.*}"; do
