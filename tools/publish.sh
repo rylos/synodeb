@@ -5,6 +5,7 @@
 #                (synology-ds923, linux-image-ds923*)
 #   installer/<kernel release>/   vmlinuz, installer.img, SHA256SUMS, VERSION
 #   synodeb-archive.asc           public key of the repository
+# Backports in build/out/backports (tools/build-backport.sh) are added to debian/ as well.
 # and writes the installer checksums into synodeb-setup.sh.
 # SERIES=longterm (default) or stable: the kernel series whose packages in build/out are
 # added; the other series stays as it is in the repository. The installer runs the longterm
@@ -141,6 +142,20 @@ else
 fi
 chown $HOSTUID:$HOSTUID $NEW
 unset SOURCE_DATE_EPOCH
+done
+
+# Debian packages rebuilt for trixie (tools/build-backport.sh, build/out/backports): added to
+# the repository once and kept by later runs; a file already there must be the same
+for NEW in /work/build/out/backports/*.deb; do
+    [ -f "$NEW" ] || continue
+    OLD=$R/pool/main/${NEW##*/}
+    if [ ! -f "$OLD" ]; then
+        cp "$NEW" "$OLD"
+        echo "backport ${NEW##*/}: added"
+    elif [ "$(debsum "$OLD" | md5sum)" != "$(debsum "$NEW" | md5sum)" ]; then
+        echo "backport ${NEW##*/} is already in the repository with a different content" >&2
+        exit 1
+    fi
 done
 
 # metapackages of this series (and the transitional ones of the old names): only the new

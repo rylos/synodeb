@@ -50,7 +50,14 @@ installer/run-build.sh              # build/out/installer: vmlinuz, installer.im
 tools/publish.sh                    # apt repository and installer for GitHub Pages (build/pages);
                                     # SERIES=stable publishes the stable kernel packages
 tests/run-test-setup.sh DOM.img     # synodeb-setup.sh against a copy of a DOM image
+tools/build-backport.sh nut         # build/out/backports: a sid package rebuilt for trixie
 ```
+
+The apt repository also carries packages rebuilt from Debian sid when trixie's version lacks
+something the NAS needs: NUT 2.8.5 (`2.8.5-1~synodeb13+1`), whose drivers know UPS models that
+2.8.1 does not. They keep trixie's configuration files in `/etc/nut`, so the upgrade asks
+nothing, and a newer Debian package replaces them. `tools/publish.sh` adds what is in
+`build/out/backports`; later runs, CI included, keep it.
 
 Each series has its `kernel/<series>/VERSION` (upstream version and ABI); patches and Debian
 configuration are per branch, in `kernel/patches/<x.y>` and `kernel/config-debian-<x.y>`.

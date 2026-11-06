@@ -12,7 +12,7 @@ They are in `/usr/sbin`, which is not in a normal user's `PATH`: run them with `
 | `sudo synodeb-dom default debian\|debian-old\|dsm` | default boot entry (then reboot) |
 | `sudo synodeb-dom sync --root DIR` | copy the kernels of a root snapshot mounted on DIR to the DOM, before booting it ([kernel](kernel.md#rolling-the-root-back-to-a-snapshot)) |
 | `sudo synodeb-dom setup` | rewrite the boot entries (after changing `/etc/default/synodeb`, or when `status` says they are outdated) |
-| `sudo synodeb-ups status` | UPS and Safe Mode |
+| `sudo synodeb-ups status` | UPS, Safe Mode and NUT driver (`--json`: the same as one JSON object, for other tools) |
 | `sudo synodeb-ups test quick` | UPS battery self-test (`deep`, `stop`, `result`) |
 | `sudo synodeb-net status` | onboard network ports: MAC, name, link |
 | `sudo synodeb-dsm` | mount DSM volumes read-only (`synodeb-dsm --help`) |
@@ -103,6 +103,8 @@ when mains power is back.
 - **Connected during the installation**: nothing to do, NUT is set up and enabled.
 - **Connected later**: plug it in and run `sudo synodeb-ups setup --keep-password`.
 - **Check**: `sudo synodeb-ups status` (or `upsc ups@localhost`).
+- NUT comes from the synodeb repository (2.8.5, newer than trixie's 2.8.1, which does not know
+  some UPS models).
 - **A UPS that needs another NUT driver** (the default is `usbhid-ups`, as on DSM): try it
   with `sudo synodeb-ups probe --driver NAME [--port PORT] [--opt NAME=VALUE]...`, which
   prints the UPS variables if the driver works and configures nothing, then set it with the

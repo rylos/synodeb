@@ -17,7 +17,7 @@
 #                                         the NUT driver runs (it holds the UPS)
 #   synodeb-ups passwd                    ask for the monuser password (e.g. Home Assistant: the
 #                                         same as DSM) and write it to upsd.users and upsmon.conf
-#   synodeb-ups status                    UPS and Safe Mode status
+#   synodeb-ups status [--json]           UPS, Safe Mode and driver (--json: one object, schema 1)
 #   synodeb-ups test quick|deep|stop|result
 #                                         UPS battery test (NUT user admin, local): start the
 #                                         quick or deep test, stop it, show ups.test.result
@@ -64,7 +64,8 @@ REBOOTING=$RUN/rebooting
 KILLPOWER=/run/nut/killpower
 NETBIND=/etc/systemd/system/nut-server.service.d/synodeb-network-clients.conf
 DRIVER_CONF=/etc/synodeb/ups-driver.conf   # written by 'setup --driver': UPS_DRIVER, UPS_PORT, UPS_OPTIONS
-NUTLIB=/lib/nut
+NUTLIB=/usr/libexec/nut                     # the NUT drivers (/lib/nut before NUT 2.8.2)
+[ -d $NUTLIB ] || NUTLIB=/lib/nut
 
 UPS=ups@localhost
 DRYRUN=0                    # 1: log what would be done, no isolate/umount/standby/reboot
@@ -605,6 +606,44 @@ admin-user) # postinst: a configuration from before 4.3, written by setup, witho
     fi
     exit 0 ;;
 status)
+    if [ "${2:-}" = --json ]; then
+        # shellcheck disable=SC2016  # python reads the environment
+        S_STATUS=$(var ups.status) S_READ=$(status) S_CHARGE=$(var battery.charge) \
+        S_RUNTIME=$(var battery.runtime) S_LOAD=$(var ups.load) \
+        S_SAFE=$( [ -f $SAFE ] && cat $SAFE) S_SAFEON=$( [ -f $SAFE ] && echo 1) \
+        S_ONB=$( [ -f $ONB ] && date -r $ONB '+%F %T') S_TESTING=$(testing && cat $TESTING) \
+        S_UPS=$UPS S_DRYRUN=$DRYRUN S_DRIVER=$UPS_DRIVER S_PORT=$UPS_PORT S_OPTIONS=$UPS_OPTIONS \
+        S_CONF=$DRIVER_CONF python3 -I -c '
+import json, os
+e = os.environ.get
+def num(v):
+    try:
+        return float(v) if "." in v else int(v)
+    except (TypeError, ValueError):
+        return None
+custom = bool(e("S_DRIVER"))
+safe = e("S_SAFE", "").split()
+print(json.dumps({
+    "schema": 1,
+    "ups": e("S_UPS"),
+    "status": e("S_STATUS") or None,
+    "read": e("S_READ"),
+    "battery_charge": num(e("S_CHARGE")),
+    "battery_runtime": num(e("S_RUNTIME")),
+    "load": num(e("S_LOAD")),
+    "safe_mode": {"active": bool(e("S_SAFEON")), "reason": safe[0] if safe else None,
+                  "since": " ".join(safe[1:]) or None},
+    "on_battery_since": e("S_ONB") or None,
+    "battery_test": e("S_TESTING") or None,
+    "dryrun": e("S_DRYRUN") == "1",
+    "driver": {"name": e("S_DRIVER") if custom else "usbhid-ups",
+               "port": e("S_PORT") if custom else "auto",
+               "options": e("S_OPTIONS", "").split() if custom else [],
+               "default": not custom,
+               "conf": e("S_CONF") if custom else None},
+}))'
+        exit $?
+    fi
     echo "UPS $UPS: $(var ups.status) (read: $(status)), battery $(var battery.charge)%, runtime $(var battery.runtime) s, load $(var ups.load)%"
     if [ -f $SAFE ]; then echo "Safe Mode: active ($(cat $SAFE))"; else echo "Safe Mode: no"; fi
     [ -f $ONB ] && echo "on battery since $(date -r $ONB '+%F %T')"
