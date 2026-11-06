@@ -84,7 +84,10 @@ over ssh (`sudo systemctl stop 'synodeb-emergency-reboot*.timer'` to stay).
   RAID, fans, UPS, failed services and unclean shutdowns. Nothing is sent until a channel is
   configured. While the rynas NAS manager runs (`/run/rynas/notify.sock`),
   every notification goes to it instead, with all priorities, and it applies its own rules;
-  `FORWARD=off` in `notify.conf` keeps them on synodeb's channels.
+  `FORWARD=off` in `notify.conf` keeps them on synodeb's channels. Each notification carries a
+  stable event code and its parameters (`notify -e EVENT -v NAME=VALUE`, `-l` for log
+  output), so rynas can show it in its own language; the English title and message stay as
+  the fallback.
 - `/etc/synodeb/ups.conf`: UPS behaviour, see below.
 - `/etc/default/synodeb`: extra kernel parameters (run `sudo synodeb-dom setup` after a change).
 

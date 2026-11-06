@@ -148,7 +148,9 @@ safemode() { # $1 = reason
     fi
     echo "$1 $(date '+%F %T')" > $SAFE
     log "Safe Mode ($1): stopping services and unmounting volumes; the NAS stays on"
-    notify -f -p urgent "UPS: Safe Mode" "reason $1, battery $(var battery.charge)%, runtime $(var battery.runtime) s. Services stopped, volumes unmounted; reboot when power returns."
+    ch=$(var battery.charge) rt=$(var battery.runtime)
+    notify -f -p urgent -e ups_safe_mode -v "reason=$1" -v "battery=$ch" -v "runtime=$rt" \
+        "UPS: Safe Mode" "reason $1, battery $ch%, runtime $rt s. Services stopped, volumes unmounted; reboot when power returns."
     stop_wait_timer
     pre_safemode_hooks "$1"
     if [ "$DRYRUN" = 1 ]; then
@@ -164,7 +166,7 @@ reboot_now() { # $1 = reason
     : > $REBOOTING
     rm -f $KILLPOWER
     log "power restored ($1): reboot"
-    notify -f -p high "UPS: power restored" "leaving Safe Mode with a reboot"
+    notify -f -p high -e ups_power_restored_reboot "UPS: power restored" "leaving Safe Mode with a reboot"
     sleep 3
     if [ "$DRYRUN" = 1 ]; then
         log "DRYRUN: systemctl reboot"
@@ -230,7 +232,8 @@ online() { # like DSM, on power restore
         if testing; then
             log "UPS back online: end of the battery test ($(var ups.test.result))"
         elif [ ! -f $SAFE ]; then
-            log "UPS back online, no Safe Mode"; notify -p normal "UPS: power restored" "battery $(var battery.charge)%"
+            log "UPS back online, no Safe Mode"; ch=$(var battery.charge)
+            notify -p normal -e ups_power_restored -v "battery=$ch" "UPS: power restored" "battery $ch%"
         fi
     fi
     rm -f $TESTING
@@ -491,14 +494,18 @@ onbatt)
             log "UPS on battery: battery test running"
         else
             log "UPS on battery"
-            notify -p high "UPS on battery" "battery $(var battery.charge)%, runtime $(var battery.runtime) s"
+            ch=$(var battery.charge) rt=$(var battery.runtime)
+            notify -p high -e ups_on_battery -v "battery=$ch" -v "runtime=$rt" "UPS on battery" "battery $ch%, runtime $rt s"
         fi
         start_wait_timer
     fi ;;
 online) statelog online; online ;;
 lowbatt)
     statelog lowbatt
-    [ "$(status)" = OL ] || notify -f -p urgent "UPS: battery low" "battery $(var battery.charge)%, runtime $(var battery.runtime) s: Safe Mode"
+    if [ "$(status)" != OL ]; then
+        ch=$(var battery.charge) rt=$(var battery.runtime)
+        notify -f -p urgent -e ups_battery_low -v "battery=$ch" -v "runtime=$rt" "UPS: battery low" "battery $ch%, runtime $rt s: Safe Mode"
+    fi
     safemode lowbatt ;;
 nocomm)
     # NOCOMM arrives after NOCOMMWARNTIME (300 s) without communication with the UPS. DSM always
@@ -506,7 +513,7 @@ nocomm)
     # if the UPS was on battery; for OB + unreachable UPS upsmon calls
     # SHUTDOWNCMD anyway after DEADTIME ("critical" UPS).
     statelog nocomm
-    notify -p high "UPS unreachable" "no communication with $UPS for at least 5 minutes"
+    notify -p high -e ups_unreachable -v "ups=$UPS" -v "minutes=5" "UPS unreachable" "no communication with $UPS for at least 5 minutes"
     case $NOCOMM_SAFEMODE in
     always) safemode nocomm ;;
     onbatt) [ -f $ONB ] && safemode nocomm ;;

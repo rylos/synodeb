@@ -10,10 +10,11 @@ MARK=/var/lib/synodeb/running
 case "${1:-}" in
 start)
     prio=normal
-    why=''
+    why='' previous='' watchdog='' root=ok
     if [ -f "$MARK" ]; then
         prio=high
-        why="The previous boot ($(cat "$MARK" 2>/dev/null)) did not end cleanly (watchdog, panic, hang or power failure)."
+        previous=$(cat "$MARK" 2>/dev/null)
+        why="The previous boot ($previous) did not end cleanly (watchdog, panic, hang or power failure)."
     fi
     for w in /sys/class/watchdog/watchdog*; do
         [ -r "$w/bootstatus" ] || continue
@@ -21,6 +22,7 @@ start)
         # WDIOF_CARDRESET (0x20): the last reset was done by the watchdog
         if [ $((bs & 32)) -ne 0 ]; then
             prio=high
+            watchdog=$(cat "$w/identity" 2>/dev/null || echo watchdog)
             why="$why Watchdog $(cat "$w/identity" 2>/dev/null) reset the board."
         fi
     done
@@ -31,25 +33,33 @@ start)
     WAS=/var/lib/synodeb/root-was-degraded
     if [ -e /run/synodeb/root-degraded ] || findmnt -n -o OPTIONS / 2>/dev/null | grep -q '\(^\|,\)degraded\(,\|$\)'; then
         prio=high
+        root=degraded
         why="$why The root filesystem is mounted degraded: a device is missing (btrfs filesystem show /). New data is written to the remaining device only: replace the drive (btrfs replace) as soon as possible."
         mkdir -p "${WAS%/*}"
         : > "$WAS"
     elif [ -e "$WAS" ] && [ "$(findmnt -n -o FSTYPE /)" = btrfs ]; then
         rm -f "$WAS"
         if btrfs scrub start / >/dev/null 2>&1; then
+            root=resync_started
             why="$why The root filesystem has all its devices again after a degraded boot: a scrub was started to resync them (btrfs scrub status /)."
         else
             prio=high
+            root=resync_failed
             why="$why The root filesystem has all its devices again after a degraded boot, but 'btrfs scrub start /' failed: run it by hand."
         fi
     fi
     mkdir -p "${MARK%/*}"
     { date '+%F %T'; } > "$MARK.tmp" && mv -f "$MARK.tmp" "$MARK"
     why=${why# }
-    msg="$(uname -r), $(ip -br -4 addr show scope global 2>/dev/null | awk '{printf "%s %s; ", $1, $3}')"
+    addrs=$(ip -br -4 addr show scope global 2>/dev/null | awk '{printf "%s%s %s", sep, $1, $3; sep = "; "}')
+    msg="$(uname -r), $addrs"
     [ -z "$why" ] || msg="$why
 $msg"
-    /usr/lib/synodeb/notify -f -s boot -p "$prio" "boot completed" "$msg"
+    # previous: start of an unclean previous boot; watchdog: the one that reset the board;
+    # root: ok, degraded, resync_started or resync_failed
+    /usr/lib/synodeb/notify -f -s boot -p "$prio" -e boot_completed -v "kernel=$(uname -r)" \
+        -v "addresses=$addrs" -v "previous_boot=$previous" -v "watchdog=$watchdog" -v "root=$root" \
+        "boot completed" "$msg"
     ;;
 stop)
     rm -f "$MARK"

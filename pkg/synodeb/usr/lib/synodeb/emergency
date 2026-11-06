@@ -38,7 +38,8 @@ net)
               } | awk '!seen[$0]++' | head -n 5 | awk '{ printf "%s%s", sep, $0; sep = "; " }')
     a=$(addr)
     echo "synodeb: emergency mode (${failed:-cause unknown}); network: ${a:-no address}; ssh is running"
-    /usr/lib/synodeb/notify -f -s emergency -p urgent "emergency mode" \
+    /usr/lib/synodeb/notify -f -s emergency -p urgent -e emergency_mode -v "failed=$failed" \
+        -v "addresses=$a" "emergency mode" \
         "The boot stopped in emergency mode (${failed:-cause unknown}). ssh is available on ${a:-no address}: log in, fix the cause (journalctl -xb), then 'sudo systemctl default' or reboot. With the root account locked (the default with sudo) systemd retries the boot every few minutes; otherwise the NAS reboots by itself after 10 minutes without anyone logged in over ssh." || true
     ;;
 reboot)

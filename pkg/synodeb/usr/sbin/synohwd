@@ -182,13 +182,19 @@ DRIVETEMP = "/sys/module/drivetemp"
 NO_SENSOR_LOGGED = set()      # bays already logged as having no temperature sensor
 
 
-def notify(title, message="", priority="high", then=None):
-    """Send an event through the synodeb notifier, in the background; `then` (argv) runs
-    after it (at most NOTIFY_WAIT s later), so a poweroff does not cut the message off."""
+def notify(event, title, message="", priority="high", then=None, **fields):
+    """Send an event through the synodeb notifier, in the background: `event` and `fields` are
+    the stable code and parameters (for rynas), title and message the English text. `then`
+    (argv) runs after it (at most NOTIFY_WAIT s later), so a poweroff does not cut it off."""
+    argv = [NOTIFY, "-s", "hw", "-p", priority, "-e", event]
+    for k, v in fields.items():
+        argv += ["-v", f"{k}={v}"]
+    argv += [title, message]
+
     def run():
         if os.access(NOTIFY, os.X_OK):
             try:
-                subprocess.run([NOTIFY, "-s", "hw", "-p", priority, title, message], timeout=NOTIFY_WAIT,
+                subprocess.run(argv, timeout=NOTIFY_WAIT,
                                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                                stderr=subprocess.DEVNULL, check=False)
             except (OSError, subprocess.SubprocessError) as e:
@@ -760,8 +766,9 @@ class Daemon:
         elif b in ("f", "g"):
             self.note("fan failure" if b == "f" else "cpu fan failure")
             if not self.state["fan_fail"]:
-                notify("fan failure", "reported by the microcontroller "
-                       f"({'fan' if b == 'f' else 'CPU fan'})", "urgent")
+                notify("fan_failure", "fan failure", "reported by the microcontroller "
+                       f"({'fan' if b == 'f' else 'CPU fan'})", "urgent",
+                       source="microcontroller", fan="fan" if b == "f" else "cpu_fan")
             self.fan_health.event(time.monotonic())
             self.state["fan_fail"] = True
             if self.conf["beep_on_error"]:
@@ -780,8 +787,9 @@ class Daemon:
         elif default_cmd:
             self.up.send("3")          # long beep, as DSM on the power button
             self.up.send("5")          # power LED blinks while shutting down
-            notify(f"shutdown: {name}", f"{name}: {' '.join(default_cmd)}", "high",
-                   then=default_cmd)
+            notify("shutdown", f"shutdown: {name}", f"{name}: {' '.join(default_cmd)}", "high",
+                   then=default_cmd, button=name.replace(" ", "_"),
+                   command=" ".join(default_cmd))
 
     def note(self, what):
         log.info("event: %s", what)
@@ -820,14 +828,15 @@ class Daemon:
         fail = self.fan_health.update([f["alarm"] for f in fans], time.monotonic())
         if fail and not was:
             self.note("fan stopped or unreadable (hwmon)")
-            notify("fan failure", "fan stopped or unreadable (hwmon): "
-                   + ", ".join(f"fan{f['fan']} {'?' if f['rpm'] is None else f['rpm']} rpm"
-                               for f in fans), "urgent")
+            rpm = ", ".join(f"fan{f['fan']} {'?' if f['rpm'] is None else f['rpm']} rpm"
+                            for f in fans)
+            notify("fan_failure", "fan failure", f"fan stopped or unreadable (hwmon): {rpm}",
+                   "urgent", source="hwmon", fans=rpm)
             if self.conf["beep_on_error"]:
                 self.up.send("3")
         elif was and not fail:
             self.note("fans ok")
-            notify("fans ok again", "", "normal")
+            notify("fans_ok", "fans ok again", "", "normal")
         self.state["fan_fail"] = fail
 
     def control_loop(self):
@@ -851,7 +860,8 @@ class Daemon:
                 self.shutting_down = True
                 self.note(f"thermal shutdown: {critical}")
                 self.up.send("3")
-                notify("thermal shutdown", critical, "urgent", then=["systemctl", "poweroff"])
+                notify("thermal_shutdown", "thermal shutdown", critical, "urgent",
+                       then=["systemctl", "poweroff"], reason=critical)
             self.write_status(s)
             self.stop.wait(self.conf["fan_period"])
 

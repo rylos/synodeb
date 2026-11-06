@@ -40,11 +40,12 @@ NOTIFY=/usr/lib/synodeb/notify
 BEGIN='### synodeb begin'
 END='### synodeb end'
 FAIL_NOTIFY=                               # notification title for a failure (sync)
+FAIL_EVENT=                                # and its event code
 
 notify() { [ ! -x $NOTIFY ] || $NOTIFY -s dom "$@" >/dev/null 2>&1 || true; }
 die() {
     echo "synodeb-dom: $*" >&2
-    [ -z "$FAIL_NOTIFY" ] || notify -p high "$FAIL_NOTIFY" "$*"
+    [ -z "$FAIL_NOTIFY" ] || notify -p high ${FAIL_EVENT:+-e "$FAIL_EVENT"} -v "error=$*" "$FAIL_NOTIFY" "$*"
     exit 1
 }
 withmount() { # uuid fstype [options]
@@ -275,7 +276,7 @@ esac
 
 case "$cmd" in
 sync)
-    FAIL_NOTIFY="DOM update failed"
+    FAIL_NOTIFY="DOM update failed" FAIL_EVENT=dom_update_failed
     # --root DIR: a root filesystem that is not running yet (a snapshot about to replace /)
     R=
     if [ "${2:-}" = --root ]; then
@@ -418,7 +419,7 @@ sync)
                 echo "synodeb-dom: DEBIAN ($new, from $R) is the default, no DEBIAN_OLD: no kernel trial" >&2
             else
             echo "synodeb-dom: DEBIAN_OLD is gone: DEBIAN ($new) is the default again" >&2
-            notify -p high "DEBIAN is the default boot entry again" \
+            notify -p high -e dom_default_debian -v "kernel=$new" "DEBIAN is the default boot entry again" \
                 "DEBIAN_OLD was the default but holds no kernel any more: DEBIAN ($new) boots, without a fallback kernel."
             fi ;;
         arm)
@@ -437,7 +438,7 @@ sync)
     untried)
         echo "synodeb-dom: DEBIAN_OLD is the default boot entry: the new DEBIAN ($new) is not tried;" \
              "to try it: synodeb-dom default debian" >&2
-        notify -p normal "New kernel not tried" \
+        notify -p normal -e kernel_not_tried -v "kernel=$new" "New kernel not tried" \
             "DEBIAN ($new) was updated, but DEBIAN_OLD is the default boot entry (after a failed kernel trial or 'synodeb-dom default debian-old'), so it is not booted. To try it: synodeb-dom default debian && reboot" ;;
     other)
         echo "synodeb-dom: $d is the default boot entry: DEBIAN ($new) starts after 'synodeb-dom default debian'" >&2 ;;
@@ -512,7 +513,7 @@ boot-ok)
     *)
         echo "synodeb-dom: the new kernel did not boot, running $(uname -r) ($entry_now);" \
              "DEBIAN_OLD stays the default (retry with: synodeb-dom default debian)" >&2
-        notify -p high "New kernel failed to boot" \
+        notify -p high -e kernel_boot_failed -v "running=$(uname -r)" "New kernel failed to boot" \
             "The DOM fell back to DEBIAN_OLD ($(uname -r)), which stays the default: newer kernels are installed as DEBIAN but not booted until: synodeb-dom default debian" ;;
     esac
     rm -f "$TRIAL"

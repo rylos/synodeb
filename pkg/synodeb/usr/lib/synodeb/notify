@@ -1,10 +1,15 @@
 #!/bin/sh
 # Single synodeb notifier: smartd, mdadm, synohwd, failed units, boot completed.
-#   /usr/lib/synodeb/notify [-p low|normal|high|urgent] [-f] [-s SOURCE] TITLE [MESSAGE|-]
+#   /usr/lib/synodeb/notify [-p low|normal|high|urgent] [-f] [-s SOURCE] [-e EVENT]
+#                           [-v NAME=VALUE]... [-l] TITLE [MESSAGE|-]
 #     -p  priority (default normal); messages below MIN_PRIORITY are dropped
 #     -f  send even if the same message went out recently (repeat suppression)
 #     -s  what sends it (smart, raid, hw, ups, boot, dom, unit, emergency): for rynas
+#     -e  stable event code ([a-z0-9_], at most 32), for rynas (it translates the event)
+#     -v  an event parameter (name [a-z0-9_] at most 32, value one line at most 200), at most 16
+#     -l  the message is command output or a log (rynas shows it as such)
 #     -   read the message from standard input
+# The title and the message stay the English text of the event, used by the channels below.
 # Backends in /etc/synodeb/notify.conf: email (msmtp), Telegram, ntfy. With no backend
 # configured it only writes to the journal. Exits 0 if at least one backend worked (or there
 # are none), 1 if all configured ones failed: callers ignore it.
@@ -12,19 +17,37 @@ set -u
 CONF=${SYNODEB_NOTIFY_CONF:-/etc/synodeb/notify.conf}
 STATE=/run/synodeb/notify
 
-prio=normal force=0 source=synodeb
-while getopts p:fs: o; do
+# valid UTF-8 only (a cut multibyte character at the end is dropped): Telegram rejects the rest
+utf8() { if command -v iconv >/dev/null; then iconv -c -f UTF-8 -t UTF-8 2>/dev/null; else cat; fi; }
+# [a-z0-9_], 1 to 32 characters
+valid() { case $1 in ''|*[!a-z0-9_]*) return 1 ;; esac; [ ${#1} -le 32 ]; }
+ignored() { logger -t synodeb-notify -- "ignored: $*" 2>/dev/null || true; }
+
+prio=normal force=0 source=synodeb event='' format=text fields='' nfields=0
+while getopts p:fs:e:v:l o; do
     case $o in
     p) prio=$OPTARG ;;
     f) force=1 ;;
     s) source=$OPTARG ;;
-    *) sed -n '3,7p' "$0" >&2; exit 2 ;;
+    e) if valid "$OPTARG"; then event=$OPTARG; else ignored "event code '$OPTARG'"; fi ;;
+    v) # a wrong parameter is dropped, never the notification
+        n=${OPTARG%%=*}
+        if [ "$n" = "$OPTARG" ] || ! valid "$n"; then
+            ignored "parameter '$OPTARG'"
+        elif [ $nfields -ge 16 ]; then
+            ignored "more than 16 parameters: $n"
+        else
+            v=$(printf '%s' "${OPTARG#*=}" | tr '\r\n\t' '   ' | head -c 200 | utf8)
+            fields="$fields$n=$v
+"
+            nfields=$((nfields + 1))
+        fi ;;
+    l) format=log ;;
+    *) sed -n '3,11p' "$0" >&2; exit 2 ;;
     esac
 done
 shift $((OPTIND - 1))
-[ $# -ge 1 ] || { sed -n '3,7p' "$0" >&2; exit 2; }
-# valid UTF-8 only (a cut multibyte character at the end is dropped): Telegram rejects the rest
-utf8() { if command -v iconv >/dev/null; then iconv -c -f UTF-8 -t UTF-8 2>/dev/null; else cat; fi; }
+[ $# -ge 1 ] || { sed -n '3,11p' "$0" >&2; exit 2; }
 # the title goes into a mail header: one line
 title=$(printf '%s' "$1" | tr '\r\n\t' '   ' | head -c 200 | utf8)
 msg=${2:-}
@@ -62,16 +85,25 @@ NTFY_URL='' NTFY_TOKEN=''
 
 host=$(hostname 2>/dev/null || echo nas)
 logger -t synodeb-notify -p "user.$(case $prio in low) echo info ;; normal) echo notice ;; high) echo warning ;; *) echo crit ;; esac)" \
-    -- "[$prio] $title${msg:+: $msg}" 2>/dev/null || true
+    -- "[$prio]${event:+ $event:} $title${msg:+: $msg}" 2>/dev/null || true
 # rynas (NAS manager): while rynasd runs, it takes every notification (all priorities: its
 # own rules apply MIN_PRIORITY and the repeat suppression) and these channels are not used.
 # Anything but "202 Accepted" (rynasd stopped, an error) falls back to them.
 # FORWARD=off in notify.conf: never forward.
+# Optional event=, field.<name>= and format= (log or text) let rynas show the event in its
+# own words; without them it uses the title and the message.
 if [ "$FORWARD" != off ] && [ -S "$RYNAS_SOCKET" ] && command -v curl >/dev/null; then
+    set -- --data-urlencode "title=$title" --data-urlencode "message=$msg" \
+        --data-urlencode "priority=$prio" --data-urlencode "source=$source" \
+        --data-urlencode "force=$force" --data-urlencode "format=$format"
+    [ -z "$event" ] || set -- "$@" --data-urlencode "event=$event"
+    while IFS= read -r kv; do
+        [ -z "$kv" ] || set -- "$@" --data-urlencode "field.$kv"
+    done <<EOT
+$fields
+EOT
     code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 --unix-socket "$RYNAS_SOCKET" \
-        --data-urlencode "title=$title" --data-urlencode "message=$msg" --data-urlencode "priority=$prio" \
-        --data-urlencode "source=$source" --data-urlencode "force=$force" \
-        http://localhost/v1/notify 2>/dev/null) || true
+        "$@" http://localhost/v1/notify 2>/dev/null) || true
     if [ "$code" = 202 ]; then
         logger -t synodeb-notify -- "forwarded to rynas: $title" 2>/dev/null || true
         exit 0

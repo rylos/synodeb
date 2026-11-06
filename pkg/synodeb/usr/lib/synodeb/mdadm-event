@@ -7,5 +7,6 @@ Fail|FailSpare|DegradedArray|DeviceDisappeared) prio=urgent ;;
 SparesMissing|MoveSpare|SpareActive|RebuildFinished|TestMessage) prio=normal ;;
 *) logger -t synodeb-notify -- "mdadm: $ev $md $dev" 2>/dev/null; exit 0 ;;
 esac
-/usr/lib/synodeb/notify -s raid -p $prio "RAID $md: $ev${dev:+ ($dev)}" "$(cat /proc/mdstat 2>/dev/null)"
+/usr/lib/synodeb/notify -s raid -p $prio -e raid_event -v "array=$md" -v "event=$ev" -v "device=$dev" -l \
+    "RAID $md: $ev${dev:+ ($dev)}" "$(cat /proc/mdstat 2>/dev/null)"
 exit 0
