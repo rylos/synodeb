@@ -2,9 +2,19 @@
 # synodeb-ups — UPS handling like DSM 7.4.1: when the battery runs low the NAS enters
 # "Safe Mode" instead of powering off.
 #
-#   synodeb-ups setup [--keep-password] [--no-stop]   NUT configuration (/etc/nut) from the
-#                                         templates in /usr/share/synodeb/nut; random monuser password
+#   synodeb-ups setup [--keep-password] [--no-stop] [DRIVER]
+#                                         NUT configuration (/etc/nut) from the templates in
+#                                         /usr/share/synodeb/nut; random monuser password
 #                                         (--keep-password: the one set); no USB UPS: NUT disabled
+#     DRIVER: --driver NAME [--port PORT] [--opt NAME[=VALUE]]...  a NUT driver other than
+#                                         usbhid-ups (kept in /etc/synodeb/ups-driver.conf for the
+#                                         next setup; NUT is enabled even without a known USB UPS)
+#             --default-driver            back to usbhid-ups on the first USB UPS
+#   synodeb-ups probe --driver NAME [--port PORT] [--opt NAME[=VALUE]]... [--timeout S]
+#                                         try a driver without configuring anything: on stdout
+#                                         the UPS variables as upsc prints them (exit 0), or
+#                                         exit 1 with the driver output on stderr; exit 3 while
+#                                         the NUT driver runs (it holds the UPS)
 #   synodeb-ups passwd                    ask for the monuser password (e.g. Home Assistant: the
 #                                         same as DSM) and write it to upsd.users and upsmon.conf
 #   synodeb-ups status                    UPS and Safe Mode status
@@ -53,6 +63,8 @@ REBOOTING=$RUN/rebooting
 # not (ups_safeshutdown=no) and this model has no shutdown.return: always remove it.
 KILLPOWER=/run/nut/killpower
 NETBIND=/etc/systemd/system/nut-server.service.d/synodeb-network-clients.conf
+DRIVER_CONF=/etc/synodeb/ups-driver.conf   # written by 'setup --driver': UPS_DRIVER, UPS_PORT, UPS_OPTIONS
+NUTLIB=/lib/nut
 
 UPS=ups@localhost
 DRYRUN=0                    # 1: log what would be done, no isolate/umount/standby/reboot
@@ -65,6 +77,9 @@ HOOKS=/etc/synodeb/ups-pre-safemode.d
 LOOP_SECONDS=10
 # shellcheck source=/dev/null
 [ -r "$CONF" ] && . "$CONF"
+UPS_DRIVER='' UPS_PORT=auto UPS_OPTIONS=''
+# shellcheck source=/dev/null
+[ -r "$DRIVER_CONF" ] && . "$DRIVER_CONF"
 
 mkdir -p $RUN
 log() { logger -p daemon.warning -t synodeb-ups -- "$*" 2>/dev/null || echo "synodeb-ups: $*" >&2; }
@@ -310,15 +325,67 @@ EOT
     echo "$c: $out"
 }
 
+# --driver/--port/--opt: checked into drv, port, opts (space separated NAME or NAME=VALUE), or
+# exit 2. Only characters that need no quoting in ups.conf and on a command line.
+drv='' port=auto opts='' nopts=0
+driver_arg() { # option value
+    case $1 in
+    --driver)
+        case $2 in ''|*[!a-z0-9_-]*) echo "synodeb-ups: invalid driver name: $2" >&2; exit 2 ;; esac
+        [ -x "$NUTLIB/$2" ] || { echo "synodeb-ups: no NUT driver $NUTLIB/$2 (see /usr/share/nut/driver.list)" >&2; exit 2; }
+        drv=$2 ;;
+    --port)
+        case $2 in ''|*[!A-Za-z0-9._:/@-]*) echo "synodeb-ups: invalid port: $2" >&2; exit 2 ;; esac
+        port=$2 ;;
+    --opt)
+        n=${2%%=*}
+        case $n in [a-z]*) ;; *) n=- ;; esac
+        case $n in *[!a-z0-9_.]*) echo "synodeb-ups: invalid option name: $2" >&2; exit 2 ;; esac
+        [ ${#n} -le 32 ] || { echo "synodeb-ups: option name too long: $n" >&2; exit 2; }
+        case $n in driver|port|desc) echo "synodeb-ups: $n is not an option (--driver, --port)" >&2; exit 2 ;; esac
+        if [ "$n" != "$2" ]; then
+            case ${2#*=} in ''|*[!A-Za-z0-9._:/@+,=-]*) echo "synodeb-ups: invalid option value: $2" >&2; exit 2 ;; esac
+        fi
+        [ $nopts -lt 32 ] || { echo "synodeb-ups: more than 32 options" >&2; exit 2; }
+        opts="${opts:+$opts }$2" nopts=$((nopts + 1)) ;;
+    esac
+}
+# the [ups] section of ups.conf with this driver, port and options
+driver_section() { # file
+    awk -v d="$UPS_DRIVER" -v p="$UPS_PORT" -v o="$UPS_OPTIONS" '
+        /^\[ups\]/ { s = 1 }
+        s && $1 == "driver" { print "\tdriver = " d; next }
+        s && $1 == "port" {
+            print "\tport = " p
+            n = split(o, a, " ")
+            for (i = 1; i <= n; i++) {
+                k = a[i]; v = ""
+                if (index(k, "=")) { v = substr(k, index(k, "=") + 1); k = substr(k, 1, index(k, "=") - 1) }
+                print (v == "" && index(a[i], "=") == 0) ? "\t" k : "\t" k " = \"" v "\""
+            }
+            next
+        }
+        { print }' "$1" > "$1.new" && mv -f "$1.new" "$1"
+}
+
 setup() {
-    keep='' nostop=''
-    for a in "$@"; do
-        case $a in
+    keep='' nostop='' setdrv=''
+    usage="usage: synodeb-ups setup [--keep-password] [--no-stop] [--driver NAME [--port PORT] [--opt NAME[=VALUE]]... | --default-driver]"
+    while [ $# -gt 0 ]; do
+        case $1 in
         --keep-password) keep=1 ;;
         --no-stop) nostop=1 ;;
-        *) echo "usage: synodeb-ups setup [--keep-password] [--no-stop]" >&2; exit 2 ;;
+        --default-driver) setdrv=default ;;
+        --driver|--port|--opt)
+            [ $# -ge 2 ] || { echo "$usage" >&2; exit 2; }
+            driver_arg "$1" "$2"; shift
+            [ "$setdrv" = default ] || setdrv=custom ;;
+        *) echo "$usage" >&2; exit 2 ;;
         esac
+        shift
     done
+    if [ "$setdrv" = custom ] && [ -z "$drv" ]; then echo "synodeb-ups: --port and --opt need --driver" >&2; exit 2; fi
+    if [ "$setdrv" = default ] && [ -n "$drv$opts" ]; then echo "$usage" >&2; exit 2; fi
     [ -d /etc/nut ] || { echo "/etc/nut missing: install nut-server and nut-client" >&2; exit 1; }
     cl=$(clients) || exit 1
     if [ -n "$cl" ] && ! command -v nft >/dev/null; then
@@ -329,9 +396,26 @@ setup() {
     [ -z "$keep" ] || pw=$(current_password)
     case $pw in ''|__PASSWORD__) pw=$(randpw) ;; esac
     [ -f /etc/nut/.synodeb-orig.tar ] || tar -C /etc/nut -cf /etc/nut/.synodeb-orig.tar . 2>/dev/null || true
+    case $setdrv in
+    custom)
+        UPS_DRIVER=$drv UPS_PORT=$port UPS_OPTIONS=$opts
+        mkdir -p "${DRIVER_CONF%/*}"
+        printf '%s\n' "# written by 'synodeb-ups setup --driver' ('synodeb-ups setup --default-driver' removes it)" \
+            "UPS_DRIVER=$UPS_DRIVER" "UPS_PORT=$UPS_PORT" "UPS_OPTIONS='$UPS_OPTIONS'" > "$DRIVER_CONF.new" &&
+            mv -f "$DRIVER_CONF.new" "$DRIVER_CONF" ;;
+    default)
+        rm -f "$DRIVER_CONF"
+        UPS_DRIVER='' UPS_PORT=auto UPS_OPTIONS='' ;;
+    esac
+    old=$(cat /etc/nut/ups.conf 2>/dev/null)
     for f in nut.conf ups.conf upsd.conf upssched.conf; do
         install -m 640 -o root -g nut "$TPL/$f" "/etc/nut/$f" 2>/dev/null || install -m 640 "$TPL/$f" "/etc/nut/$f"
     done
+    if [ -n "$UPS_DRIVER" ]; then
+        driver_section /etc/nut/ups.conf
+        chown root:nut /etc/nut/ups.conf 2>/dev/null || true
+        chmod 640 /etc/nut/ups.conf
+    fi
     subst_password "$pw"
     # network clients (NETWORK_CLIENTS): upsd listens on all addresses, nftables does the
     # filtering, and nut-server is bound to the firewall unit (fail closed)
@@ -343,12 +427,26 @@ setup() {
     fi
     [ ! -d /run/systemd/system ] || systemctl daemon-reload || true
     echo "NUT configuration installed in /etc/nut (originals in /etc/nut/.synodeb-orig.tar)"
-    if u=$(usb_ups); then
-        systemctl enable nut.target nut-driver.target nut-server.service nut-monitor.service \
+    if u=$(usb_ups) || [ -n "$UPS_DRIVER" ]; then
+        now=
+        [ ! -d /run/systemd/system ] || now=--now
+        systemctl enable $now nut.target nut-driver.target nut-server.service nut-monitor.service \
             synodeb-nut-firewall.service >/dev/null 2>&1 || true
-        echo "USB UPS found ($u): NUT enabled"
-        # upsd reads upsd.users only at start or reload
-        [ ! -d /run/systemd/system ] || systemctl try-reload-or-restart nut-server.service >/dev/null 2>&1 || true
+        if [ -n "$UPS_DRIVER" ]; then
+            echo "UPS driver $UPS_DRIVER, port $UPS_PORT${UPS_OPTIONS:+, options $UPS_OPTIONS} ($DRIVER_CONF): NUT enabled"
+        else
+            echo "USB UPS found ($u): NUT enabled"
+        fi
+        if [ -d /run/systemd/system ]; then
+            # a changed ups.conf takes effect when the driver starts again
+            if [ "$old" != "$(cat /etc/nut/ups.conf)" ]; then
+                systemctl restart nut-driver-enumerator.service >/dev/null 2>&1 || true
+                systemctl restart nut-driver@ups.service >/dev/null 2>&1 ||
+                    echo "synodeb-ups: the NUT driver did not start: journalctl -u nut-driver@ups" >&2
+            fi
+            # upsd reads upsd.users only at start or reload
+            systemctl try-reload-or-restart nut-server.service >/dev/null 2>&1 || true
+        fi
         echo "monuser password: for network clients set it with 'synodeb-ups passwd'"
     else
         # without a UPS the NUT driver would fail and restart forever (and notify each time)
@@ -358,6 +456,38 @@ setup() {
             nut-server.service nut-monitor.service >/dev/null 2>&1 || true
         echo "no USB UPS connected: NUT stays off; connect the UPS and run 'synodeb-ups setup --keep-password'"
     fi
+}
+
+probe_cmd() {
+    t=45
+    usage="usage: synodeb-ups probe --driver NAME [--port PORT] [--opt NAME[=VALUE]]... [--timeout S]"
+    while [ $# -gt 0 ]; do
+        case $1 in
+        --driver|--port|--opt) [ $# -ge 2 ] || { echo "$usage" >&2; exit 2; }; driver_arg "$1" "$2"; shift ;;
+        --timeout)
+            case ${2:-} in ''|*[!0-9]*) echo "$usage" >&2; exit 2 ;; esac
+            t=$2; shift ;;
+        *) echo "$usage" >&2; exit 2 ;;
+        esac
+        shift
+    done
+    [ -n "$drv" ] || { echo "$usage" >&2; exit 2; }
+    [ "$(id -u)" = 0 ] || { echo "synodeb-ups: probe needs root" >&2; exit 1; }
+    if systemctl -q is-active 'nut-driver@*.service' 2>/dev/null; then
+        echo "synodeb-ups: a NUT driver is running and may hold the UPS: systemctl stop nut-driver.target first" >&2
+        exit 3
+    fi
+    set -- -s synodeb-probe -x "port=$port"
+    for o in $opts; do set -- "$@" -x "$o"; done
+    # -d 1: the variables after the first update, then exit
+    out=$(cd / && timeout -k 5 "$t" "$NUTLIB/$drv" "$@" -d 1 2>&1)
+    data=$(printf '%s\n' "$out" | grep -E '^[a-z][a-z0-9_.]*: ')
+    if printf '%s\n' "$data" | grep -q '^ups\.status: '; then
+        printf '%s\n' "$data"
+        exit 0
+    fi
+    printf '%s\n' "$out" | tail -n 20 >&2
+    exit 1
 }
 
 # vendor:product of a connected USB UPS known to NUT (its udev rules list them), or failure
@@ -452,6 +582,7 @@ passwd_cmd() {
 
 case "${1:-}" in
 setup) shift; setup "$@"; exit 0 ;;
+probe) shift; probe_cmd "$@" ;;
 passwd) passwd_cmd; exit 0 ;;
 test) shift; test_cmd "$@"; exit $? ;;
 firewall) firewall; exit $? ;;
@@ -478,6 +609,11 @@ status)
     if [ -f $SAFE ]; then echo "Safe Mode: active ($(cat $SAFE))"; else echo "Safe Mode: no"; fi
     [ -f $ONB ] && echo "on battery since $(date -r $ONB '+%F %T')"
     [ "$DRYRUN" = 1 ] && echo "DRYRUN=1 in $CONF: Safe Mode is only simulated"
+    if [ -n "$UPS_DRIVER" ]; then
+        echo "driver: $UPS_DRIVER, port $UPS_PORT${UPS_OPTIONS:+, options $UPS_OPTIONS} ($DRIVER_CONF)"
+    else
+        echo "driver: usbhid-ups on the first USB UPS (default)"
+    fi
     exit 0 ;;
 safeloop) safeloop; exit 0 ;;
 esac
@@ -530,6 +666,6 @@ waittimeup)
         safemode waittimeup
     fi ;;
 safemode-shutdowncmd) statelog shutdowncmd; safemode shutdowncmd ;;
-*) sed -n '2,33p' "$0" >&2; exit 2 ;;
+*) sed -n '2,32p' "$0" >&2; exit 2 ;;
 esac
 exit 0

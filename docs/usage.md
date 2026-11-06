@@ -103,6 +103,13 @@ when mains power is back.
 - **Connected during the installation**: nothing to do, NUT is set up and enabled.
 - **Connected later**: plug it in and run `sudo synodeb-ups setup --keep-password`.
 - **Check**: `sudo synodeb-ups status` (or `upsc ups@localhost`).
+- **A UPS that needs another NUT driver** (the default is `usbhid-ups`, as on DSM): try it
+  with `sudo synodeb-ups probe --driver NAME [--port PORT] [--opt NAME=VALUE]...`, which
+  prints the UPS variables if the driver works and configures nothing, then set it with the
+  same options: `sudo synodeb-ups setup --keep-password --driver NAME ...`. The choice is kept
+  in `/etc/synodeb/ups-driver.conf` for later runs of `setup`; `--default-driver` goes back
+  to `usbhid-ups`. The drivers and their options are those of the installed NUT
+  (`/usr/share/nut/driver.list`, `man nutdrv_qx`...).
 - **Other machines using this UPS** (Home Assistant, another NAS, a PC with NUT): put their
   addresses in `/etc/synodeb/ups.conf`, set the password of the NUT user `monuser` and apply:
 
