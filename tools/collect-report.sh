@@ -45,9 +45,25 @@ run "cat /proc/interrupts | head -n 80"
 # the whole kernel log of this boot (level 2 of the form)
 if have journalctl; then run "journalctl -k -b --no-pager"; else run "dmesg"; fi
 } > "$tmp"
-# mask MAC addresses and serial numbers before sharing (the last pattern: the serial at the
-# end of a DSM lsusb -t line, "(Manufacturer Product SERIAL)")
-sed -E 's/([0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}/xx:xx:xx:xx:xx:xx/g; s/\b((sn|SN|mac[0-9]*|macs|MAC[0-9]*|vender|netif_num|hw_serial)=)[^ ]+/\1REDACTED/g; s/([Ss][Ee][Rr][Ii][Aa][Ll][ _A-Za-z.]*[:=] *)[^ ,]+/\1REDACTED/g; s/\b([0-9]{1,3}\.){3}[0-9]{1,3}\b/x.x.x.x/g; s/[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}/UUID/g; s/^( *\|__.*\(.* )[A-Za-z]*[0-9][0-9A-Za-z]{5,}\)( hub)?$/\1REDACTED)\2/' "$tmp" > "$out"
+# Mask MAC addresses and serial numbers before sharing. A serial reaches the report in three
+# shapes: "sn=VALUE" on a DSM kernel command line, "Serial Number: VALUE" from a listing tool,
+# and "SN: VALUE" from a DSM kernel ata message. A four-part firmware version is not an IPv4
+# address, "JMB585 Header Version: 09.00.00.01": only the number right after "Version:" is kept,
+# hidden from the IPv4 rule, and any address elsewhere on that line is still masked. The last
+# rule takes the serial off the end of a DSM lsusb line, "(Manufacturer Product SERIAL)": a token
+# of six or more letters, digits, "-" or "_" that contains a digit counts as a serial. So a
+# product name such as RTL8153 goes too when no serial follows it; the USB ids stay on the line.
+sed -E '
+s/([0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}/xx:xx:xx:xx:xx:xx/g
+s/\b((sn|SN|mac[0-9]*|macs|MAC[0-9]*|vender|netif_num|hw_serial)=)[^ ]+/\1REDACTED/g
+s/([Ss][Ee][Rr][Ii][Aa][Ll][ _A-Za-z.]*[:=] *)[^ ,]+/\1REDACTED/g
+s/\b([Ss][Nn]:)( *)[^ ,]+/\1\2REDACTED/g
+s/([Vv]ersion: *[0-9]{1,3})\.([0-9]{1,3})\.([0-9]{1,3})\.([0-9]{1,3})\b/\1@DOT@\2@DOT@\3@DOT@\4/g
+s/\b([0-9]{1,3}\.){3}[0-9]{1,3}\b/x.x.x.x/g
+s/@DOT@/./g
+s/[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}/UUID/g
+/^ *\|__.*[( ][0-9A-Za-z_-]*[0-9][0-9A-Za-z_-]*\)( hub)?$/ s/^( *\|__.*[( ])[0-9A-Za-z_-]{6,}\)( hub)?$/\1REDACTED)\2/
+' "$tmp" > "$out"
 # host name (full, then the part before the first dot), regex characters escaped
 for n in "$host" "${host%%.*}"; do
     if [ -n "$n" ] && [ "$n" != localhost ]; then
