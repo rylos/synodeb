@@ -29,6 +29,9 @@ if [ "$1" = configure ]; then
     # this package and its hook (on a new system the installer does exactly that)
     # (the hook also creates the initrd of the DEBIAN kernel if it is missing)
     /etc/kernel/postinst.d/zz-synodeb-boot-links ${new:+"$new"} || true
+    # the DOM filesystems (modules-load.d/synodeb-dom.conf, 4.7): loaded now too, not only
+    # from the next boot
+    modprobe -a vfat nls_cp437 nls_ascii ext4 2>/dev/null || true
     udevadm control --reload || true
     udevadm trigger --subsystem-match=tty --action=add || true
     systemctl daemon-reload || true

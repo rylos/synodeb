@@ -11,6 +11,7 @@
 /etc/kernel/postrm.d/zz-synodeb-boot-links
 /etc/modprobe.d/synodeb.conf
 /etc/modules-load.d/synodeb.conf
+/etc/modules-load.d/synodeb-dom.conf
 /etc/smartmontools/run.d/50synodeb-notify
 /etc/synodeb/notify.conf
 /etc/synodeb/ups.conf
