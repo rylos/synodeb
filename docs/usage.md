@@ -125,6 +125,15 @@ when mains power is back.
   The clients connect to port 3493 with UPS name `ups`, user `monuser` and that password; only
   the listed addresses are allowed. A client set up for DSM keeps working once the password is
   the same.
+- **The same with separate NUT users** (for NAS managers and scripts): `sudo synodeb-ups
+  netserver set --client ADDRESS... [--user NAME:secondary|readonly]...`, with one
+  `NAME PASSWORD` line per user on stdin, replaces the allowed hosts and the users and applies
+  them (firewall and `nut-server` restarted). `secondary` is a NUT client that follows this NAS
+  (upsmon secondary), `readonly` may only read the UPS variables; a user given without a
+  password keeps its current one. It is kept in `/etc/synodeb/ups-network.conf` (root only),
+  which takes precedence over `NETWORK_CLIENTS`; `monuser` stays as it is.
+  `synodeb-ups netserver off` goes back to localhost only, `netserver status --json` shows the
+  hosts, users and roles (never the passwords).
 - Other options in the same file: dry run (`DRYRUN=1`, Safe Mode only logged), what to do when
   the UPS stops answering (`NOCOMM_SAFEMODE`), powering the UPS off at the end
   (`SAFESHUTDOWN`), Safe Mode after a time on battery instead of only when the battery runs low

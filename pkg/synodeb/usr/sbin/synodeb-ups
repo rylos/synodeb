@@ -18,6 +18,15 @@
 #   synodeb-ups passwd                    ask for the monuser password (e.g. Home Assistant: the
 #                                         same as DSM) and write it to upsd.users and upsmon.conf
 #   synodeb-ups status [--json]           UPS, Safe Mode and driver (--json: one object, schema 1)
+#   synodeb-ups netserver set --client IP|NETWORK... [--user NAME:secondary|readonly]...
+#                                         upsd for network clients (e.g. Home Assistant): replaces
+#                                         the allowed hosts and the extra NUT users, saved in
+#                                         /etc/synodeb/ups-network.conf (wins over NETWORK_CLIENTS
+#                                         in ups.conf) and applied; passwords on stdin, one
+#                                         "NAME PASSWORD" line each (a user without one keeps
+#                                         its password); exit 2 usage, 1 not applied
+#   synodeb-ups netserver off             upsd on localhost only (extra users removed)
+#   synodeb-ups netserver status [--json] hosts, users and roles (never passwords), units
 #   synodeb-ups test quick|deep|stop|result
 #                                         UPS battery test (NUT user admin, local): start the
 #                                         quick or deep test, stop it, show ups.test.result
@@ -63,6 +72,7 @@ REBOOTING=$RUN/rebooting
 # not (ups_safeshutdown=no) and this model has no shutdown.return: always remove it.
 KILLPOWER=/run/nut/killpower
 NETBIND=/etc/systemd/system/nut-server.service.d/synodeb-network-clients.conf
+NETCONF=${SYNODEB_UPS_NETCONF:-/etc/synodeb/ups-network.conf}  # 'netserver': root only (passwords)
 DRIVER_CONF=/etc/synodeb/ups-driver.conf   # written by 'setup --driver': UPS_DRIVER, UPS_PORT, UPS_OPTIONS
 NUTLIB=/usr/libexec/nut                     # the NUT drivers (/lib/nut before NUT 2.8.2)
 [ -d $NUTLIB ] || NUTLIB=/lib/nut
@@ -78,6 +88,13 @@ HOOKS=/etc/synodeb/ups-pre-safemode.d
 LOOP_SECONDS=10
 # shellcheck source=/dev/null
 [ -r "$CONF" ] && . "$CONF"
+# 'netserver' settings win over NETWORK_CLIENTS in ups.conf (only root can read them)
+NETSRC=
+[ -z "$NETWORK_CLIENTS" ] || NETSRC=$CONF
+if [ -r "$NETCONF" ]; then
+    NETSRC=$NETCONF
+    NETWORK_CLIENTS=$(awk '$1 == "enabled" { on = ($2 == "yes") } $1 == "client" && on { printf "%s ", $2 }' "$NETCONF")
+fi
 UPS_DRIVER='' UPS_PORT=auto UPS_OPTIONS=''
 # shellcheck source=/dev/null
 [ -r "$DRIVER_CONF" ] && . "$DRIVER_CONF"
@@ -267,12 +284,27 @@ subst_password() { # $1 = monuser password; writes upsd.users and upsmon.conf fr
     for f in upsd.users upsmon.conf; do
         python3 -I -c 'import sys; t=open(sys.argv[1]).read(); open(sys.argv[2],"w").write(t.replace("__PASSWORD__", sys.argv[3]).replace("__ADMIN_PASSWORD__", sys.argv[4]))' \
             "$TPL/$f" "/etc/nut/$f.new" "$1" "$apw"
+        [ "$f" != upsd.users ] || net_users >> "/etc/nut/$f.new"
         chown root:nut "/etc/nut/$f.new" 2>/dev/null || true
         chmod 640 "/etc/nut/$f.new"
         mv "/etc/nut/$f.new" "/etc/nut/$f"
     done
 }
 
+# the extra users of 'netserver' as upsd.users sections
+net_users() {
+    [ "$NETSRC" = "$NETCONF" ] || return 0
+    awk '$1 == "enabled" { on = ($2 == "yes") }
+        $1 == "user" && on && NF == 4 { n++; u[n] = $2; r[n] = $3; p[n] = $4 }
+        END {
+            if (!n) exit
+            print ""; print "# Network clients (synodeb-ups netserver, " FILENAME ")"
+            for (i = 1; i <= n; i++) {
+                print "[" u[i] "]"; print "\tpassword = " p[i]
+                if (r[i] == "secondary") print "\tupsmon secondary"
+            }
+        }' "$NETCONF"
+}
 current_password() { user_password monuser; }
 admin_password() { user_password admin; }
 user_password() { # password of [$1] in upsd.users
@@ -570,6 +602,171 @@ table inet synodeb_nut {
 EOT
 }
 
+# 'netserver set|off': $NETCONF rewritten (argv: set|off FILE; NS_ITEMS: "c ADDRESS" and
+# "u NAME:ROLE" lines; stdin: "NAME PASSWORD" lines). Exit 2 on a usage error, file unchanged.
+NS_WRITE='
+import ipaddress, os, re, sys
+mode, conf = sys.argv[1], sys.argv[2]
+def bad(m):
+    sys.stderr.write("synodeb-ups: " + m + "\n"); sys.exit(2)
+old = {}
+try:
+    for l in open(conf):
+        w = l.split()
+        if len(w) == 4 and w[0] == "user":
+            old[w[1]] = w[3]
+except FileNotFoundError:
+    pass
+clients, users = [], []
+for it in os.environ.get("NS_ITEMS", "").split("\n"):
+    if not it:
+        continue
+    k, _, v = it.partition(" ")
+    if k == "c":
+        try:
+            n = ipaddress.ip_network(v, strict=False)
+        except ValueError:
+            bad("invalid client address: " + v)
+        a = str(n.network_address) if n.num_addresses == 1 else str(n)
+        if a not in clients:
+            clients.append(a)
+    else:
+        name, _, role = v.partition(":")
+        if not re.fullmatch(r"[a-z][a-z0-9_]{0,31}", name):
+            bad("invalid user name: " + name)
+        if name in ("monuser", "admin"):
+            bad(name + " is reserved (monuser: synodeb-ups passwd)")
+        if role not in ("secondary", "readonly"):
+            bad("invalid role for " + name + ": " + role + " (secondary or readonly)")
+        if name in [u for u, _ in users]:
+            bad("user given twice: " + name)
+        users.append((name, role))
+if mode == "set" and not clients:
+    bad("netserver set needs at least one --client (netserver off: localhost only)")
+if len(clients) > 64 or len(users) > 32:
+    bad("at most 64 clients and 32 users")
+pw = {}
+for l in sys.stdin:
+    l = l.rstrip("\n")
+    if not l.strip():
+        continue
+    name, _, p = l.partition(" ")
+    if name not in [u for u, _ in users]:
+        bad("password for a user not given with --user: " + name)
+    if name in pw:
+        bad("password given twice for " + name)
+    # upsd.users: blanks split, quote and backslash escape, # starts a comment
+    if not re.fullmatch(r"[!$-\[\]-~]{1,64}", p) or "\"" in p:
+        bad("invalid password for " + name + " (1-64 printable ASCII characters, no blanks, quotes, # or backslashes)")
+    pw[name] = p
+lines = ["# written by synodeb-ups netserver: root only, it holds the passwords of the NUT network users",
+         "enabled " + ("yes" if mode == "set" else "no")]
+lines += ["client " + a for a in clients]
+for name, role in users:
+    p = pw.get(name) or old.get(name)
+    if not p:
+        bad("new user " + name + " needs a password on stdin")
+    lines.append("user %s %s %s" % (name, role, p))
+fd = os.open(conf + ".new", os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+with os.fdopen(fd, "w") as f:
+    f.write("\n".join(lines) + "\n")
+os.chmod(conf + ".new", 0o600)
+os.replace(conf + ".new", conf)
+'
+netserver_cmd() {
+    sub=${1:-}
+    [ $# -eq 0 ] || shift
+    usage="usage: synodeb-ups netserver set --client IP|NETWORK... [--user NAME:secondary|readonly]... | off | status [--json]"
+    case $sub in
+    set|off)
+        items=''
+        while [ $# -gt 0 ]; do
+            case $1 in
+            --client|--user)
+                [ $# -ge 2 ] && [ "$sub" = set ] || { echo "$usage" >&2; return 2; }
+                case $1 in --client) k=c ;; *) k=u ;; esac
+                items="$items$k $2
+"
+                shift ;;
+            *) echo "$usage" >&2; return 2 ;;
+            esac
+            shift
+        done
+        [ "$(id -u)" = 0 ] || { echo "synodeb-ups: netserver $sub needs root" >&2; return 1; }
+        [ -d /etc/nut ] || { echo "synodeb-ups: /etc/nut missing: install nut-server and nut-client" >&2; return 1; }
+        if [ "$sub" = set ] && ! command -v nft >/dev/null; then
+            echo "synodeb-ups: network clients need nftables (apt install nftables): nothing changed" >&2
+            return 1
+        fi
+        mkdir -p "${NETCONF%/*}"
+        if [ "$sub" = set ] && [ ! -t 0 ]; then
+            NS_ITEMS=$items python3 -I -c "$NS_WRITE" "$sub" "$NETCONF" || return $?
+        else
+            NS_ITEMS=$items python3 -I -c "$NS_WRITE" "$sub" "$NETCONF" </dev/null || return $?
+        fi
+        # setup reads the new file: LISTEN lines, users, binding to the firewall unit
+        SYNODEB_UPS_CONF=$CONF SYNODEB_UPS_NETCONF=$NETCONF "$0" setup --keep-password >&2 || return 1
+        if [ -d /run/systemd/system ] && systemctl -q is-enabled nut-server.service 2>/dev/null; then
+            systemctl restart synodeb-nut-firewall.service nut-server.service >/dev/null 2>&1 || true
+            if ! systemctl -q is-active synodeb-nut-firewall.service || ! systemctl -q is-active nut-server.service; then
+                echo "synodeb-ups: saved in $NETCONF, but synodeb-nut-firewall or nut-server is not active" \
+                    "(journalctl -u synodeb-nut-firewall -u nut-server)" >&2
+                return 1
+            fi
+            echo "network server $([ "$sub" = set ] && echo on || echo off): $NETCONF applied"
+        else
+            echo "saved in $NETCONF; NUT is off (no UPS configured): applied when it runs"
+        fi
+        return 0 ;;
+    status)
+        case ${1:-} in ''|--json) ;; *) echo "$usage" >&2; return 2 ;; esac
+        [ "$(id -u)" = 0 ] || { echo "synodeb-ups: netserver status needs root" >&2; return 1; }
+        act() { systemctl -q is-active "$1" 2>/dev/null && echo 1; }
+        # shellcheck disable=SC2016  # python reads the environment
+        N_JSON=${1:-} N_SRC=$NETSRC N_CONF=$CONF N_NETCONF=$NETCONF N_CLIENTS=$NETWORK_CLIENTS \
+        N_FW=$(act synodeb-nut-firewall.service) N_UPSD=$(act nut-server.service) python3 -I -c '
+import json, os, re
+e = os.environ.get
+src = e("N_SRC")
+users = []
+if src and src == e("N_NETCONF"):
+    on = False
+    for l in open(src):
+        w = l.split()
+        if w[:1] == ["enabled"]:
+            on = w[1:2] == ["yes"]
+        elif len(w) == 4 and w[0] == "user" and on:
+            users.append({"name": w[1], "role": w[2]})
+listen, monuser = [], False
+try:
+    for l in open("/etc/nut/upsd.conf"):
+        w = l.split()
+        if w[:1] == ["LISTEN"] and len(w) >= 2:
+            a = w[1]; p = w[2] if len(w) > 2 else "3493"
+            listen.append(("[%s]:%s" if ":" in a else "%s:%s") % (a, p))
+    monuser = any(re.match(r"\s*\[monuser\]", l) for l in open("/etc/nut/upsd.users"))
+except OSError:
+    pass
+clients = e("N_CLIENTS", "").split()
+r = {"schema": 1, "enabled": bool(clients), "listen": listen, "clients": clients, "users": users,
+     "monuser": monuser, "firewall_active": bool(e("N_FW")), "upsd_active": bool(e("N_UPSD")),
+     "source": os.path.basename(src) if src else None}
+if e("N_JSON"):
+    print(json.dumps(r))
+else:
+    print("network server: %s (%s)" % ("on" if clients else "off", src or "no settings"))
+    print("listen: " + (" ".join(listen) or "-"))
+    print("clients: " + (" ".join(clients) or "-"))
+    print("users: " + (" ".join("%s (%s)" % (u["name"], u["role"]) for u in users) or "-")
+          + (", monuser (primary)" if monuser else ""))
+    print("synodeb-nut-firewall: %s, nut-server: %s" % ("active" if r["firewall_active"] else "inactive",
+                                                       "active" if r["upsd_active"] else "inactive"))
+'
+        return $? ;;
+    *) echo "$usage" >&2; return 2 ;;
+    esac
+}
+
 passwd_cmd() {
     printf 'monuser password (the same as the network clients, e.g. the one used under DSM): ' >&2
     stty -echo 2>/dev/null; read -r pw; stty echo 2>/dev/null; echo >&2
@@ -585,6 +782,7 @@ case "${1:-}" in
 setup) shift; setup "$@"; exit 0 ;;
 probe) shift; probe_cmd "$@" ;;
 passwd) passwd_cmd; exit 0 ;;
+netserver) shift; netserver_cmd "$@"; exit $? ;;
 test) shift; test_cmd "$@"; exit $? ;;
 firewall) firewall; exit $? ;;
 netbind)    # postinst: a configuration from before the binding (3.1) that listens on the network
@@ -705,6 +903,6 @@ waittimeup)
         safemode waittimeup
     fi ;;
 safemode-shutdowncmd) statelog shutdowncmd; safemode shutdowncmd ;;
-*) sed -n '2,32p' "$0" >&2; exit 2 ;;
+*) sed -n '2,41p' "$0" >&2; exit 2 ;;
 esac
 exit 0
