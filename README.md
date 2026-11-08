@@ -10,6 +10,11 @@ or the newest stable 7.3) with drivers for the NAS is started by its own boot lo
 official **Debian installer** runs over **SSH**. You choose disks, RAID, LVM and filesystems as
 on any Debian machine. DSM can stay on its own disks, and one command switches between the two.
 
+> [!TIP]
+> **Try it with [rynas](https://github.com/rylos/rynas)**, a web NAS manager for plain Debian:
+> storage, shares, snapshots and Docker apps from the browser, plus the Synology hardware of
+> synodeb (fans, LEDs, UPS, notifications). It is alpha software: keep backups.
+
 <p align="center">
   <img src="docs/img/setup-menu.png" alt="synodeb-setup.sh menu on DSM" width="49%">
   <img src="docs/img/ssh-installer.png" alt="The Debian installer over SSH" width="49%">
