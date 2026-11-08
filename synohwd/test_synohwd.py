@@ -544,6 +544,53 @@ with tempfile.TemporaryDirectory() as d:
     check("m2 empty slot", m.m2_slots("DS920+", f"{d}/class/nvme")["2"]["present"], False)
 
 
+# LED schedule (DSM led_brightness_schedule): index 24 * weekday + hour, Sunday = 0
+marco = "112222210000000001111111" + "122222210000000001111111" * 5 + "112222210000000001111111"
+dim = m.MODEL_LED_DIMMER["DS923+"]
+tm = lambda y, mo, d, h: time.strptime(f"{y}-{mo}-{d} {h}", "%Y-%m-%d %H")
+check("led code Sunday 01", m.led_code(marco, tm(2026, 11, 8, 1)), "1")     # 2026-11-08 is a Sunday
+check("led code Monday 01", m.led_code(marco, tm(2026, 11, 9, 1)), "2")
+check("led code Saturday 01", m.led_code(marco, tm(2026, 11, 14, 1)), "1")
+check("led code Wednesday 10", m.led_code(marco, tm(2026, 11, 11, 10)), "0")
+check("led code Friday 20", m.led_code(marco, tm(2026, 11, 13, 20)), "1")
+check("led code no schedule", m.led_code("", tm(2026, 11, 13, 3)), "0")
+check("led level default", m.led_level(dim, "0", 1), 3)
+check("led level reduced", m.led_level(dim, "1", 1), 1)
+check("led level reduced capped", m.led_level(dim, "1", 7), 3)
+check("led level off", m.led_level(dim, "2", 1), 0)
+check("conf led_schedule ok", m.validate_conf({"led_schedule": marco})["led_schedule"], marco)
+check("conf led_schedule bad char", m.validate_conf({"led_schedule": "3" * 168})["led_schedule"], "")
+check("conf led_schedule short", m.validate_conf({"led_schedule": "0" * 167})["led_schedule"], "")
+check("conf led_reduced_level clamp", m.validate_conf({"led_reduced_level": 9})["led_reduced_level"], 7)
+with tempfile.TemporaryDirectory() as d:
+    os.makedirs(f"{d}/devices/i2c-1/1-0060")
+    os.makedirs(f"{d}/bus")
+    with open(f"{d}/devices/i2c-1/1-0060/name", "w") as f:
+        f.write("atmega1608\n")
+    os.symlink(f"{d}/devices/i2c-1/1-0060", f"{d}/bus/1-0060")
+    check("i2c bus of atmega1608", m.i2c_bus_of("atmega1608", f"{d}/bus"), 1)
+    check("i2c bus of missing", m.i2c_bus_of("LED3943:00", f"{d}/bus"), None)
+
+# dimmer_step writes only on a change
+dmn = m.Daemon.__new__(m.Daemon)
+dmn.conf = dict(m.DEFAULTS, led_schedule=marco, led_reduced_level=1)
+dmn.dimmer = dim
+dmn.state = {"led_level_now": None, "led_mode_now": None}
+writes = []
+real_bus, real_write = m.i2c_bus_of, m.i2c_write_byte
+m.i2c_bus_of = lambda name: 1
+m.i2c_write_byte = lambda *a: writes.append(a)
+try:
+    dmn.dimmer_step(tm(2026, 11, 9, 3))          # Monday 03: off
+    dmn.dimmer_step(tm(2026, 11, 9, 4))          # still off: no write
+    dmn.dimmer_step(tm(2026, 11, 9, 7))          # reduced
+    dmn.dimmer_step(tm(2026, 11, 9, 9))          # normal
+    check("dimmer writes", writes, [(1, 0x2E, 0, 0x7D), (1, 0x2E, 0, 0x49), (1, 0x2E, 0, 0x2E)])
+    check("dimmer state", (dmn.state["led_level_now"], dmn.state["led_mode_now"]), (3, "normal"))
+finally:
+    m.i2c_bus_of, m.i2c_write_byte = real_bus, real_write
+
+
 def test_all():
     """pytest entry point: the checks above run at import time."""
     assert failures == 0, f"{failures} FAILED"

@@ -45,9 +45,17 @@ per line in each direction, schema 1.
   {"cmd": "send", "up": "2"}    -> {"ok": true}, the commands 'synohwd send' accepts
   anything else or an error     -> {"ok": false, "error": "<text>"}
 The FIFO /run/synohwd/cmd (one command per line, no reply) stays for scripts.
+
+LED brightness (models in MODEL_LED_DIMMER): DSM dims all the front-panel LEDs (power,
+status, LAN, disks) with a digital potentiometer on I2C (DS923+: 0x2e, the bus of the
+ATmega1608), in levels 0..max: level 0 turns them all off. led_schedule has DSM's
+led_brightness_schedule format: 168 characters, index 24 * weekday + hour (local time,
+Sunday = 0), '0' default level, '1' led_reduced_level, '2' level 0 (off).
 """
 
+import ctypes
 import errno
+import fcntl
 import glob
 import json
 import logging
@@ -148,6 +156,14 @@ MODEL_M2 = {
     "DS920+": {1: "00:14.1", 2: "00:14.0"},
 }
 DMI_PRODUCT = "/sys/class/dmi/id/product_name"
+# Front-panel LED dimmer, per model, from DSM's led_brightness.xml: a client of the same I2C
+# bus (by its name in /sys/bus/i2c/devices), the address and register, the value for each
+# level (0 = off) and the default level. DS923+: level 0 checked to turn all the LEDs off,
+# level 1 to dim all of them (2026-11-08). Models not listed: no dimming.
+MODEL_LED_DIMMER = {
+    "DS923+": {"bus_of": "atmega1608", "addr": 0x2E, "reg": 0x00,
+               "levels": (0x7D, 0x49, 0x3D, 0x2E), "default": 3},
+}
 
 DEFAULTS = {
     "fan_mode": "low",          # low (quiet, DSM default) | high (cool) | full
@@ -164,11 +180,16 @@ DEFAULTS = {
     "disk_standby_minutes": 0,  # >0: spin the bay disks down after this idle time (hdparm -S), max 330
     "wol": False,               # Wake-on-LAN (magic packet) on all lan* ports
     "ac_recovery": True,        # power back on after an AC loss (DSM default)
+    "led_schedule": "",         # DSM led_brightness_schedule: 168 x '0' default, '1' reduced, '2' off
+    "led_reduced_level": 1,     # level of '1' (0..the model's maximum, DSM led_brightness_adjusted_level)
 }
+LED_SCHEDULE_LEN = 7 * 24
+LED_MODES = {"0": "normal", "1": "reduced", "2": "off"}
 
 # Integer settings: (min, max), out of range values are clamped.
 RANGES = {"fan_period": (5, 300), "fan_min_duty": (0, 99), "hysteresis": (0, 20),
-          "led_brightness": (1, 255), "disk_standby_minutes": (0, 330)}
+          "led_brightness": (1, 255), "disk_standby_minutes": (0, 330),
+          "led_reduced_level": (0, 7)}
 # String settings: allowed values; the buttons also take "command:<shell>".
 CHOICES = {"fan_mode": ("low", "high", "full"),
            "power_button": ("poweroff", "ignore", "log"), "reset_button": ("log", "ignore")}
@@ -288,6 +309,10 @@ def validate_conf(raw):
                 c = min(hi, max(lo, v))
                 log.error("%s: %s = %r outside %d..%d, using %d", CONF_PATH, k, v, lo, hi, c)
                 v = c
+        elif k == "led_schedule" and v and (len(v) != LED_SCHEDULE_LEN or set(v) - set(LED_MODES)):
+            log.error("%s: led_schedule must be empty or %d characters 0, 1 or 2 "
+                      "(DSM led_brightness_schedule), using no schedule", CONF_PATH, LED_SCHEDULE_LEN)
+            continue
         elif k in CHOICES and v not in CHOICES[k] \
                 and not (k in COMMAND_KEYS and v.startswith("command:") and v[8:].strip()):
             log.error("%s: %s = %r not one of %s, using %r", CONF_PATH, k, v,
@@ -306,6 +331,56 @@ def load_conf():
     except (OSError, tomllib.TOMLDecodeError, UnicodeDecodeError) as e:
         log.error("%s: %s — using defaults", CONF_PATH, e)
     return dict(DEFAULTS)
+
+
+def led_code(schedule, tm):
+    """The schedule character for a time.struct_time ('0' without a schedule)."""
+    if not schedule:
+        return "0"
+    return schedule[24 * ((tm.tm_wday + 1) % 7) + tm.tm_hour]   # tm_wday: Monday = 0
+
+
+def led_level(dimmer, code, reduced):
+    """Level for a schedule character: default, the reduced one (capped to the scale) or 0."""
+    if code == "1":
+        return min(reduced, len(dimmer["levels"]) - 1)
+    return 0 if code == "2" else dimmer["default"]
+
+
+def i2c_bus_of(client, devices="/sys/bus/i2c/devices"):
+    """Number of the I2C adapter that has a client with this name, or None."""
+    for d in sorted(glob.glob(f"{devices}/*")):
+        if read(f"{d}/name") == client:
+            parent = os.path.basename(os.path.dirname(os.path.realpath(d)))
+            if parent.startswith("i2c-") and parent[4:].isdigit():
+                return int(parent[4:])
+    return None
+
+
+class _SmbusData(ctypes.Union):
+    _fields_ = [("byte", ctypes.c_uint8), ("word", ctypes.c_uint16), ("block", ctypes.c_uint8 * 34)]
+
+
+class _SmbusArgs(ctypes.Structure):
+    _fields_ = [("read_write", ctypes.c_uint8), ("command", ctypes.c_uint8),
+                ("size", ctypes.c_uint32), ("data", ctypes.POINTER(_SmbusData))]
+
+
+I2C_SLAVE, I2C_SMBUS, SMBUS_WRITE, SMBUS_BYTE_DATA = 0x0703, 0x0720, 0, 2
+
+
+def i2c_write_byte(bus, addr, reg, value):
+    """SMBus write byte data through /dev/i2c-<bus> (loads i2c-dev if needed)."""
+    dev = f"/dev/i2c-{bus}"
+    if not os.path.exists(dev):
+        run_quiet(["modprobe", "i2c-dev"])
+    fd = os.open(dev, os.O_RDWR)
+    try:
+        fcntl.ioctl(fd, I2C_SLAVE, addr)
+        data = _SmbusData(byte=value)
+        fcntl.ioctl(fd, I2C_SMBUS, _SmbusArgs(SMBUS_WRITE, reg, SMBUS_BYTE_DATA, ctypes.pointer(data)))
+    finally:
+        os.close(fd)
 
 
 def check_cmd(cmd):
@@ -744,6 +819,12 @@ class Daemon:
         self.fan_health = FanHealth()
         self.state = {"fan_duty": None, "fans": [], "fan_fail": False,
                       "up_current": None, "status_led": None, "events": []}
+        self.dimmer = MODEL_LED_DIMMER.get(PRODUCT)
+        d = self.dimmer
+        self.state.update({"led_schedule_supported": bool(d), "led_level_min": 0 if d else None,
+                           "led_level_max": len(d["levels"]) - 1 if d else None,
+                           "led_level_default": d["default"] if d else None,
+                           "led_level_now": None, "led_mode_now": None})
         self.bays = {}
         self.last_disk = {}
         self.stop = threading.Event()
@@ -947,6 +1028,33 @@ class Daemon:
             self.led_step(shown, on)
             self.stop.wait(1)
 
+    def dimmer_step(self, tm):
+        """Set the front-panel LED level the schedule wants for this time, if it changed."""
+        code = led_code(self.conf["led_schedule"], tm)
+        level = led_level(self.dimmer, code, self.conf["led_reduced_level"])
+        if level == self.state["led_level_now"]:
+            return
+        bus = i2c_bus_of(self.dimmer["bus_of"])
+        if bus is None:
+            raise OSError(f"no I2C bus with {self.dimmer['bus_of']}")
+        i2c_write_byte(bus, self.dimmer["addr"], self.dimmer["reg"], self.dimmer["levels"][level])
+        log.info("front-panel LEDs: level %d (%s)", level, LED_MODES[code])
+        self.state["led_level_now"], self.state["led_mode_now"] = level, LED_MODES[code]
+
+    def dimmer_loop(self):
+        """Front-panel LED level every 20 s from the local time: follows the hour, a
+        resume, a time zone or clock change without hooks. A failed write is retried."""
+        failed = False
+        while not self.stop.is_set():
+            try:
+                self.dimmer_step(time.localtime())
+                failed = False
+            except OSError as e:
+                if not failed:
+                    log.error("front-panel LED brightness: %s", e)
+                failed = True
+            self.stop.wait(20)
+
     def cmd_loop(self):
         try:
             os.mkfifo(CMD_FIFO, 0o600)
@@ -1099,6 +1207,8 @@ class Daemon:
             self.start_thread(self.ctl_loop)
             if self.conf["disk_leds"]:
                 self.start_thread(self.led_loop)
+            if self.dimmer:
+                self.start_thread(self.dimmer_loop)
             self.control_loop()
         finally:
             self.shutdown()
@@ -1185,6 +1295,10 @@ def print_status(d):
         t = s["nvme"].get(sl["controller"]) if sl["controller"] else None
         print(f"M.2 slot {n}   {'nvme' if sl['present'] else 'empty'}  {sl['device'] or ''}  "
               f"{deg(t) if sl['present'] else ''}")
+    if d.get("led_schedule_supported"):
+        now = d.get("led_level_now")
+        print(f"front LEDs   level {now if now is not None else '?'} of "
+              f"{d['led_level_min']}..{d['led_level_max']} ({d.get('led_mode_now') or '?'})")
     for when, what in d["events"][-5:]:
         print(f"event        {when} {what}")
 
