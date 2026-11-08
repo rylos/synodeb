@@ -21,6 +21,8 @@ run "uname -a"
 run "cat /etc/os-release /etc.defaults/VERSION 2>/dev/null"
 run "cat /sys/class/dmi/id/sys_vendor /sys/class/dmi/id/product_name /sys/class/dmi/id/board_name /sys/class/dmi/id/bios_version 2>/dev/null"
 run "cat /proc/sys/kernel/syno_hw_version 2>/dev/null"
+# the kernel command line carries board facts: port maps, GPIO pins, console, disk counts
+run "cat /proc/cmdline"
 run "grep -m1 'model name' /proc/cpuinfo; grep -c ^processor /proc/cpuinfo; grep MemTotal /proc/meminfo"
 # storage controllers, ports, port multipliers
 have lspci && run "lspci -nn"
@@ -34,16 +36,27 @@ have lsscsi && run "lsscsi -g"
 run "ls -l /dev/disk/by-path/ 2>/dev/null | grep -v -- -part"
 have lsblk && run "lsblk -o NAME,MODEL,SIZE,TRAN,HCTL,TYPE 2>/dev/null"
 # fans, temperatures, LEDs, GPIO, serial/USB control channels
-run "for h in /sys/class/hwmon/hwmon*; do echo \"== \$h \$(cat \$h/name 2>/dev/null)\"; for f in \$h/*_input \$h/pwm[0-9]* \$h/*_alarm; do [ -e \"\$f\" ] && echo \"\${f##*/} \$(cat \$f 2>/dev/null)\"; done; done"
+run "for h in /sys/class/hwmon/hwmon*; do echo \"== \$h \$(cat \$h/name 2>/dev/null)\"; for f in \$h/*_label \$h/*_input \$h/pwm[0-9]* \$h/*_alarm; do [ -e \"\$f\" ] && echo \"\${f##*/} \$(cat \$f 2>/dev/null)\"; done; done"
 have sensors && run "sensors"
 run "ls /sys/class/leds/ 2>/dev/null"
-run "cat /sys/kernel/debug/gpio 2>/dev/null | head -n 300"
+run "cat /sys/kernel/debug/gpio 2>/dev/null | head -n 600"
 run "ls -l /dev/ttyS* /dev/ttyACM* /dev/ttyUSB* 2>/dev/null"
-have lsusb && run "lsusb; lsusb -t"
+# plain lsusb prints the tree as well; DSM's lsusb is a Python script without -t, and the
+# traceback it prints there says nothing about the hardware
+have lsusb && run "lsusb"
 have i2cdetect && run "i2cdetect -l"
 run "cat /proc/interrupts | head -n 80"
-# the whole kernel log of this boot (level 2 of the form)
-if have journalctl; then run "journalctl -k -b --no-pager"; else run "dmesg"; fi
+# the whole kernel log of this boot (level 2 of the form). DSM keeps the journal in RAM with a
+# small cap, so "journalctl -k -b" there often holds nothing from the boot; dmesg is collected
+# as well. If the dmesg ring has wrapped too, nothing in the report is from the boot, and the
+# report says so, because then level 1 and level 2 cannot be answered from it.
+# Kernel audit records (apparmor, seccomp) are left out of both: they name binaries and file
+# paths from the reporter's own system and say nothing about the hardware.
+have journalctl && run "journalctl -k -b --no-pager | grep -vE 'audit\(|apparmor='"
+run "dmesg | grep -vE 'audit\(|apparmor='"
+if dmesg 2>/dev/null | head -n 1 | grep -q '^\[ *0\.'; then boot=yes; else boot=no; fi
+sec "boot start present in the dmesg section: $boot"
+[ "$boot" = yes ] || echo "The ring buffer no longer holds the start of this boot. Please reboot and run this script again."
 } > "$tmp"
 # Mask MAC addresses and serial numbers before sharing. A serial reaches the report in three
 # shapes: "sn=VALUE" on a DSM kernel command line, "Serial Number: VALUE" from a listing tool,
@@ -55,7 +68,7 @@ if have journalctl; then run "journalctl -k -b --no-pager"; else run "dmesg"; fi
 # product name such as RTL8153 goes too when no serial follows it; the USB ids stay on the line.
 sed -E '
 s/([0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}/xx:xx:xx:xx:xx:xx/g
-s/\b((sn|SN|mac[0-9]*|macs|MAC[0-9]*|vender|netif_num|hw_serial)=)[^ ]+/\1REDACTED/g
+s/\b((sn|SN|mac[0-9]*|macs|MAC[0-9]*|vender|hw_serial)=)[^ ]+/\1REDACTED/g
 s/([Ss][Ee][Rr][Ii][Aa][Ll][ _A-Za-z.]*[:=] *)[^ ,]+/\1REDACTED/g
 s/\b([Ss][Nn]:)( *)[^ ,]+/\1\2REDACTED/g
 s/([Vv]ersion: *[0-9]{1,3})\.([0-9]{1,3})\.([0-9]{1,3})\.([0-9]{1,3})\b/\1@DOT@\2@DOT@\3@DOT@\4/g
@@ -71,3 +84,4 @@ for n in "$host" "${host%%.*}"; do
     fi
 done
 echo "wrote $out ($(wc -l < "$out") lines). Please read it before attaching."
+[ "$boot" = yes ] || echo "This report holds no boot log: the ring buffer has wrapped. Please reboot the unit and run the script again." >&2
