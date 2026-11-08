@@ -54,9 +54,16 @@ run "cat /proc/interrupts | head -n 80"
 # paths from the reporter's own system and say nothing about the hardware.
 have journalctl && run "journalctl -k -b --no-pager | grep -vE 'audit\(|apparmor='"
 run "dmesg | grep -vE 'audit\(|apparmor='"
-if dmesg 2>/dev/null | head -n 1 | grep -q '^\[ *0\.'; then boot=yes; else boot=no; fi
+# "unreadable": dmesg refused (kernel.dmesg_restrict=1 and not root), rebooting would not help
+first=$(dmesg 2>/dev/null | head -n 1)
+if [ -z "$first" ]; then boot=unreadable
+elif printf '%s\n' "$first" | grep -q '^\[ *0\.'; then boot=yes
+else boot=no; fi
 sec "boot start present in the dmesg section: $boot"
-[ "$boot" = yes ] || echo "The ring buffer no longer holds the start of this boot. Please reboot and run this script again."
+case $boot in
+no) echo "The ring buffer no longer holds the start of this boot. Please reboot and run this script again." ;;
+unreadable) echo "dmesg could not be read (not root?). Please run this script again with sudo." ;;
+esac
 } > "$tmp"
 # Mask MAC addresses and serial numbers before sharing. A serial reaches the report in three
 # shapes: "sn=VALUE" on a DSM kernel command line, "Serial Number: VALUE" from a listing tool,
@@ -84,4 +91,7 @@ for n in "$host" "${host%%.*}"; do
     fi
 done
 echo "wrote $out ($(wc -l < "$out") lines). Please read it before attaching."
-[ "$boot" = yes ] || echo "This report holds no boot log: the ring buffer has wrapped. Please reboot the unit and run the script again." >&2
+case $boot in
+no) echo "This report holds no boot log: the ring buffer has wrapped. Please reboot the unit and run the script again." >&2 ;;
+unreadable) echo "This report holds no kernel log: dmesg could not be read. Please run the script again with sudo." >&2 ;;
+esac
