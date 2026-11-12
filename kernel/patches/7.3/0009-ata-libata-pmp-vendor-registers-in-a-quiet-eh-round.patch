@@ -1,5 +1,5 @@
 diff --git a/drivers/ata/Kconfig b/drivers/ata/Kconfig
-index c04b253..6c42019 100644
+index 5447744..a8e7732 100644
 --- a/drivers/ata/Kconfig
 +++ b/drivers/ata/Kconfig
 @@ -114,6 +114,16 @@ config SATA_PMP
@@ -33,7 +33,7 @@ index c93c24b..2acc448 100644
  		/* if unloading, commence suicide */
  		if ((ap->pflags & ATA_PFLAG_UNLOADING) &&
 diff --git a/drivers/ata/libata-pmp.c b/drivers/ata/libata-pmp.c
-index 62c3e8d..e0a7198 100644
+index 62c3e8d..7a6d5f8 100644
 --- a/drivers/ata/libata-pmp.c
 +++ b/drivers/ata/libata-pmp.c
 @@ -1130,3 +1130,292 @@ void sata_pmp_error_handler(struct ata_port *ap)
@@ -356,10 +356,10 @@ index 4827469..d83449b 100644
 +
  #endif /* __LIBATA_H__ */
 diff --git a/include/linux/libata.h b/include/linux/libata.h
-index 4e75f5e..b4b710e 100644
+index 09073b9..8773837 100644
 --- a/include/linux/libata.h
 +++ b/include/linux/libata.h
-@@ -2192,4 +2192,13 @@ static inline int sata_sff_hardreset(struct ata_link *link, unsigned int *class,
+@@ -2193,4 +2193,13 @@ static inline int sata_sff_hardreset(struct ata_link *link, unsigned int *class,
  }
  #endif /* CONFIG_ATA_SFF */
  

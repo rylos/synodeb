@@ -33,7 +33,7 @@ index f21efb0..aa3b4cb 100644
  		/* if unloading, commence suicide */
  		if ((ap->pflags & ATA_PFLAG_UNLOADING) &&
 diff --git a/drivers/ata/libata-pmp.c b/drivers/ata/libata-pmp.c
-index 01898fd..22ca376 100644
+index 01898fd..07a80dd 100644
 --- a/drivers/ata/libata-pmp.c
 +++ b/drivers/ata/libata-pmp.c
 @@ -1127,3 +1127,292 @@ void sata_pmp_error_handler(struct ata_port *ap)
@@ -330,7 +330,7 @@ index 01898fd..22ca376 100644
 +EXPORT_SYMBOL_GPL(sata_pmp_vendor_call);
 +#endif /* CONFIG_SATA_PMP_VENDOR_EH */
 diff --git a/drivers/ata/libata.h b/drivers/ata/libata.h
-index 9f96ca2..2effc43 100644
+index 9f96ca2..cdaae1a 100644
 --- a/drivers/ata/libata.h
 +++ b/drivers/ata/libata.h
 @@ -277,4 +277,21 @@ static inline void zpodd_disable_run_wake(struct ata_device *dev) {}
@@ -356,10 +356,10 @@ index 9f96ca2..2effc43 100644
 +
  #endif /* __LIBATA_H__ */
 diff --git a/include/linux/libata.h b/include/linux/libata.h
-index 36c4512..96dc72b 100644
+index 763a7c7..e1c3650 100644
 --- a/include/linux/libata.h
 +++ b/include/linux/libata.h
-@@ -2176,4 +2176,13 @@ static inline int sata_sff_hardreset(struct ata_link *link, unsigned int *class,
+@@ -2177,4 +2177,13 @@ static inline int sata_sff_hardreset(struct ata_link *link, unsigned int *class,
  }
  #endif /* CONFIG_ATA_SFF */
  

@@ -1,8 +1,8 @@
 diff --git a/drivers/md/md.c b/drivers/md/md.c
-index 03d328506..69ea6fdf2 100644
+index 937a2f4..1a850ff 100644
 --- a/drivers/md/md.c
 +++ b/drivers/md/md.c
-@@ -2009,6 +2009,8 @@ static int super_1_validate(struct mddev *mddev, struct md_rdev *freshest, struc
+@@ -2012,6 +2012,8 @@ static int super_1_validate(struct mddev *mddev, struct md_rdev *freshest, struc
  		mddev->clevel[0] = 0;
  		mddev->layout = le32_to_cpu(sb->layout);
  		mddev->raid_disks = le32_to_cpu(sb->raid_disks);
@@ -11,7 +11,7 @@ index 03d328506..69ea6fdf2 100644
  		mddev->dev_sectors = le64_to_cpu(sb->size);
  		mddev->events = ev1;
  		mddev->bitmap_info.offset = 0;
-@@ -2202,6 +2204,7 @@ static void super_1_sync(struct mddev *mddev, struct md_rdev *rdev)
+@@ -2205,6 +2207,7 @@ static void super_1_sync(struct mddev *mddev, struct md_rdev *rdev)
  	sb->pad0 = 0;
  	sb->recovery_offset = cpu_to_le64(0);
  	memset(sb->pad3, 0, sizeof(sb->pad3));
@@ -19,7 +19,7 @@ index 03d328506..69ea6fdf2 100644
  
  	sb->utime = cpu_to_le64((__u64)mddev->utime);
  	sb->events = cpu_to_le64(mddev->events);
-@@ -6840,6 +6843,7 @@ static void md_clean(struct mddev *mddev)
+@@ -6853,6 +6856,7 @@ static void md_clean(struct mddev *mddev)
  	mddev->external_size = 0;
  	mddev->dev_sectors = 0;
  	mddev->raid_disks = 0;
@@ -28,7 +28,7 @@ index 03d328506..69ea6fdf2 100644
  	mddev->resync_min = 0;
  	mddev->resync_max = MaxSector;
 diff --git a/drivers/md/md.h b/drivers/md/md.h
-index cab3d7360..0242be32c 100644
+index cab3d73..0242be3 100644
 --- a/drivers/md/md.h
 +++ b/drivers/md/md.h
 @@ -431,6 +431,11 @@ struct mddev {
@@ -44,7 +44,7 @@ index cab3d7360..0242be32c 100644
  	int				level, layout;
  	char				clevel[16];
 diff --git a/include/uapi/linux/raid/md_p.h b/include/uapi/linux/raid/md_p.h
-index ac74133a4..310068bb2 100644
+index ac74133..310068b 100644
 --- a/include/uapi/linux/raid/md_p.h
 +++ b/include/uapi/linux/raid/md_p.h
 @@ -291,7 +291,8 @@ struct mdp_superblock_1 {

@@ -22,7 +22,7 @@ index 120a2b7..b57967e 100644
  	bool "ATA ACPI Support"
  	depends on ACPI
 diff --git a/drivers/ata/libata-core.c b/drivers/ata/libata-core.c
-index cd9c965..9c1283e 100644
+index cb74c6a..7a24d5d 100644
 --- a/drivers/ata/libata-core.c
 +++ b/drivers/ata/libata-core.c
 @@ -4987,6 +4987,10 @@ void ata_qc_complete(struct ata_queued_cmd *qc)
@@ -46,7 +46,7 @@ index cd9c965..9c1283e 100644
  	kfree(ap->pmp_link);
  	kfree(ap->slave_link);
  	ida_free(&ata_ida, ap->print_id);
-@@ -6079,6 +6086,20 @@ int ata_host_register(struct ata_host *host, const struct scsi_host_template *sh
+@@ -6125,6 +6132,20 @@ int ata_host_register(struct ata_host *host, const struct scsi_host_template *sh
  	if (rc)
  		goto err_tadd;
  
@@ -68,7 +68,7 @@ index cd9c965..9c1283e 100644
  	for (i = 0; i < host->n_ports; i++) {
  		struct ata_port *ap = host->ports[i];
 diff --git a/include/linux/libata.h b/include/linux/libata.h
-index 868af0a..c5c2f0c 100644
+index a92908f..763a7c7 100644
 --- a/include/linux/libata.h
 +++ b/include/linux/libata.h
 @@ -532,6 +532,7 @@ enum ata_lpm_hints {
