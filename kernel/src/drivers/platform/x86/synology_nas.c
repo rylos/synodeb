@@ -183,6 +183,13 @@ static struct gpiod_lookup_table ds920_gpios = {
 	},
 };
 
+/*
+ * DS423+ (model.dtb of DSM 7.4.1): the same pins as the DS920+ (power_pin_gpio 20-23,
+ * detect_pin_gpio 35-38, usb vbus 29/30); fan tachometers 39/40 and the disk LED enable 17
+ * are configured the same way under DSM (inputs 39/40, output 17 high).
+ */
+#define ds423_gpios ds920_gpios
+
 /* What differs between the models this driver supports. */
 enum syno_up { UP_AMD, UP_LPSS };
 
@@ -231,6 +238,20 @@ static const struct syno_model ds920plus = {
 	.rtc_acpi_hid = "RTC35390",
 	.up = UP_LPSS,
 	.nics = ds920_nics,
+};
+
+/* DSM: eth0 (LAN 1) is 02:00.0, eth1 (LAN 2) is 03:00.0, the reverse of the DS920+ */
+static const char * const ds423_nics[] = { "0000:02:00.0", "0000:03:00.0", NULL };
+
+static const struct syno_model ds423plus = {
+	.name = "DS423+",
+	.bays = 4,
+	.spinup_groups = "2,1,1",
+	.gpios = &ds423_gpios,
+	.gpio_chip = GLK_GPIO,
+	.rtc_acpi_hid = "RTC35390",
+	.up = UP_LPSS,
+	.nics = ds423_nics,
 };
 
 /* the model found at init, used by probe and the I2C work */
@@ -1090,6 +1111,14 @@ static const struct dmi_system_id syno_dmi[] = {
 		},
 		.driver_data = (void *)&ds920plus,
 	},
+	{
+		/* BIOS M.901.00: vendor "Synology", as on the DS920+ */
+		.matches = {
+			DMI_EXACT_MATCH(DMI_SYS_VENDOR, "Synology"),
+			DMI_EXACT_MATCH(DMI_PRODUCT_NAME, "DS423+"),
+		},
+		.driver_data = (void *)&ds423plus,
+	},
 	{ }
 };
 MODULE_DEVICE_TABLE(dmi, syno_dmi);
@@ -1150,5 +1179,5 @@ err_table:
 module_init(syno_init);
 
 MODULE_AUTHOR("Marco Ziliani <508111+rylos@users.noreply.github.com>");
-MODULE_DESCRIPTION("Synology NAS platform (DS923+, DS920+): bays, USB VBUS, fans, RTC/LED devices, microcontroller shutdown");
+MODULE_DESCRIPTION("Synology NAS platform (DS923+, DS920+, DS423+): bays, USB VBUS, fans, RTC/LED devices, microcontroller shutdown");
 MODULE_LICENSE("GPL");

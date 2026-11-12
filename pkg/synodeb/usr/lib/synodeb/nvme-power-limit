@@ -3,7 +3,8 @@
 
 The model.dtb power_limit of each model (DMI product name): DS923+ "14.85,9.9" -> slot 1
 (PCI 0000:00:01.2) 14.85 W, slot 2 (0000:00:01.3) 9.9 W; DS920+ "14.85,7.425" -> slot 1
-(0000:00:14.1) 14.85 W, slot 2 (0000:00:14.0) 7.425 W. Other models: nothing is changed. For each NVMe controller pick the operational power state
+(0000:00:14.1) 14.85 W, slot 2 (0000:00:14.0) 7.425 W; DS423+ "14.85,9.9" -> slot 1
+(0000:00:13.3) 14.85 W, slot 2 (0000:00:14.0) 9.9 W. Other models: nothing is changed. For each NVMe controller pick the operational power state
 with the highest max power <= limit (nvme id-ctrl: psd max_power, in centiwatts
 if MXPS = 0, in tenths of a milliwatt if MXPS = 1; non-operational states are excluded)
 and set it with feature 2 (Power Management). Never fails.
@@ -17,6 +18,7 @@ import sys
 MODEL_LIMITS = {
     "DS923+": {"0000:00:01.2": (1, 14.85), "0000:00:01.3": (2, 9.9)},
     "DS920+": {"0000:00:14.1": (1, 14.85), "0000:00:14.0": (2, 7.425)},
+    "DS423+": {"0000:00:13.3": (1, 14.85), "0000:00:14.0": (2, 9.9)},
 }
 
 

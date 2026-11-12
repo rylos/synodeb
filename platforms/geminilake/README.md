@@ -1,6 +1,14 @@
 # Platform geminilake (Intel Celeron J4025/J4125, Gemini Lake)
 
-Models: DS920+ (supported). Board file: `boards/ds920plus.conf`.
+Models: DS920+ (supported), DS423+ (work in progress). Board files: `boards/ds920plus.conf`,
+`boards/ds423plus.conf`.
+
+DS423+ (measured under DSM 7.4.1, BIOS M.901.00): its model.dtb has the DS920+ pins (bay
+power 20-23, presence 35-38, USB VBUS 29/30), and GPIO 17 and 39/40 are set up the same way
+under DSM; the same microcontroller and console UARTs, RTC35390, LED3943 and DOM. It differs
+in the SATA controller of bays 1-2 (ASMedia ASM1061, ports 0-1, instead of the Marvell
+88SE9235), the M.2 root ports (slot 1 behind 00:13.3, slot 2 behind 00:14.0), the NIC order
+(LAN 1 is 02:00.0) and the fan curves of its scemd.xml. Driver table `ds423plus`.
 
 Common hardware (DS920+, measured under DSM 7.4.1): front-panel microcontroller on LPSS UART 0
 (PCI 00:18.0, 9600 8N1, the same protocol as r1000), serial console on LPSS UART 2 (PCI 00:18.2);

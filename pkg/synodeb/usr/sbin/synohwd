@@ -1,5 +1,5 @@
 #!/usr/bin/python3 -I
-"""synohwd — Synology NAS hardware daemon for Debian (DS920+, DS923+; DS1522+ wip).
+"""synohwd — Synology NAS hardware daemon for Debian (DS920+, DS923+, DS423+; DS1522+ wip).
 
 Takes over the hardware management DSM does, using the front-panel microcontroller
 (uP: on the DS923+ the AMD UART at MMIO 0xFEDCA000, AMDI0020:01; on the DS920+ LPSS
@@ -135,6 +135,21 @@ MODEL_FAN_TABLES = {
             "nic": FAN_TABLES["low"]["nic"], "nic_shutdown": FAN_TABLES["low"]["nic_shutdown"],
         },
     },
+    # DS423+ (scemd.xml of DSM 7.4.1): DUAL_MODE_HIGH/LOW; no NIC sensor
+    "DS423+": {
+        "high": {
+            "disk": [(0, 20), (41, 30), (46, 50), (50, 70), (53, 99)], "disk_shutdown": 61,
+            "nvme": [(0, 20), (55, 50), (60, 70), (65, 99)], "nvme_shutdown": 70,
+            "cpu": [(0, 20), (45, 30), (55, 50), (65, 70), (75, 99)], "cpu_shutdown": 90,
+            "nic": FAN_TABLES["high"]["nic"], "nic_shutdown": FAN_TABLES["high"]["nic_shutdown"],
+        },
+        "low": {
+            "disk": [(0, 20), (46, 30), (52, 50), (55, 70), (58, 99)], "disk_shutdown": 61,
+            "nvme": [(0, 20), (55, 50), (60, 70), (65, 99)], "nvme_shutdown": 70,
+            "cpu": [(0, 20), (50, 30), (60, 50), (70, 70), (80, 99)], "cpu_shutdown": 90,
+            "nic": FAN_TABLES["low"]["nic"], "nic_shutdown": FAN_TABLES["low"]["nic_shutdown"],
+        },
+    },
 }
 
 # Bay -> (PCI function of the SATA controller, port index), per model (DMI product name).
@@ -147,6 +162,8 @@ MODEL_BAYS = {
     # bays 1-2 on Marvell 88SE9235 ports 1, 2 (behind 00:13.0; port 3 is the eSATA),
     # bays 3-4 on the SoC SATA 00:12.0
     "DS920+": {1: ("00:13.0", 1), 2: ("00:13.0", 2), 3: ("00:12.0", 0), 4: ("00:12.0", 1)},
+    # bays 1-2 on the ASMedia ASM1061 ports 0, 1 (behind 00:13.0), bays 3-4 on the SoC SATA
+    "DS423+": {1: ("00:13.0", 0), 2: ("00:13.0", 1), 3: ("00:12.0", 0), 4: ("00:12.0", 1)},
 }
 # M.2 slot -> PCIe root port of its NVMe controller, per model (model.dtb power_limit order,
 # as /usr/lib/synodeb/nvme-power-limit). The nvmeX names do not follow the slots (they can
@@ -154,6 +171,7 @@ MODEL_BAYS = {
 MODEL_M2 = {
     "DS923+": {1: "00:01.2", 2: "00:01.3"},
     "DS920+": {1: "00:14.1", 2: "00:14.0"},
+    "DS423+": {1: "00:13.3", 2: "00:14.0"},
 }
 DMI_PRODUCT = "/sys/class/dmi/id/product_name"
 # Front-panel LED dimmer, per model, from DSM's led_brightness.xml: a client of the same I2C
