@@ -49,6 +49,7 @@
 #include <linux/atomic.h>
 #include <linux/delay.h>
 #include <linux/dmi.h>
+#include <linux/hrtimer.h>
 #include <linux/gpio/consumer.h>
 #include <linux/gpio/machine.h>
 #include <linux/hex.h>
@@ -274,6 +275,16 @@ struct syno {
 	struct gpio_desc *disk_led_ctrl;	/* optional */
 	atomic_t pulses[NUM_FANS];
 	long fan_rpm[NUM_FANS];
+	/*
+	 * Tachometers without an IRQ (DS423+: BIOS M.901.00 leaves GPIO 39/40 in ACPI
+	 * mode, where pinctrl-intel refuses IRQs): sampled by tach_timer in windows.
+	 */
+	bool tach_polled[NUM_FANS];
+	int tach_last[NUM_FANS];
+	unsigned int tach_edges[NUM_FANS];
+	unsigned int tach_left;
+	bool tach_busy;
+	struct hrtimer tach_timer;
 	unsigned long fan_stamp;
 	long fan_pwm;
 	unsigned long last_power_on;
@@ -416,9 +427,44 @@ static irqreturn_t syno_tach_irq(int irq, void *data)
 	return IRQ_HANDLED;
 }
 
+/*
+ * Polled tachometers: 1 kHz for a 1 s window (a fan at 3000 rpm, 2 pulses per
+ * revolution, still gives 5 samples per level), one window per fan cycle.
+ */
+#define TACH_SAMPLE_NS	NSEC_PER_MSEC
+#define TACH_SAMPLES	1000
+
+static enum hrtimer_restart syno_tach_sample(struct hrtimer *t)
+{
+	struct syno *ds = container_of(t, struct syno, tach_timer);
+	int i;
+
+	for (i = 0; i < NUM_FANS; i++) {
+		int v;
+
+		if (!ds->tach_polled[i])
+			continue;
+		v = gpiod_get_value(ds->tach[i]);
+		if (v == 0 && ds->tach_last[i] == 1)
+			ds->tach_edges[i]++;
+		ds->tach_last[i] = v;
+	}
+	if (--ds->tach_left) {
+		hrtimer_forward_now(t, ns_to_ktime(TACH_SAMPLE_NS));
+		return HRTIMER_RESTART;
+	}
+	for (i = 0; i < NUM_FANS; i++)
+		if (ds->tach_polled[i])
+			WRITE_ONCE(ds->fan_rpm[i],
+				   (long)ds->tach_edges[i] * 60 / max(fan_pulses, 1U));
+	WRITE_ONCE(ds->tach_busy, false);
+	return HRTIMER_NORESTART;
+}
+
 static void syno_fans_poll(struct syno *ds)
 {
 	unsigned long now = jiffies, elapsed = now - ds->fan_stamp;
+	bool polled = false;
 	int i;
 
 	if (elapsed < 2 * HZ)
@@ -426,11 +472,21 @@ static void syno_fans_poll(struct syno *ds)
 	for (i = 0; i < NUM_FANS; i++) {
 		long n = atomic_xchg(&ds->pulses[i], 0);
 
-		if (ds->tach[i])
+		polled |= ds->tach_polled[i];
+		if (ds->tach[i] && !ds->tach_polled[i])
 			WRITE_ONCE(ds->fan_rpm[i],
 				   n * 60 * HZ / (long)(elapsed * max(fan_pulses, 1U)));
 	}
 	ds->fan_stamp = now;
+	if (polled && !READ_ONCE(ds->tach_busy)) {
+		for (i = 0; i < NUM_FANS; i++) {
+			ds->tach_edges[i] = 0;
+			ds->tach_last[i] = -1;
+		}
+		ds->tach_left = TACH_SAMPLES;
+		WRITE_ONCE(ds->tach_busy, true);
+		hrtimer_start(&ds->tach_timer, ns_to_ktime(TACH_SAMPLE_NS), HRTIMER_MODE_REL);
+	}
 }
 
 static void syno_poll(struct work_struct *work)
@@ -1023,10 +1079,11 @@ static int syno_probe(struct platform_device *pdev)
 						       i ? "syno-fan2" : "syno-fan1",
 						       &ds->pulses[i]);
 		if (ret) {
-			dev_warn(dev, "fan %d tach irq: %d\n", i + 1, ret);
-			ds->tach[i] = NULL;
+			dev_info(dev, "fan %d tach irq: %d, polling the gpio\n", i + 1, ret);
+			ds->tach_polled[i] = true;
 		}
 	}
+	hrtimer_setup(&ds->tach_timer, syno_tach_sample, CLOCK_MONOTONIC, HRTIMER_MODE_REL);
 	ds->fan_stamp = jiffies;
 
 	syno_up_map(ds);
@@ -1063,6 +1120,7 @@ static void syno_remove(struct platform_device *pdev)
 	struct syno *ds = platform_get_drvdata(pdev);
 
 	cancel_delayed_work_sync(&ds->poll);
+	hrtimer_cancel(&ds->tach_timer);
 	/* Bay and USB power are left as they are: unbinding must not cut the disks. */
 }
 
@@ -1072,6 +1130,7 @@ static void syno_shutdown(struct platform_device *pdev)
 	int bay;
 
 	cancel_delayed_work_sync(&ds->poll);
+	hrtimer_cancel(&ds->tach_timer);
 	if (system_state != SYSTEM_POWER_OFF)
 		return;
 	/* The disks are already stopped by sd_shutdown(). */
