@@ -1,6 +1,6 @@
 # Platform geminilake (Intel Celeron J4025/J4125, Gemini Lake)
 
-Models: DS920+ (supported), DS423+ (work in progress). Board files: `boards/ds920plus.conf`,
+Models: DS920+ (supported), DS423+ (community). Board files: `boards/ds920plus.conf`,
 `boards/ds423plus.conf`.
 
 DS423+ (measured under DSM 7.4.1, BIOS M.901.00): its model.dtb has the DS920+ pins (bay
