@@ -34,6 +34,7 @@ This project is not affiliated with, endorsed or supported by Synology Inc. "Syn
 | **DS923+** | AMD Ryzen R1600 | supported, fully tested |
 | **DS920+** | Intel Celeron J4125 | supported, fully tested |
 | DS1522+ | AMD Ryzen R1600 | work in progress |
+| DS423+ | Intel Celeron J4125 | community, tested on hardware (DS920+ platform, see [geminilake](platforms/geminilake/README.md)) |
 
 More models are planned in [#7](https://github.com/rylos/synodeb/discussions/7): if you own one
 and want to help, say hello there.

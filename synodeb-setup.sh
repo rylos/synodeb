@@ -52,6 +52,14 @@ model_profile() { # model (from syno_hw_version)
         P1_MIN=16777216 P2_MIN=67108864
         CONSOLE='console=tty0 console=uart8250,mmio32,0xfedc9000,115200n8'
         ;;
+    DS423+)
+        MODEL=DS423+ PLATFORM=geminilake TIER=community BAYS=4
+        FAT_ID='9c 58 ee 10' FAT_ID_TXT=10EE-589C
+        EXT_UUID='45 e5 b0 7d 47 83 48 67 a3 69 f9 9c 0c d1 e6 10'
+        P2UUID=45e5b07d-4783-4867-a369-f99c0cd1e610
+        P1_MIN=16777216 P2_MIN=67108864
+        CONSOLE=console=tty0
+        ;;
     DS920+)
         MODEL=DS920+ PLATFORM=geminilake TIER=supported BAYS=4
         FAT_ID='9c 58 ee 10' FAT_ID_TXT=10EE-589C
@@ -75,7 +83,7 @@ model_profile() { # model (from syno_hw_version)
 models_of_tier() { # tier
     case "$1" in
     supported) echo 'DS920+ DS923+' ;;
-    community) echo '' ;;
+    community) echo DS423+ ;;
     wip) echo DS1522+ ;;
     esac
 }

@@ -10,7 +10,7 @@ Recommends: nut-server, nut-client, nftables, smartmontools, lm-sensors, mdadm, 
 Section: admin
 Priority: optional
 Homepage: https://github.com/rylos/synodeb
-Description: Debian on Synology NAS (DS920+, DS923+): hardware support
+Description: Debian on Synology NAS (DS920+, DS923+, DS423+): hardware support
  The platform drivers (bay power with DSM-style staggered spin-up and hot-plug,
  USB VBUS, fan hwmon, disk LEDs, S-35390A RTC) are built into the synodeb
  kernel (linux-image-synodeb-longterm or linux-image-synodeb-stable). This
