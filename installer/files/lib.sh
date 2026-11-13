@@ -88,3 +88,41 @@ dom_unprotect() {
         sleep 1
     done
 }
+
+# Block devices under the new system: the devices of its mounts on /target and of the active
+# swaps, then down through partitions (md0p1 -> md0) and slaves (dm -> md -> sd), one name
+# per line. MOUNTS, SWAPS and SYSBLK can be pointed elsewhere (tests).
+target_blockdevs() {
+    queue=$( { awk -v t=/target '$2 == t || index($2, t "/") == 1 { print $1 }' "${MOUNTS:-/proc/mounts}"
+               awk 'NR > 1 { print $1 }' "${SWAPS:-/proc/swaps}"; } |
+             while read -r d; do case $d in /*) basename "$(readlink -f "$d")" ;; esac; done | tr "\n" " ")
+    seen=" "
+    while [ -n "$queue" ]; do
+        n=${queue%% *}
+        case $queue in *" "*) queue=${queue#* } ;; *) queue= ;; esac
+        [ -n "$n" ] || continue
+        case $seen in *" $n "*) continue ;; esac
+        seen="$seen$n "
+        p=${SYSBLK:-/sys/class/block}/$n
+        [ -e "$p" ] || continue
+        echo "$n"
+        [ ! -e "$p/partition" ] || queue="$queue $(basename "$(dirname "$(readlink -f "$p")")")"
+        for s in "$p"/slaves/*; do [ ! -e "$s" ] || queue="$queue ${s##*/}"; done
+    done
+}
+
+# mdadm.conf body from "mdadm --detail --scan" ($1) and target_blockdevs ($2): the arrays
+# the new system uses as ARRAY lines, the others (DSM's, assembled by the installer)
+# commented out, so that "AUTO -all" keeps them stopped.
+md_conf_arrays() {
+    printf '%s\n' "$1" | while IFS= read -r line; do
+        case $line in ARRAY\ *) ;; *) continue ;; esac
+        dev=${line#ARRAY }; dev=${dev%% *}
+        n=$(basename "$(readlink -f "$dev")")
+        if printf '%s\n' "$2" | grep -qx "$n"; then
+            printf '%s\n' "$line"
+        else
+            printf '# not used by this system: %s\n' "$line"
+        fi
+    done
+}

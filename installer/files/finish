@@ -70,11 +70,13 @@ if [ -x $T/sbin/mdadm ] || [ -x $T/usr/sbin/mdadm ]; then
     else
         arrays=$(chroot_run mdadm --detail --scan 2>/dev/null || true)
     fi
-    log "mdadm.conf: $(printf '%s\n' "$arrays" | grep -c '^ARRAY' || true) array(s)"
+    arrays=$(md_conf_arrays "$arrays" "$(target_blockdevs)")
+    log "mdadm.conf: $(printf '%s\n' "$arrays" | grep -c '^ARRAY' || true) array(s) of this system, $(printf '%s\n' "$arrays" | grep -c '^# not used' || true) other(s) left out"
     {
         echo "# synodeb: arrays of this system; arrays of other systems (DSM) are never assembled."
         echo "# An array created later is assembled at boot once it is listed here:"
         echo "#   mdadm --detail --scan  (copy its ARRAY line here), then update-initramfs -u"
+        echo "# Arrays the installer found but this system does not use are listed commented out."
         echo "HOMEHOST <system>"
         echo "MAILADDR root"
         echo "AUTO -all"

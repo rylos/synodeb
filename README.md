@@ -1,7 +1,7 @@
 # synodeb
 
 <h3 align="center">
-Debian 13 on Synology DS920+ and DS923+, with the NAS hardware working:<br>
+Debian 13 on Synology DS920+, DS923+ and DS423+, with the NAS hardware working:<br>
 fans, LEDs, buttons, beeper, power schedule, UPS, watchdog, every bay and both M.2 slots.
 </h3>
 
@@ -33,8 +33,8 @@ This project is not affiliated with, endorsed or supported by Synology Inc. "Syn
 |---|---|---|
 | **DS923+** | AMD Ryzen R1600 | supported, fully tested |
 | **DS920+** | Intel Celeron J4125 | supported, fully tested |
+| DS423+ | Intel Celeron J4125 | community: tested on the hardware by a user |
 | DS1522+ | AMD Ryzen R1600 | work in progress |
-| DS423+ | Intel Celeron J4125 | community, tested on hardware (DS920+ platform, see [geminilake](platforms/geminilake/README.md)) |
 
 More models are planned in [#7](https://github.com/rylos/synodeb/discussions/7): if you own one
 and want to help, say hello there.
