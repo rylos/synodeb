@@ -9,7 +9,7 @@
 # kernel/config-debian-<x.y> must exist for it.
 SERIES=stable
 KVER=7.3.4
-ABI=11
+ABI=12
 # derived
 KMAJ=${KVER%%.*}; KMIN=${KVER#*.}; KMIN=${KMIN%%.*}
 KBRANCH=$KMAJ.$KMIN             # 7.3: kernel/patches/7.3, kernel/config-debian-7.3
