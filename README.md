@@ -13,7 +13,7 @@ on any Debian machine. DSM can stay on its own disks, and one command switches b
 > [!TIP]
 > **Try it with [rynas](https://github.com/rylos/rynas)**, a web NAS manager for plain Debian:
 > storage, shares, snapshots and Docker apps from the browser, plus the Synology hardware of
-> synodeb (fans, LEDs, UPS, notifications). It is alpha software: keep backups.
+> synodeb (fans, LEDs, UPS, notifications).
 
 <p align="center">
   <img src="docs/img/setup-menu.png" alt="synodeb-setup.sh menu on DSM" width="49%">
