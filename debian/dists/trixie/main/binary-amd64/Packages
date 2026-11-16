@@ -887,7 +887,7 @@ Description: network UPS tools - Python3 bindings for NUT server
 
 Package: synodeb
 Architecture: all
-Version: 4.8
+Version: 4.10
 Priority: optional
 Section: admin
 Maintainer: Marco Ziliani <508111+rylos@users.noreply.github.com>
@@ -896,14 +896,14 @@ Recommends: nut-server, nut-client, nftables, smartmontools, lm-sensors, mdadm, 
 Conflicts: systemd-boot
 Breaks: synology-ds923 (<< 4.0~)
 Replaces: synology-ds923 (<< 4.0~)
-Filename: pool/main/synodeb_4.8_all.deb
-Size: 67508
-MD5sum: 941a7b68c939b6d6e375243a98729b64
-SHA1: 25ae51593003e1a73a60a5384c1f4cc27aa123ab
-SHA256: d5a151b4e9336f54e4b0e2d24dd3ddc7619b2959f3b4b1ab8a645d4aed09b673
-SHA512: 3844bf5ec9173534ebe64f7b4aa0347d0faaa79727ab36d94f0fd1bb4f704615305c29aa24184fb2500c2aa4b2e5f0081c1d5efe03744e2a05ca8be09d7bfe35
+Filename: pool/main/synodeb_4.10_all.deb
+Size: 67904
+MD5sum: 47261394292acc5487541b547e05702d
+SHA1: e7fde258e1479ae5edaad181aa51b80053b8834e
+SHA256: daea3cfc974de9e6b938bdd2557950acdb57456dd81ea2b46b91a2e8da73adc5
+SHA512: 392918159e3526987a9d702ec6837b380c61c8eae67c2a32c0c40ddaa19b7a0389acece0be9647f627a208077da5fed200141d79fc742d54191ff97fa36a566a
 Homepage: https://github.com/rylos/synodeb
-Description: Debian on Synology NAS (DS920+, DS923+): hardware support
+Description: Debian on Synology NAS (DS920+, DS923+, DS423+): hardware support
  The platform drivers (bay power with DSM-style staggered spin-up and hot-plug,
  USB VBUS, fan hwmon, disk LEDs, S-35390A RTC) are built into the synodeb
  kernel (linux-image-synodeb-longterm or linux-image-synodeb-stable). This
