@@ -47,10 +47,11 @@ per line in each direction, schema 1.
 The FIFO /run/synohwd/cmd (one command per line, no reply) stays for scripts.
 
 LED brightness (models in MODEL_LED_DIMMER): DSM dims all the front-panel LEDs (power,
-status, LAN, disks) with a digital potentiometer on I2C (DS923+: 0x2e, the bus of the
-ATmega1608), in levels 0..max: level 0 turns them all off. led_schedule has DSM's
-led_brightness_schedule format: 168 characters, index 24 * weekday + hour (local time,
-Sunday = 0), '0' default level, '1' led_reduced_level, '2' level 0 (off).
+status, LAN, disks) with a digital potentiometer on I2C (0x2e; DS923+: the bus of the
+ATmega1608, DS920+: the SMBus of the PCH), in levels 0..max: level 0 turns them all off.
+led_schedule has DSM's led_brightness_schedule format: 168 characters, index
+24 * weekday + hour (local time, Sunday = 0), '0' default level, '1' led_reduced_level,
+'2' level 0 (off).
 """
 
 import ctypes
@@ -174,12 +175,16 @@ MODEL_M2 = {
     "DS423+": {1: "00:13.3", 2: "00:14.0"},
 }
 DMI_PRODUCT = "/sys/class/dmi/id/product_name"
-# Front-panel LED dimmer, per model, from DSM's led_brightness.xml: a client of the same I2C
-# bus (by its name in /sys/bus/i2c/devices), the address and register, the value for each
-# level (0 = off) and the default level. DS923+: level 0 checked to turn all the LEDs off,
-# level 1 to dim all of them (2026-11-08). Models not listed: no dimming.
+# Front-panel LED dimmer, per model, from DSM's led_brightness.xml: its I2C bus (by the name
+# of a client of that bus, or by the start of the adapter name, in /sys/bus/i2c/devices), the
+# address and register, the value for each level (0 = off) and the default level.
+# DS923+: level 0 checked to turn all the LEDs off, level 1 to dim all of them (2026-11-08).
+# DS920+: the same chip and values on the SMBus of the PCH, checked by eye on every level
+# (off, two dimmed levels, full; 2026-11-16). Models not listed: no dimming.
 MODEL_LED_DIMMER = {
     "DS923+": {"bus_of": "atmega1608", "addr": 0x2E, "reg": 0x00,
+               "levels": (0x7D, 0x49, 0x3D, 0x2E), "default": 3},
+    "DS920+": {"bus_of": "SMBus I801 adapter", "addr": 0x2E, "reg": 0x00,
                "levels": (0x7D, 0x49, 0x3D, 0x2E), "default": 3},
 }
 
@@ -366,9 +371,15 @@ def led_level(dimmer, code, reduced):
 
 
 def i2c_bus_of(client, devices="/sys/bus/i2c/devices"):
-    """Number of the I2C adapter that has a client with this name, or None."""
+    """Number of the I2C adapter that has a client with this name, or whose own name starts
+    with it (e.g. "SMBus I801 adapter" for "SMBus I801 adapter at 0000:00:1f.1"), or None."""
     for d in sorted(glob.glob(f"{devices}/*")):
-        if read(f"{d}/name") == client:
+        name, base = read(f"{d}/name"), os.path.basename(d)
+        if base.startswith("i2c-") and base[4:].isdigit():
+            if name and name.startswith(client):
+                return int(base[4:])
+            continue
+        if name == client:
             parent = os.path.basename(os.path.dirname(os.path.realpath(d)))
             if parent.startswith("i2c-") and parent[4:].isdigit():
                 return int(parent[4:])

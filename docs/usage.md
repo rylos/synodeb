@@ -77,7 +77,7 @@ over ssh (`sudo systemctl stop 'synodeb-emergency-reboot*.timer'` to stay).
   duty, beeper, disk LEDs, power on after AC loss, Wake-on-LAN. The curves themselves are
   fixed. The fans go to full speed while a fan has failed, or when the CPU, an NVMe drive or a
   disk that had a temperature sensor gives no reading.
-  Front-panel LED brightness on a schedule, as in DSM (DS923+ so far): `led_schedule` takes
+  Front-panel LED brightness on a schedule, as in DSM (DS920+ and DS923+): `led_schedule` takes
   DSM's `led_brightness_schedule` string (168 characters, one per hour from Sunday 00:00:
   `0` normal, `1` reduced, `2` off) and `led_reduced_level` the reduced level (DSM's
   `led_brightness_adjusted_level`, 0..3); `synohwd status` and `status.json` show the level

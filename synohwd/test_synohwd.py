@@ -570,6 +570,13 @@ with tempfile.TemporaryDirectory() as d:
     os.symlink(f"{d}/devices/i2c-1/1-0060", f"{d}/bus/1-0060")
     check("i2c bus of atmega1608", m.i2c_bus_of("atmega1608", f"{d}/bus"), 1)
     check("i2c bus of missing", m.i2c_bus_of("LED3943:00", f"{d}/bus"), None)
+    os.makedirs(f"{d}/devices/pci/i2c-3")
+    with open(f"{d}/devices/pci/i2c-3/name", "w") as f:
+        f.write("SMBus I801 adapter at 0000:00:1f.1\n")
+    os.symlink(f"{d}/devices/pci/i2c-3", f"{d}/bus/i2c-3")
+    check("i2c bus of adapter name", m.i2c_bus_of("SMBus I801 adapter", f"{d}/bus"), 3)
+    check("i2c bus of client, adapters listed", m.i2c_bus_of("atmega1608", f"{d}/bus"), 1)
+    check("ds920 dimmer", m.MODEL_LED_DIMMER["DS920+"]["levels"], dim["levels"])
 
 # dimmer_step writes only on a change
 dmn = m.Daemon.__new__(m.Daemon)
