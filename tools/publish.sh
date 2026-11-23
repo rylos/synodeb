@@ -5,6 +5,7 @@
 #                (synology-ds923, linux-image-ds923*)
 #   installer/<kernel release>/   vmlinuz, installer.img, SHA256SUMS, VERSION
 #   synodeb-archive.asc           public key of the repository
+#   kernels.json  the published kernels: changes, CVEs fixed (tools/kernels-json.py)
 # Backports in build/out/backports (tools/build-backport.sh) are added to debian/ as well.
 # and writes the installer checksums into synodeb-setup.sh.
 # SERIES=longterm (default) or stable: the kernel series whose packages in build/out are
@@ -220,6 +221,10 @@ docker run --rm -v "$ROOT":/work -v "$GNUPG":/gnupg:ro -e KREL="$KREL" \
     -e KDEBVER="$KPKGVER" -e SERIES="$SERIES" -e HOSTUID="$(id -u)" -e SKIP_INSTALLER="${SKIP_INSTALLER:-0}" \
     debian:trixie bash -euo pipefail -c "$SCRIPT"
 for p in $PKGS; do rm -f "$ROOT/build/pkg-$p.tar"; done
+# kernels.json: the published kernels with their changes and the CVEs fixed since the previous
+# one, for NAS managers that let the user choose when to install a kernel. SYNODEB_VULNS: a
+# checkout of the kernel CVE repository (vulns.git); without it the CVE lists stay as they were
+SERIES=$SERIES python3 "$ROOT/tools/kernels-json.py" "$ROOT/build/pages" ${SYNODEB_VULNS:+"$SYNODEB_VULNS"}
 [ "${SKIP_INSTALLER:-0}" != 1 ] || exit 0
 # checksums of this installer in synodeb-setup.sh
 sv=$(sha256sum "$INST/vmlinuz" | cut -d' ' -f1)

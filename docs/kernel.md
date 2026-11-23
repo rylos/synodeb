@@ -28,7 +28,20 @@ newest stable kernel; remove `linux-image-synodeb-stable` to go back to longterm
 
 New releases of both series are built and published automatically, usually within a day of
 their release on kernel.org. Install them with `sudo apt update && sudo apt full-upgrade`, then
-reboot. A kernel update is never installed automatically, because it writes the DOM.
+reboot. A kernel update is never installed automatically, because it writes the DOM: when to
+install one is up to you, and staying on a kernel for months is fine. To keep `full-upgrade`
+from installing a new kernel together with the other updates, hold the metapackages of your
+series, e.g. `sudo apt-mark hold linux-image-synodeb-longterm linux-headers-synodeb-longterm`
+(`-stable` for the stable series; `linux-image-synodeb` and the old `-ds923` names follow them),
+and `apt-mark unhold` them when you want to update. The repository
+keeps the two newest kernels of each series.
+
+[`kernels.json`](https://rylos.github.io/synodeb/kernels.json) lists every published kernel
+with the synodeb changes to the kernel sources and the CVEs fixed upstream since the previous
+kernel of its series (from the kernel's own CVE list), so a NAS manager can show what an
+update brings before you install it. Its format is described in `tools/kernels-json.py`.
+Almost every stable release fixes some CVEs: the list says what was fixed, not whether it
+matters for a NAS.
 
 The DOM keeps two kernels: if the new one does not boot, the next boot starts the previous one
 and you get a notification. A normal boot never writes the DOM. A kernel update writes about

@@ -197,6 +197,9 @@ jobs:
           GNUPGHOME=$SYNODEB_GNUPG gpg -K --with-colons | grep -q '^fpr:::::::::CEE2A6FA9657FB3CBD61EA074200ADB5550E6DEE:' ||
               { echo "wrong signing key" >&2; exit 1; }
           GNUPGHOME=$SYNODEB_GNUPG gpgconf --kill all
+          # kernel CVE list for kernels.json; best effort, the CVE lists stay as they were without it
+          git clone -q --depth 1 https://git.kernel.org/pub/scm/linux/security/vulns.git "$RUNNER_TEMP/vulns" &&
+              export SYNODEB_VULNS=$RUNNER_TEMP/vulns || echo "vulns.git not cloned: CVE lists not updated" >&2
           SKIP_INSTALLER=1
           [ "$INSTALLER" = true ] && SKIP_INSTALLER=0
           SKIP_INSTALLER=$SKIP_INSTALLER tools/publish.sh
