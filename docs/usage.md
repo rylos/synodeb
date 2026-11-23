@@ -71,6 +71,13 @@ the normal boot every few minutes on its own; the ssh session stays up meanwhile
 password the NAS reboots by itself after 10 minutes, postponed while someone is logged in
 over ssh (`sudo systemctl stop 'synodeb-emergency-reboot*.timer'` to stay).
 
+A boot can also hang without failing: a start job that waits for ever (for example
+`network-online.target` behind a port that never comes up) keeps `systemd-user-sessions`
+from starting, and until then ssh accepts root only ("System is booting up"). If the boot has
+not finished 10 minutes after power-on, `synodeb-boot-stalled.timer` allows logins anyway and
+sends an urgent notification with the start jobs still running: log in, look at
+`systemctl list-jobs` and `sudo journalctl -b`, fix the cause and reboot.
+
 ## Configuration
 
 - `/etc/synohwd.toml`: fan mode (the DSM quiet or cool curve, or full speed) and minimum fan

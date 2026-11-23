@@ -42,11 +42,15 @@ if [ "$1" = configure ]; then
     if [ -z "$prev" ] || [ -e $removed ]; then
         rm -f $removed
         systemctl enable synohwd.service synodeb-nvme-power-limit.service synodeb-boot-ok.service \
-            synodeb-nut-firewall.service synodeb-emergency.service || true
+            synodeb-nut-firewall.service synodeb-emergency.service synodeb-boot-stalled.timer || true
     else
         # added in 4.2: network and ssh in emergency/rescue mode
         if dpkg --compare-versions "$prev" lt 4.2~; then
             systemctl enable synodeb-emergency.service || true
+        fi
+        # added in 4.11: logins allowed if the boot has not finished after 10 minutes
+        if dpkg --compare-versions "$prev" lt 4.11~; then
+            systemctl enable synodeb-boot-stalled.timer || true
         fi
         [ ! -d /run/systemd/system ] || systemctl try-restart synohwd.service || true
     fi

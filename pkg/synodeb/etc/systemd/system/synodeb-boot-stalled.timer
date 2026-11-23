@@ -1,0 +1,9 @@
+[Unit]
+Description=synodeb: check 10 minutes after the boot that it finished (logins allowed if not)
+
+[Timer]
+OnBootSec=10min
+AccuracySec=30s
+
+[Install]
+WantedBy=timers.target

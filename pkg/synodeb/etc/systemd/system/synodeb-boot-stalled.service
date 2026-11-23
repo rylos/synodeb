@@ -1,0 +1,12 @@
+[Unit]
+Description=synodeb: boot not finished after 10 minutes: allow logins and notify
+# no default dependencies: it runs while the boot is still waiting for something
+DefaultDependencies=no
+After=sysinit.target
+Conflicts=shutdown.target
+Before=shutdown.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/lib/synodeb/boot-stalled
+TimeoutStartSec=2min

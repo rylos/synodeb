@@ -1,0 +1,20 @@
+#!/bin/sh
+# Boot that never finishes, on a NAS without a screen (from synodeb-boot-stalled.timer, 10
+# minutes after the boot). A start job that waits forever (e.g. network-online.target with a
+# configured port that never comes up) keeps systemd-user-sessions from starting: it is the
+# unit that removes /run/nologin, and until then pam_nologin lets only root in over ssh, and
+# root is usually locked. Nothing has failed, so emergency mode does not start either.
+# If systemd-user-sessions is still not active: remove /run/nologin, so that the admin can log
+# in, and notify (urgent) with the start jobs still waiting.
+set -u
+PATH=/usr/sbin:/usr/bin:/sbin:/bin
+systemctl is-active -q systemd-user-sessions.service && exit 0
+rm -f /run/nologin
+jobs=$(systemctl list-jobs --no-legend --plain 2>/dev/null | awk '$4 == "running" { print $2 }' | head -n 5 |
+       awk '{ printf "%s%s", sep, $0; sep = "; " }')
+addr=$(ip -4 -o addr show scope global 2>/dev/null | awk '{ sub("/.*", "", $4); printf "%s%s %s", sep, $2, $4; sep = ", " }')
+echo "synodeb: the boot has not finished after 10 minutes (waiting: ${jobs:-unknown}); logins allowed"
+/usr/lib/synodeb/notify -f -s boot -p urgent -e boot_stalled -v "jobs=$jobs" -v "addresses=$addr" \
+    "boot not finished" \
+    "The boot has not finished after 10 minutes (start jobs running: ${jobs:-unknown}). Logins are allowed anyway: log in over ssh on ${addr:-no address}, see 'systemctl list-jobs' and 'journalctl -b', fix the cause and reboot." || true
+exit 0
