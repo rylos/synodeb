@@ -36,8 +36,8 @@ platform directory, `platforms/<platform>/` (hardware notes and kernel sources):
 | [geminilake](../platforms/geminilake/README.md) | Intel Celeron J4125 | DS920+ |
 
 `tools/sync-boards.py` copies the board files into `synodeb-setup.sh` (a single downloadable
-file) and into the package. The plan for more models is in
-[#7](https://github.com/rylos/synodeb/discussions/7).
+file) and into the package. How to add a model: [porting](porting.md); the plan for more
+models is in [#7](https://github.com/rylos/synodeb/discussions/7).
 
 ## Building
 

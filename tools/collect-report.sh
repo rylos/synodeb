@@ -35,12 +35,25 @@ run "for f in /sys/class/scsi_host/host*/syno_pm_info; do [ -e \"\$f\" ] && { ec
 have lsscsi && run "lsscsi -g"
 run "ls -l /dev/disk/by-path/ 2>/dev/null | grep -v -- -part"
 have lsblk && run "lsblk -o NAME,MODEL,SIZE,TRAN,HCTL,TYPE 2>/dev/null"
+# which ATA port each disk is on (DSM has no lsblk): with the bay a disk sits in, this gives the
+# bay map of the board file
+run "for d in /sys/block/sd* /sys/block/sata*; do [ -e \"\$d\" ] || continue; echo \"\${d##*/} \$(readlink -f \$d | grep -o 'ata[0-9]*' | head -n 1) \$(cat \$d/device/model 2>/dev/null)\"; done"
+# the DOM (internal USB boot flash, synoboot): partition table, file systems and the bytes
+# synodeb-setup.sh checks before it writes the DOM (FAT16 volume id at 39, FAT32 at 67, ext2
+# magic at 1080 and UUID at 1128). Read only, nothing is mounted.
+have fdisk && run "fdisk -l /dev/synoboot 2>/dev/null"
+have blkid && run "blkid /dev/synoboot* 2>/dev/null"
+run "b() { dd if=\$1 bs=1 skip=\$2 count=\$3 2>/dev/null | od -An -tx1 | tr -s ' \\n' ' '; }; for p in synoboot1 synoboot2 synoboot3; do [ -b /dev/\$p ] || continue; n=\$(readlink -f /dev/\$p); echo \"\$p: sectors \$(cat /sys/class/block/\${n##*/}/size) fat16-id [\$(b /dev/\$p 39 4)] fat32-id [\$(b /dev/\$p 67 4)] ext2-magic [\$(b /dev/\$p 1080 2)] ext2-uuid [\$(b /dev/\$p 1128 16)]\"; done"
 # fans, temperatures, LEDs, GPIO, serial/USB control channels
 run "for h in /sys/class/hwmon/hwmon*; do echo \"== \$h \$(cat \$h/name 2>/dev/null)\"; for f in \$h/*_label \$h/*_input \$h/pwm[0-9]* \$h/*_alarm; do [ -e \"\$f\" ] && echo \"\${f##*/} \$(cat \$f 2>/dev/null)\"; done; done"
 have sensors && run "sensors"
 run "ls /sys/class/leds/ 2>/dev/null"
+run "grep . /sys/class/leds/*/brightness /sys/class/leds/*/max_brightness 2>/dev/null"
 run "cat /sys/kernel/debug/gpio 2>/dev/null | head -n 600"
 run "ls -l /dev/ttyS* /dev/ttyACM* /dev/ttyUSB* 2>/dev/null"
+# serial ports: UART type, I/O port or MMIO address, IRQ and device, from sysfs without opening
+# any of them (the front-panel microcontroller and the console are serial ports)
+run "for t in /sys/class/tty/ttyS*; do [ -e \$t/type ] || continue; [ \"\$(cat \$t/type)\" = 0 ] && continue; echo \"\${t##*/} type \$(cat \$t/type) port \$(cat \$t/port) iomem \$(cat \$t/iomem_base) irq \$(cat \$t/irq) \$(readlink -f \$t/device | sed s,/sys/devices/,,)\"; done"
 # plain lsusb prints the tree as well; DSM's lsusb is a Python script without -t, and the
 # traceback it prints there says nothing about the hardware
 have lsusb && run "lsusb"

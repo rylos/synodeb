@@ -37,7 +37,7 @@ This project is not affiliated with, endorsed or supported by Synology Inc. "Syn
 | DS1522+ | AMD Ryzen R1600 | work in progress |
 
 More models are planned in [#7](https://github.com/rylos/synodeb/discussions/7): if you own one
-and want to help, say hello there.
+and want to help, say hello there. [Adding a model](docs/porting.md) lists what a new model needs.
 
 ## What works
 

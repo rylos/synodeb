@@ -11,6 +11,10 @@ body:
         You don't need to write code; a few lines of `dmesg` from a unit nobody has measured yet are
         often the missing piece. Fill in as many levels as you like and leave the rest empty.
 
+        **A NAS model synodeb doesn't support yet?** [Adding a model](https://github.com/rylos/synodeb/blob/main/docs/porting.md)
+        lists what a new model needs and which part of this report each piece comes from. Run the
+        collector below under DSM, before anything else is installed on the unit.
+
         **Reports of things that did not work are just as welcome.** Support for a unit is shipped
         from the best information available and corrected from what owners see, rather than held
         back until every detail has been measured. If a fan, LED or bay behaves wrongly, a short
@@ -26,7 +30,8 @@ body:
         ### Quickest: collect everything at once (read-only)
 
         `tools/collect-report.sh` in this repository reads system files and runs listing tools only
-        (dmesg, lspci, sysfs, hwmon, LEDs, GPIO, USB, serial devices); it writes nothing to the
+        (dmesg, lspci, sysfs, hwmon, LEDs, GPIO, USB, serial ports, the partition layout of the
+        internal boot flash); it writes nothing to the
         hardware and sends nothing anywhere. Before writing the file it replaces the host name with
         `HOST`, MAC addresses with `xx:xx:xx:xx:xx:xx`, serial numbers (also `sn=`/`mac=`/`macs=` on a
         DSM kernel command line) with `REDACTED`, IPv4 addresses with `x.x.x.x` and UUIDs with
