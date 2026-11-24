@@ -1,6 +1,6 @@
 {
  "format": 1,
- "generated": "2026-11-24T08:18:42Z",
+ "generated": "2026-11-24T09:05:55Z",
  "series": {
   "longterm": {
    "branch": "6.18",
@@ -12,6 +12,50 @@
   }
  },
  "kernels": [
+  {
+   "release": "6.18.65-13-synodeb",
+   "series": "longterm",
+   "upstream": "6.18.65",
+   "package": "linux-image-6.18.65-13-synodeb",
+   "version": "6.18.65-13",
+   "published": "2026-11-24T09:05:55Z",
+   "available": true,
+   "changelog": "https://cdn.kernel.org/pub/linux/kernel/v6.x/ChangeLog-6.18.65",
+   "previous": "6.18.64-12-synodeb",
+   "changes": [
+    "kernel patches: refreshed for 6.18.65 and 7.3.6"
+   ],
+   "cves": [
+    "CVE-2025-71309",
+    "CVE-2026-80612",
+    "CVE-2026-98112",
+    "CVE-2026-99595",
+    "CVE-2026-99620",
+    "CVE-2026-99637",
+    "CVE-2026-99643",
+    "CVE-2026-99646",
+    "CVE-2026-99650",
+    "CVE-2026-99652",
+    "CVE-2026-99660",
+    "CVE-2026-99669",
+    "CVE-2026-99674",
+    "CVE-2026-99679",
+    "CVE-2026-99706",
+    "CVE-2026-99709",
+    "CVE-2026-99716",
+    "CVE-2026-99720",
+    "CVE-2026-99727",
+    "CVE-2026-99729",
+    "CVE-2026-99732",
+    "CVE-2026-99734",
+    "CVE-2026-99736",
+    "CVE-2026-99738",
+    "CVE-2026-99746",
+    "CVE-2026-99748",
+    "CVE-2026-99749",
+    "CVE-2026-99756"
+   ]
+  },
   {
    "release": "7.3.5-13-synodeb",
    "series": "stable",
@@ -499,7 +543,7 @@
    "package": "linux-image-7.3.4-12-synodeb",
    "version": "7.3.4-12",
    "published": "2026-11-13T15:31:59Z",
-   "available": true,
+   "available": false,
    "changelog": "https://cdn.kernel.org/pub/linux/kernel/v7.x/ChangeLog-7.3.4",
    "previous": "7.3.4-11-synodeb",
    "changes": [
@@ -1465,14 +1509,17 @@
   }
  ],
  "cve_titles": {
+  "CVE-2025-71309": "fs/ntfs3: fix deadlock in ni_read_folio_cmpr",
   "CVE-2026-100080": "xen-netback: Fix UAF when reading statistics data",
   "CVE-2026-100081": "xen-netback: defer xenvif_mcast_addr_list_free()",
   "CVE-2026-100082": "xen-blkback: Avoid UAF when reading I/O statistics",
   "CVE-2026-23377": "ice: change XDP RxQ frag_size from DMA write length to xdp.frame_sz",
+  "CVE-2026-80612": "net: lwtunnel: Drop skb metadata before LWT encapsulation",
   "CVE-2026-80668": "netfilter: nf_conntrack_expect: use conntrack GC to reap expectations",
   "CVE-2026-89755": "mm/migrate_device: clear stale mapping after freeing swapcache",
   "CVE-2026-89788": "ksmbd: fix tree connection use-after-free in smb2_tree_connect()",
   "CVE-2026-97538": "hwmon: (asus_rog_ryujin) Validate HID report lengths",
+  "CVE-2026-98112": "ksmbd: fix listener task lifetime on netdev events",
   "CVE-2026-98176": "drm/amdkfd: Avoid integer underflow with ffs in EOP ring size calc",
   "CVE-2026-98177": "drm/amdkfd: Avoid integer underflow in EOP ring size calculation.",
   "CVE-2026-98228": "mips: select CONFIG_WEAK_REORDERING_BEYOND_LLSC from CONFIG_EYEQ",
