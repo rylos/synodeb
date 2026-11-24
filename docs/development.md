@@ -34,6 +34,7 @@ platform directory, `platforms/<platform>/` (hardware notes and kernel sources):
 |---|---|---|
 | [r1000](../platforms/r1000/README.md) | AMD Ryzen Embedded R1000 | DS923+, DS1522+ (work in progress) |
 | [geminilake](../platforms/geminilake/README.md) | Intel Celeron J4125 | DS920+ |
+| [avoton](../platforms/avoton/README.md) | Intel Atom C2000 (Avoton) | DS415+ (work in progress) |
 
 `tools/sync-boards.py` copies the board files into `synodeb-setup.sh` (a single downloadable
 file) and into the package. How to add a model: [porting](porting.md); the plan for more
@@ -49,7 +50,10 @@ SERIES=stable kernel/run-build.sh   # stable series (kernel/stable/VERSION)
 installer/run-build.sh              # build/out/installer: vmlinuz, installer.img (longterm kernel)
 tools/publish.sh                    # apt repository and installer for GitHub Pages (build/pages);
                                     # SERIES=stable publishes the stable kernel packages
+tests/make-test-dom.sh DOM.img      # a synthetic DOM image (MODEL=DS415+: the Avoton layout)
 tests/run-test-setup.sh DOM.img     # synodeb-setup.sh against a copy of a DOM image
+                                    # (SYNODEB_TEST_MODEL=DS415+ for the Avoton one)
+tests/test-dom.sh DOM.img           # synodeb-dom (sync, setup, default, trial) against one
 tools/build-backport.sh nut         # build/out/backports: a sid package rebuilt for trixie
 ```
 

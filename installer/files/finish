@@ -103,7 +103,7 @@ chroot_run update-initramfs -u -k all >> $LOG 2>&1 || fail "update-initramfs"
 
 step "DOM: kernel, initrd and boot entry"
 dom_unprotect || fail "could not unmount the DOM from $DOM_LOCK"
-if dom_mount $DOM_P2 ext2; then
+if dom_mount 2; then
     rm -f $DOM_MNT/synodeb/installer.img $DOM_MNT/synodeb/installer.vmlinuz
     dom_umount || fail "could not unmount the DOM"
 fi

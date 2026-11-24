@@ -39,6 +39,7 @@ jobs:
               model_profile DS923+ && [ "$TIER" = supported ] && [ "$PLATFORM" = r1000 ]
               model_profile DS920+ && [ "$TIER" = supported ] && [ "$PLATFORM" = geminilake ]
               model_profile DS1522+ && [ "$TIER" = wip ] && [ "$PLATFORM" = r1000 ]
+              model_profile DS415+ && [ "$TIER" = wip ] && [ "$LOADER" = grub-legacy ] && [ "$P2FS" = vfat ] && [ -z "$FAT_ID" ]
               ! model_profile DS218+'
 
       - name: Shell scripts

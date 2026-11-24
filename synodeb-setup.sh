@@ -1,6 +1,6 @@
 #!/bin/bash
 # synodeb-setup.sh — run on DSM (as root) on a supported Synology NAS (boards/*.conf: DS920+,
-# DS923+; DS1522+ only with --experimental).
+# DS923+; the models in progress only with --experimental).
 #
 #   sudo bash synodeb-setup.sh                 menu
 #   sudo bash synodeb-setup.sh install         back up the DOM and add the Debian installer to it;
@@ -22,10 +22,11 @@
 #   model whose support is work in progress: not tested on the hardware yet).
 #
 # The DOM is the 128 MB USB flash module the firmware always boots: synoboot1 (FAT,
-# Synology GRUB and its SynoBootLoader.conf) and synoboot2 (ext2, the DSM kernel). DSM does not
-# let it be mounted, so each partition is copied, the copy is mounted and changed, written back
-# with dd and read back to verify it. Nothing of DSM is changed: the Synology boot entries stay,
-# synodeb only adds its own entries and the /synodeb directory on synoboot2.
+# Synology GRUB and its SynoBootLoader.conf) and synoboot2 (the DSM kernel: ext2, FAT on the
+# Avoton models, whose boot loader reads GRUB legacy syntax). DSM does not let it be mounted,
+# so each partition is copied, the copy is mounted and changed, written back with dd and read
+# back to verify it. Nothing of DSM is changed: the Synology boot entries stay, synodeb only
+# adds its own entries and the /synodeb directory on synoboot2.
 set -eu
 umask 022
 
@@ -50,7 +51,17 @@ model_profile() { # model (from syno_hw_version)
         EXT_UUID='45 e5 b0 7d 47 83 48 67 a3 69 f9 9c 0c d1 e6 10'
         P2UUID=45e5b07d-4783-4867-a369-f99c0cd1e610
         P1_MIN=16777216 P2_MIN=67108864
+        LOADER=grub2 P2FS=ext2
         CONSOLE='console=tty0 console=uart8250,mmio32,0xfedc9000,115200n8'
+        ;;
+    DS415+)
+        MODEL=DS415+ PLATFORM=avoton TIER=wip BAYS=4
+        FAT_ID='' FAT_ID_TXT=''
+        EXT_UUID=''
+        P2UUID=''
+        P1_MIN=16000000 P2_MIN=67108864
+        LOADER=grub-legacy P2FS=vfat
+        CONSOLE='console=tty0 console=ttyS0,115200n8'
         ;;
     DS423+)
         MODEL=DS423+ PLATFORM=geminilake TIER=community BAYS=4
@@ -58,6 +69,7 @@ model_profile() { # model (from syno_hw_version)
         EXT_UUID='45 e5 b0 7d 47 83 48 67 a3 69 f9 9c 0c d1 e6 10'
         P2UUID=45e5b07d-4783-4867-a369-f99c0cd1e610
         P1_MIN=16777216 P2_MIN=67108864
+        LOADER=grub2 P2FS=ext2
         CONSOLE=console=tty0
         ;;
     DS920+)
@@ -66,6 +78,7 @@ model_profile() { # model (from syno_hw_version)
         EXT_UUID='45 e5 b0 7d 47 83 48 67 a3 69 f9 9c 0c d1 e6 10'
         P2UUID=45e5b07d-4783-4867-a369-f99c0cd1e610
         P1_MIN=16777216 P2_MIN=67108864
+        LOADER=grub2 P2FS=ext2
         CONSOLE=console=tty0
         ;;
     DS923+)
@@ -74,6 +87,7 @@ model_profile() { # model (from syno_hw_version)
         EXT_UUID='45 e5 b0 7d 47 83 48 67 a3 69 f9 9c 0c d1 e6 10'
         P2UUID=45e5b07d-4783-4867-a369-f99c0cd1e610
         P1_MIN=16777216 P2_MIN=67108864
+        LOADER=grub2 P2FS=ext2
         CONSOLE='console=tty0 console=uart8250,mmio32,0xfedc9000,115200n8'
         ;;
     *) return 1 ;;
@@ -84,15 +98,15 @@ models_of_tier() { # tier
     case "$1" in
     supported) echo 'DS920+ DS923+' ;;
     community) echo DS423+ ;;
-    wip) echo DS1522+ ;;
+    wip) echo 'DS1522+ DS415+' ;;
     esac
 }
 ### boards end
-# the model DSM runs on: /proc/sys/kernel/syno_hw_version, else syno_hw_version= on the
-# kernel command line
+# the model DSM runs on: syno_hw_version= on the kernel command line (as in SynoBootLoader.conf),
+# else /proc/sys/kernel/syno_hw_version without its suffix (DS415+-j on the Avoton models)
 hw_version() {
-    v=$(cat /proc/sys/kernel/syno_hw_version 2>/dev/null) ||
-        v=$(tr ' ' '\n' < /proc/cmdline | sed -n 's/^syno_hw_version=//p' | head -n 1)
+    v=$(tr ' ' '\n' < /proc/cmdline | sed -n 's/^syno_hw_version=//p' | head -n 1)
+    [ -n "$v" ] || v=$(cut -d- -f1 /proc/sys/kernel/syno_hw_version 2>/dev/null) || true
     echo "$v"
 }
 model_profile DS923+
@@ -115,6 +129,11 @@ ask_tty() { # question default -> answer, asked even with --yes (default without
     echo "${a:-$2}"
 }
 sha() { sha256sum "$1" | cut -d' ' -f1; }
+is_fat() { # device or image [byte offset]: a FAT file system starts there
+    o=${2:-0}
+    [ "$(bytes "$1" $((o + 510)) 2)" = "55 aa" ] &&
+        { [ "$(bytes "$1" $((o + 54)) 3)" = "46 41 54" ] || [ "$(bytes "$1" $((o + 82)) 3)" = "46 41 54" ]; }
+}
 bytes() { od -An -tx1 -j "$2" -N "$3" "$1" | tr -s ' \n' '  ' | sed 's/^ //; s/ $//'; }
 size_of() { # block device or file
     if [ -b "$1" ]; then blockdev --getsize64 "$1"; else stat -c %s "$1"; fi
@@ -157,6 +176,8 @@ preflight_dom() {
         hw=$(hw_version)
         model_profile "$hw" ||
             die "this NAS ($hw) is not supported: $(models_of_tier supported) (work in progress: $(models_of_tier wip))"
+    else
+        model_profile "${SYNODEB_TEST_MODEL:-DS923+}" || die "unknown test model"
     fi
     for t in dd od sha256sum mount umount blockdev sed awk mktemp; do
         command -v $t >/dev/null 2>&1 || die "missing tool: $t"
@@ -172,10 +193,19 @@ preflight() {
     for p in "$P1" "$P2"; do
         [ -b "$p" ] || die "$p not found: is the DOM (synoboot) present?"
     done
-    [ "$(bytes "$P1" 39 4)" = "$FAT_ID" ] || [ "$(bytes "$P1" 67 4)" = "$FAT_ID" ] ||
-        die "$P1 is not the Synology boot partition (FAT volume id $FAT_ID_TXT expected)"
-    [ "$(bytes "$P2" 1080 2)" = "53 ef" ] && [ "$(bytes "$P2" 1128 16)" = "$EXT_UUID" ] ||
-        die "$P2 is not the Synology kernel partition (ext2 $P2UUID expected)"
+    # the FAT volume id where it is the same on every unit of the model, else the structure;
+    # check_conf then reads the boot loader configuration itself
+    if [ -n "$FAT_ID" ]; then
+        [ "$(bytes "$P1" 39 4)" = "$FAT_ID" ] || [ "$(bytes "$P1" 67 4)" = "$FAT_ID" ] ||
+            die "$P1 is not the Synology boot partition (FAT volume id $FAT_ID_TXT expected)"
+    else
+        is_fat "$P1" || die "$P1 is not the Synology boot partition (no FAT file system)"
+    fi
+    case "$P2FS" in
+    ext2) [ "$(bytes "$P2" 1080 2)" = "53 ef" ] && [ "$(bytes "$P2" 1128 16)" = "$EXT_UUID" ] ||
+              die "$P2 is not the Synology kernel partition (ext2 $P2UUID expected)" ;;
+    vfat) is_fat "$P2" || die "$P2 is not the Synology kernel partition (FAT expected)" ;;
+    esac
     s1=$(size_of "$P1"); s2=$(size_of "$P2")
     [ "$s1" -ge "$P1_MIN" ] && [ "$s2" -ge "$P2_MIN" ] || die "unexpected DOM partition sizes ($s1, $s2)"
 }
@@ -274,15 +304,34 @@ backup_dom() {
     BACKUP=$b
 }
 
-# index of the menu entry titled $2 in conf $1 (GRUB counts from 0), empty if absent
-entry() {
-    awk -v t="$2" '/^[[:space:]]*menuentry /{ if (index($0, "\"" t "\"")) { print n; exit } n++ }' "$1"
+# SynoBootLoader.conf in the syntax of the model's boot loader (LOADER): GRUB 2
+# (menuentry "TITLE" { ... }, set default='N') or GRUB legacy (title TITLE, default N, the
+# entry runs to the next title). GRUB numbers the entries from 0 in the order of the file.
+lg() { if [ "$LOADER" = grub-legacy ]; then echo 1; else echo 0; fi; }
+titles() { # conf: the entry titles, in order
+    awk -v L="$(lg)" '
+        L == 1 && /^[ \t]*title[ \t]/ { s = $0; sub(/^[ \t]*title[ \t]+/, "", s); sub(/[ \t\r]+$/, "", s); print s }
+        L == 0 && /^[ \t]*menuentry / { s = $0; sub(/^[^"]*"/, "", s); sub(/".*/, "", s); print s }' "$1"
+}
+# index of the menu entry titled $2 in conf $1, empty if absent
+entry() { titles "$1" | awk -v t="$2" '$0 == t { print NR - 1; exit }'; }
+title_at() { titles "$1" | awk -v d="$2" 'NR - 1 == d { print; exit }'; }   # conf index
+cur_default() { # conf
+    if [ "$(lg)" = 1 ]; then
+        sed -n 's/^default[[:space:]]\{1,\}\([0-9]\{1,\}\).*/\1/p' "$1" | head -n 1
+    else
+        sed -n "s/^set default='\([0-9]*\)'.*/\1/p" "$1" | head -n 1
+    fi
 }
 set_default() { # conf title
     n=$(entry "$1" "$2")
     [ -n "$n" ] || die "no $2 boot entry on the DOM"
-    sed "s/^set default='[0-9]*'/set default='$n'/" "$1" > "$1.tmp" && mv "$1.tmp" "$1"
-    grep -q "^set default='$n'" "$1" || die "could not set the default boot entry"
+    if [ "$(lg)" = 1 ]; then
+        sed "s/^default[[:space:]].*/default $n/" "$1" > "$1.tmp" && mv "$1.tmp" "$1"
+    else
+        sed "s/^set default='[0-9]*'/set default='$n'/" "$1" > "$1.tmp" && mv "$1.tmp" "$1"
+    fi
+    [ "$(cur_default "$1")" = "$n" ] || die "could not set the default boot entry"
 }
 # Synology conf without any synodeb entry (block markers or older DEBIAN*/INSTALLER entries)
 strip_conf() {
@@ -295,23 +344,31 @@ strip_conf() {
 }
 # conf without the INSTALLER entry (and without its marker block once empty); DEBIAN* stay
 drop_installer() {
-    awk -v b="$BEGIN" -v e="$END" '
+    awk -v b="$BEGIN" -v e="$END" -v L="$(lg)" '
         index($0, b) == 1 { blk = 1; buf = ""; has = 0 }
-        /^menuentry "INSTALLER"/ { drop = 1 }
-        drop { if (/^}/) drop = 0; next }
-        blk { buf = buf $0 "\n"; if (/^menuentry /) has = 1
+        L == 1 && drop && (/^[ \t]*title[ \t]/ || index($0, e) == 1) { drop = 0 }
+        L == 0 && /^menuentry "INSTALLER"/ { drop = 1 }
+        L == 1 && /^[ \t]*title[ \t]+INSTALLER[ \t\r]*$/ { drop = 1 }
+        drop { if (L == 0 && /^}/) drop = 0; next }
+        blk { buf = buf $0 "\n"; if (/^menuentry / || (L == 1 && /^[ \t]*title[ \t]/)) has = 1
               if (index($0, e) == 1) { blk = 0; if (has) printf "%s", buf }
               next }
         { print }' "$1"
 }
 check_conf() {
     [ -f "$1" ] || die "$CONF_REL missing on the DOM"
-    grep -q '^set default=' "$1" || die "unexpected $CONF_REL (no 'set default')"
+    if [ "$(lg)" = 1 ]; then
+        grep -q '^default[[:space:]]' "$1" || die "unexpected $CONF_REL (no 'default': not the GRUB legacy syntax of the $MODEL)"
+    else
+        grep -q '^set default=' "$1" || die "unexpected $CONF_REL (no 'set default')"
+    fi
     grep -q "syno_hw_version=$MODEL" "$1" || die "unexpected $CONF_REL (not a $MODEL boot loader)"
-    grep -q '^menuentry "SYNOLOGY_2"' "$1" || die "unexpected $CONF_REL (no SYNOLOGY_2 entry)"
+    [ -n "$(entry "$1" SYNOLOGY_2)" ] || die "unexpected $CONF_REL (no SYNOLOGY_2 entry)"
 }
 # the Synology lines of a conf, without the ones synodeb changes (default, fallback)
-syno_lines() { strip_conf "$1" | grep -v -e '^set default=' -e '^set fallback=' -e '^$'; }
+syno_lines() {
+    strip_conf "$1" | grep -v -e '^set default=' -e '^set fallback=' -e '^default[[:space:]]' -e '^fallback[[:space:]]' -e '^$'
+}
 # keep the original Synology conf as $1.dsm: an earlier copy stays while the Synology lines
 # of the conf are the same, otherwise (e.g. DSM rewrote the conf) it is taken again from $1,
 # verbatim if synodeb never touched it
@@ -330,10 +387,9 @@ save_original() {
     check_conf "$1.dsm"
 }
 show_status() { # conf mounted dir of synoboot2
-    d=$(sed -n "s/^set default='\([0-9]*\)'.*/\1/p" "$1" | head -n 1)
+    d=$(cur_default "$1")
     say "Boot entries on the DOM:"
-    awk -v d="$d" '/^[[:space:]]*menuentry /{ t = $0; sub(/^[^"]*"/, "", t); sub(/".*/, "", t)
-        printf "  %d %s%s\n", n, t, (n == d ? "   <- default" : ""); n++ }' "$1"
+    titles "$1" | awk -v d="$d" '{ printf "  %d %s%s\n", NR - 1, $0, (NR - 1 == d ? "   <- default" : "") }'
     if [ -d "$2/synodeb" ]; then
         say "Files in synoboot2:/synodeb:"; ls -la "$2/synodeb" | sed 1d | sed 's/^/  /'
     fi
@@ -440,7 +496,7 @@ cmd_install() {
     grab "$P1" "$T/m1" vfat
     C=$T/m1/$CONF_REL
     save_original "$C"
-    grab "$P2" "$T/m2" ext2
+    grab "$P2" "$T/m2" "$P2FS"
     for f in zImage rd.gz; do
         [ -f "$T/m2/$f" ] || die "synoboot2 has no $f: unexpected DOM content, stopping"
     done
@@ -488,14 +544,20 @@ cmd_install() {
     {
         if [ $keep = 1 ]; then drop_installer "$C"; else strip_conf "$C.dsm"; fi
         echo "$BEGIN (written by synodeb-setup.sh)"
-        cat <<EOT
+        args="$CONSOLE debian-installer/locale=$LOCALE keyboard-configuration/xkb-keymap=$KEYMAP netcfg/get_hostname=$HOST netcfg/hostname=$HOST $net network-console/password=$PW network-console/password-again=$PW${REPO:+ synodeb.repo=$REPO}"
+        if [ "$(lg)" = 1 ]; then
+            # as SYNOLOGY_2: synoboot2 is (hd0,1); 'vender /vender show' adds sn= and macs=
+            printf 'title INSTALLER\n\troot (hd0,1)\n\tvender /vender show\n\tkernel /synodeb/installer.vmlinuz %s\n\tinitrd /synodeb/installer.img\n' "$args"
+        else
+            cat <<EOT
 menuentry "INSTALLER" {
         search --fs-uuid --no-floppy --set=root $P2UUID
         vender /vender -s
-        linux /synodeb/installer.vmlinuz $CONSOLE debian-installer/locale=$LOCALE keyboard-configuration/xkb-keymap=$KEYMAP netcfg/get_hostname=$HOST netcfg/hostname=$HOST $net network-console/password=$PW network-console/password-again=$PW${REPO:+ synodeb.repo=$REPO}
+        linux /synodeb/installer.vmlinuz $args
         initrd /synodeb/installer.img
 }
 EOT
+        fi
         echo "$END"
     } > "$C.new"
     set_default "$C.new" INSTALLER
@@ -511,7 +573,7 @@ EOT
     say "Writing the DOM: this takes a minute or two, the DOM is slow flash."
     say "Do not power off the NAS. Ctrl-C is ignored until the DOM is written."
     critical
-    put "$P2" "$T/m2" ext2
+    put "$P2" "$T/m2" "$P2FS"
     put "$P1" "$T/m1" vfat
     uncritical
     say ""
@@ -558,7 +620,7 @@ cmd_boot() {
     [ -f "$C" ] || die "$CONF_REL missing on the DOM"
     if [ $t = DEBIAN ]; then
         [ -n "$(entry "$C" DEBIAN)" ] || die "no Debian installed on this NAS (no DEBIAN boot entry)"
-        READONLY=1 grab "$P2" "$T/m2" ext2
+        READONLY=1 grab "$P2" "$T/m2" "$P2FS"
         [ -f "$T/m2/synodeb/vmlinuz" ] && [ -f "$T/m2/synodeb/initrd.img" ] ||
             die "the Debian kernel is missing on the DOM: boot Debian is not possible"
         umount "$T/m2"
@@ -585,13 +647,13 @@ cmd_cancel() {
     set_default "$C.new" SYNOLOGY_2
     mv "$C.new" "$C"
     put "$P1" "$T/m1" vfat
-    grab "$P2" "$T/m2" ext2
+    grab "$P2" "$T/m2" "$P2FS"
     if [ -n "$deb" ]; then
         rm -f "$T/m2/synodeb/installer.img" "$T/m2/synodeb/installer.vmlinuz"
     else
         rm -rf "$T/m2/synodeb"
     fi
-    put "$P2" "$T/m2" ext2
+    put "$P2" "$T/m2" "$P2FS"
     if [ -n "$deb" ]; then
         say "Installer removed, DSM is the default boot entry. The installed Debian stays:"
         say "sudo bash $0 boot debian makes it the default again."
@@ -620,13 +682,13 @@ cmd_uninstall() {
         check_conf "$C"
         strip_conf "$C" > "$C.new"; mv "$C.new" "$C"
     fi
-    grep -q '^set default=' "$C" || die "unexpected conf"
+    [ -n "$(cur_default "$C")" ] || die "unexpected conf"
     rm -f "$C.dsm" "$C.tmp" "$C.new" "$T/m1/EFI/boot/synodeb-trial" "$T/m1/EFI/boot/synodeb-pending"
-    grab "$P2" "$T/m2" ext2
+    grab "$P2" "$T/m2" "$P2FS"
     rm -rf "$T/m2/synodeb"
     critical
     put "$P1" "$T/m1" vfat
-    put "$P2" "$T/m2" ext2
+    put "$P2" "$T/m2" "$P2FS"
     uncritical
     say "Done: the DOM boots DSM with its original configuration, no synodeb file is left."
 }
@@ -636,7 +698,7 @@ cmd_status() {
     workdir
     READONLY=1
     grab "$P1" "$T/m1" vfat
-    grab "$P2" "$T/m2" ext2
+    grab "$P2" "$T/m2" "$P2FS"
     show_status "$T/m1/$CONF_REL" "$T/m2"
 }
 
@@ -661,8 +723,12 @@ cmd_restore() {
     [ "$fs" = "$ds" ] || die "$f ($fs bytes) is not the size of the DOM ($ds bytes): not a backup of this DOM"
     off=$(img_p1_off "$f")
     [ -n "$off" ] && [ "$off" -lt "$fs" ] || die "$f has no partition table: not a DOM backup"
-    [ "$(bytes "$f" $((off + 39)) 4)" = "$FAT_ID" ] || [ "$(bytes "$f" $((off + 67)) 4)" = "$FAT_ID" ] ||
-        die "$f is not a DOM backup (no Synology boot partition in it)"
+    if [ -n "$FAT_ID" ]; then
+        [ "$(bytes "$f" $((off + 39)) 4)" = "$FAT_ID" ] || [ "$(bytes "$f" $((off + 67)) 4)" = "$FAT_ID" ] ||
+            die "$f is not a DOM backup (no Synology boot partition in it)"
+    else
+        is_fat "$f" "$off" || die "$f is not a DOM backup (no FAT boot partition in it)"
+    fi
     if [ -f "$f.sha256" ]; then
         [ "$(sha "$f")" = "$(cat "$f.sha256")" ] || die "$f does not match $f.sha256: damaged backup"
     fi
@@ -686,8 +752,7 @@ summary() {
       READONLY=1
       grab "$P1" "$T/m1" vfat
       C=$T/m1/$CONF_REL
-      d=$(sed -n "s/^set default='\([0-9]*\)'.*/\1/p" "$C" | head -n 1)
-      def=$(awk -v d="$d" '/^[[:space:]]*menuentry /{ if (n++ == d) { sub(/^[^"]*"/, ""); sub(/".*/, ""); print } }' "$C")
+      def=$(title_at "$C" "$(cur_default "$C")")
       deb=no; [ -n "$(entry "$C" DEBIAN)" ] && deb=yes
       inst=no; [ -n "$(entry "$C" INSTALLER)" ] && inst=yes
       case "$def" in SYNOLOGY_*) def=DSM ;; DEBIAN) def=Debian ;; DEBIAN_OLD) def="Debian (previous kernel)" ;; INSTALLER) def="Debian installer" ;; esac

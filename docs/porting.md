@@ -32,7 +32,7 @@ boot log in the report. What each part of it is used for:
 | CPU model, `lspci -nn` | `PLATFORM` (one platform per SoC family, `platforms/<platform>/`) |
 | kernel command line | `ihd_num` is `BAYS`; `SataPortMap`, `DiskIdxMap` and the DSM GPIO parameters are the first guess at the bay map |
 | `scsi_host` paths, disk → ATA port list | the bay map: which controller and port each bay is (confirm by moving one disk across empty bays, level 3 of the form) |
-| boot flash (`synoboot`) section | `DOM_FAT_ID`, `DOM_EXT_UUID`, `DOM_P1_MIN`, `DOM_P2_MIN`: `synodeb-setup.sh` checks them before it writes the boot flash |
+| boot flash (`synoboot`) section | `DOM_LOADER`, `DOM_P2_FS`, `DOM_FAT_ID`, `DOM_EXT_UUID`, `DOM_P1_MIN`, `DOM_P2_MIN`: `synodeb-setup.sh` checks them before it writes the boot flash |
 | serial ports, `console=` in the boot log | `CONSOLE` in the board file; which UART the front-panel microcontroller is on (synohwd, udev rule) |
 | LEDs, hwmon, GPIO, i2c | disk LED controller, fan tachometers, temperature sensors, bay power and presence pins |
 
@@ -45,8 +45,18 @@ under Linux.
 
 synodeb boots from the internal USB boot flash (the DOM) through Synology's own boot loader: it
 adds two entries to its configuration and copies the Debian kernel and initrd next to DSM's.
-The layout differs between generations (on the DS920+/DS923+ the first partition is FAT and the
-second ext2; on the Avoton DS2415+ and DS415+ both are FAT), so a new model needs, besides the report:
+The layout differs between generations, so a new model needs, besides the report, the file
+listing below. Two generations are known:
+
+| | DS920+, DS923+, DS423+, DS1522+ | Avoton (DS415+, DS2415+) |
+|---|---|---|
+| partitions | GPT or MBR, synoboot1 FAT, synoboot2 ext2 | MBR from sector 63, both FAT |
+| volume ids | the same on every unit (`DOM_FAT_ID`, `DOM_EXT_UUID`) | different per unit: left empty, checked by structure |
+| `SynoBootLoader.conf` | GRUB 2 syntax (`menuentry`, `set default='N'`): `DOM_LOADER="grub2"` | GRUB legacy syntax (`title`, `root (hd0,1)`, `kernel`, `default N`): `DOM_LOADER="grub-legacy"` |
+
+A layout that fits neither needs changes to `synodeb-setup.sh`, `synodeb-dom`, the kernel
+trial in the initramfs and the installer: say so in the report.
+
 
 ```sh
 # under DSM, read-only; keep the image off the NAS
@@ -65,7 +75,8 @@ are Synology's.
 ## 3. What goes into the repository
 
 - `boards/<model>.conf`: the board file (copy one of the same platform; `MODEL`, `PLATFORM`,
-  `TIER`, `BAYS`, `CONSOLE`, `DOM_*`). `tools/sync-boards.py` copies it into `synodeb-setup.sh`
+  `TIER`, `BAYS`, `CONSOLE`, `DOM_*`). Where the DMI product name is a placeholder,
+  `DMI_PRODUCT` and `PCI_DEVICE` tell the installed system which board file is its own. `tools/sync-boards.py` copies it into `synodeb-setup.sh`
   and the package.
 - `platforms/<platform>/README.md`: the hardware notes, each fact marked as measured on a
   unit, or inferred.

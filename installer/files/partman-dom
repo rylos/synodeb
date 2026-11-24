@@ -6,7 +6,7 @@
 # 50efi does not set "efi" again on a later run: it skips partitions marked old_efi.
 . /lib/partman/lib/base.sh
 . /usr/lib/synodeb-installer/lib.sh
-dom=$(blkid -U "$DOM_P1" 2>/dev/null) || exit 0
+dom=$(dom_dev 1) || exit 0
 dom=${dom%[0-9]}                           # /dev/sdc1 -> /dev/sdc: both DOM partitions
 for dev in /var/lib/partman/devices/*; do
     [ -d "$dev" ] || continue
