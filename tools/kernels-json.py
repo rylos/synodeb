@@ -12,9 +12,9 @@ lists of the previous kernels.json are kept.
 
 The history comes from git: every published kernel has a commit "kernel <release> (<series>)"
 on main, made by the kernel workflow right after publishing. The kernel being published now
-(kernel/<series>/VERSION, SERIES in the environment) has no such commit yet and is added from
-HEAD. The output depends only on the git history, the repository pool and VULNS, so running
-it again gives the same file.
+(kernel/<series>/VERSION in the working tree, SERIES in the environment) has no such commit
+yet and is added from it. The output depends only on the git history, the repository pool
+and VULNS, so running it again gives the same file.
 
 Format (format 1):
   {"format": 1, "generated": "<UTC>",
@@ -51,9 +51,11 @@ def git(*args):
                           text=True).stdout
 
 
-def read_version(series, rev="HEAD"):
-    v = dict(re.findall(r"^(KVER|ABI)=(\S+)", git("show", f"{rev}:kernel/{series}/VERSION"),
-                        re.M))
+def read_version(series):
+    """(upstream, ABI) of kernel/<series>/VERSION in the working tree: the kernel workflow sets
+    the new version there before publishing and commits it only afterwards."""
+    with open(os.path.join(ROOT, "kernel", series, "VERSION"), encoding="utf-8") as fh:
+        v = dict(re.findall(r"^(KVER|ABI)=(\S+)", fh.read(), re.M))
     ups = v["KVER"] if v["KVER"].count(".") == 2 else v["KVER"] + ".0"
     return ups, v["ABI"]
 
@@ -181,7 +183,7 @@ def main():
     for s, meta in SERIES_META.items():
         try:
             series[s] = {"branch": branch(read_version(s)[0]), "metapackage": meta}
-        except subprocess.CalledProcessError:
+        except (OSError, KeyError):
             pass
     doc = {
         "format": 1,
