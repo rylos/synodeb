@@ -1,8 +1,8 @@
 diff --git a/drivers/ata/ahci.c b/drivers/ata/ahci.c
-index d287c84..6307b45 100644
+index 8c3d54c..a334934 100644
 --- a/drivers/ata/ahci.c
 +++ b/drivers/ata/ahci.c
-@@ -835,6 +835,106 @@ static int ahci_pci_reset_controller(struct ata_host *host)
+@@ -826,6 +826,106 @@ static int ahci_pci_reset_controller(struct ata_host *host)
  	return 0;
  }
  
@@ -109,7 +109,7 @@ index d287c84..6307b45 100644
  static void ahci_pci_init_controller(struct ata_host *host)
  {
  	struct ahci_host_priv *hpriv = host->private_data;
-@@ -860,6 +960,7 @@ static void ahci_pci_init_controller(struct ata_host *host)
+@@ -851,6 +951,7 @@ static void ahci_pci_init_controller(struct ata_host *host)
  	}
  
  	ahci_init_controller(host);

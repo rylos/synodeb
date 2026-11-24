@@ -1,8 +1,8 @@
 diff --git a/drivers/md/md.c b/drivers/md/md.c
-index 937a2f4..1a850ff 100644
+index c54f5f3..8a7e9b5 100644
 --- a/drivers/md/md.c
 +++ b/drivers/md/md.c
-@@ -2012,6 +2012,8 @@ static int super_1_validate(struct mddev *mddev, struct md_rdev *freshest, struc
+@@ -2026,6 +2026,8 @@ static int super_1_validate(struct mddev *mddev, struct md_rdev *freshest, struc
  		mddev->clevel[0] = 0;
  		mddev->layout = le32_to_cpu(sb->layout);
  		mddev->raid_disks = le32_to_cpu(sb->raid_disks);
@@ -11,7 +11,7 @@ index 937a2f4..1a850ff 100644
  		mddev->dev_sectors = le64_to_cpu(sb->size);
  		mddev->events = ev1;
  		mddev->bitmap_info.offset = 0;
-@@ -2205,6 +2207,7 @@ static void super_1_sync(struct mddev *mddev, struct md_rdev *rdev)
+@@ -2219,6 +2221,7 @@ static void super_1_sync(struct mddev *mddev, struct md_rdev *rdev)
  	sb->pad0 = 0;
  	sb->recovery_offset = cpu_to_le64(0);
  	memset(sb->pad3, 0, sizeof(sb->pad3));
@@ -19,7 +19,7 @@ index 937a2f4..1a850ff 100644
  
  	sb->utime = cpu_to_le64((__u64)mddev->utime);
  	sb->events = cpu_to_le64(mddev->events);
-@@ -6853,6 +6856,7 @@ static void md_clean(struct mddev *mddev)
+@@ -6876,6 +6879,7 @@ static void md_clean(struct mddev *mddev)
  	mddev->external_size = 0;
  	mddev->dev_sectors = 0;
  	mddev->raid_disks = 0;

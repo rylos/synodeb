@@ -22,10 +22,10 @@ index 8ef9398..5447744 100644
  	bool "ATA ACPI Support"
  	depends on ACPI
 diff --git a/drivers/ata/libata-core.c b/drivers/ata/libata-core.c
-index f218773..cbeeb9d 100644
+index 30572ca..a939b4a 100644
 --- a/drivers/ata/libata-core.c
 +++ b/drivers/ata/libata-core.c
-@@ -5133,6 +5133,10 @@ void ata_qc_complete(struct ata_queued_cmd *qc)
+@@ -5148,6 +5148,10 @@ void ata_qc_complete(struct ata_queued_cmd *qc)
  
  	/* Trigger the LED (if available) */
  	ledtrig_disk_activity(!!(qc->tf.flags & ATA_TFLAG_WRITE));
@@ -36,7 +36,7 @@ index f218773..cbeeb9d 100644
  
  	/*
  	 * In order to synchronize EH with the regular execution path, a qc that
-@@ -5811,6 +5815,9 @@ void ata_port_free(struct ata_port *ap)
+@@ -5826,6 +5830,9 @@ void ata_port_free(struct ata_port *ap)
  	if (!ap)
  		return;
  
@@ -46,7 +46,7 @@ index f218773..cbeeb9d 100644
  	kfree(ap->pmp_link);
  	kfree(ap->slave_link);
  	ida_free(&ata_ida, ap->print_id);
-@@ -6279,6 +6286,20 @@ int ata_host_register(struct ata_host *host, const struct scsi_host_template *sh
+@@ -6294,6 +6301,20 @@ int ata_host_register(struct ata_host *host, const struct scsi_host_template *sh
  	if (rc)
  		goto err_tadd;
  

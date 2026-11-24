@@ -1,4 +1,5 @@
 diff --git a/drivers/rtc/rtc-s35390a.c b/drivers/rtc/rtc-s35390a.c
+index 12ed504..f375a2f 100644
 --- a/drivers/rtc/rtc-s35390a.c
 +++ b/drivers/rtc/rtc-s35390a.c
 @@ -12,11 +12,13 @@
@@ -34,26 +35,35 @@ diff --git a/drivers/rtc/rtc-s35390a.c b/drivers/rtc/rtc-s35390a.c
  static const struct i2c_device_id s35390a_id[] = {
  	{ .name = "s35390a" },
  	{ }
-@@ -65,6 +72,9 @@ MODULE_DEVICE_TABLE(of, s35390a_of_match
+@@ -64,6 +71,9 @@ MODULE_DEVICE_TABLE(of, s35390a_of_match);
+ 
  struct s35390a {
  	struct i2c_client *client[8];
- 	int twentyfourhour;
 +	/* alarm pin: INT2, or INT1 with "sii,alarm-int1" */
 +	u8 mode_mask, mode_alarm, flag_int;
 +	int alarm_reg;
  };
  
  static int s35390a_set_reg(struct s35390a *s35390a, int reg, u8  *buf, int len)
-@@ -293,7 +303,7 @@ static int s35390a_rtc_set_alarm(struct
- 		return err;
+@@ -282,7 +292,7 @@ static int s35390a_rtc_alarm_irq_enable(struct device *dev, unsigned int enabled
+ 	int err;
  
- 	if (alm->enabled)
+ 	if (enabled)
 -		sts = S35390A_INT2_MODE_ALARM;
 +		sts = s35390a->mode_alarm;
  	else
  		sts = S35390A_INT2_MODE_NOINTR;
  
-@@ -317,8 +327,7 @@ static int s35390a_rtc_set_alarm(struct
+@@ -316,7 +326,7 @@ static int s35390a_rtc_set_alarm(struct device *dev, struct rtc_wkalrm *alm)
+ 		return err;
+ 
+ 	if (alm->enabled)
+-		status2 = S35390A_INT2_MODE_ALARM;
++		status2 = s35390a->mode_alarm;
+ 	else
+ 		status2 = S35390A_INT2_MODE_NOINTR;
+ 
+@@ -340,8 +350,7 @@ static int s35390a_rtc_set_alarm(struct device *dev, struct rtc_wkalrm *alm)
  	for (i = 0; i < 3; ++i)
  		buf[i] = bitrev8(buf[i]);
  
@@ -63,16 +73,16 @@ diff --git a/drivers/rtc/rtc-s35390a.c b/drivers/rtc/rtc-s35390a.c
  
  	return err;
  }
-@@ -334,7 +343,7 @@ static int s35390a_rtc_read_alarm(struct
+@@ -363,7 +372,7 @@ static int s35390a_rtc_read_alarm(struct device *dev, struct rtc_wkalrm *alm)
  	if (err < 0)
  		return err;
  
--	if ((sts & S35390A_INT2_MODE_MASK) != S35390A_INT2_MODE_ALARM) {
-+	if ((sts & s35390a->mode_mask) != s35390a->mode_alarm) {
+-	if ((status2 & S35390A_INT2_MODE_MASK) != S35390A_INT2_MODE_ALARM) {
++	if ((status2 & s35390a->mode_mask) != s35390a->mode_alarm) {
  		/*
  		 * When the alarm isn't enabled, the register to configure
  		 * the alarm time isn't accessible.
-@@ -345,7 +354,7 @@ static int s35390a_rtc_read_alarm(struct
+@@ -374,7 +383,7 @@ static int s35390a_rtc_read_alarm(struct device *dev, struct rtc_wkalrm *alm)
  		alm->enabled = 1;
  	}
  
@@ -81,7 +91,7 @@ diff --git a/drivers/rtc/rtc-s35390a.c b/drivers/rtc/rtc-s35390a.c
  	if (err < 0)
  		return err;
  
-@@ -462,6 +471,22 @@ static int s35390a_probe(struct i2c_clie
+@@ -492,6 +501,22 @@ static int s35390a_probe(struct i2c_client *client)
  	s35390a->client[0] = client;
  	i2c_set_clientdata(client, s35390a);
  
@@ -104,16 +114,16 @@ diff --git a/drivers/rtc/rtc-s35390a.c b/drivers/rtc/rtc-s35390a.c
  	/* This chip uses multiple addresses, use dummy devices for them */
  	for (i = 1; i < 8; ++i) {
  		s35390a->client[i] = devm_i2c_new_dummy_device(dev,
-@@ -489,7 +514,7 @@ static int s35390a_probe(struct i2c_clie
- 	else
- 		s35390a->twentyfourhour = 0;
+@@ -514,7 +539,7 @@ static int s35390a_probe(struct i2c_client *client)
+ 		return err_read;
+ 	}
  
 -	if (status1 & S35390A_FLAG_INT2) {
 +	if (status1 & s35390a->flag_int) {
  		/* disable alarm (and maybe test mode) */
  		buf = 0;
  		err = s35390a_set_reg(s35390a, S35390A_CMD_STATUS2, &buf, 1);
-@@ -514,7 +539,7 @@ static int s35390a_probe(struct i2c_clie
+@@ -539,7 +564,7 @@ static int s35390a_probe(struct i2c_client *client)
  	set_bit(RTC_FEATURE_ALARM_RES_MINUTE, rtc->features);
  	clear_bit(RTC_FEATURE_UPDATE_INTERRUPT, rtc->features);
  

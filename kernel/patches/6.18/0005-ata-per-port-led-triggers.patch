@@ -1,5 +1,5 @@
 diff --git a/drivers/ata/Kconfig b/drivers/ata/Kconfig
-index 120a2b7..b57967e 100644
+index ff81f70..1ba5ce9 100644
 --- a/drivers/ata/Kconfig
 +++ b/drivers/ata/Kconfig
 @@ -67,6 +67,18 @@ config ATA_FORCE
@@ -22,10 +22,10 @@ index 120a2b7..b57967e 100644
  	bool "ATA ACPI Support"
  	depends on ACPI
 diff --git a/drivers/ata/libata-core.c b/drivers/ata/libata-core.c
-index cb74c6a..7a24d5d 100644
+index 29394d1..d41222f 100644
 --- a/drivers/ata/libata-core.c
 +++ b/drivers/ata/libata-core.c
-@@ -4987,6 +4987,10 @@ void ata_qc_complete(struct ata_queued_cmd *qc)
+@@ -5066,6 +5066,10 @@ void ata_qc_complete(struct ata_queued_cmd *qc)
  
  	/* Trigger the LED (if available) */
  	ledtrig_disk_activity(!!(qc->tf.flags & ATA_TFLAG_WRITE));
@@ -36,7 +36,7 @@ index cb74c6a..7a24d5d 100644
  
  	/*
  	 * In order to synchronize EH with the regular execution path, a qc that
-@@ -5659,6 +5663,9 @@ void ata_port_free(struct ata_port *ap)
+@@ -5738,6 +5742,9 @@ void ata_port_free(struct ata_port *ap)
  	if (!ap)
  		return;
  
@@ -46,7 +46,7 @@ index cb74c6a..7a24d5d 100644
  	kfree(ap->pmp_link);
  	kfree(ap->slave_link);
  	ida_free(&ata_ida, ap->print_id);
-@@ -6125,6 +6132,20 @@ int ata_host_register(struct ata_host *host, const struct scsi_host_template *sh
+@@ -6204,6 +6211,20 @@ int ata_host_register(struct ata_host *host, const struct scsi_host_template *sh
  	if (rc)
  		goto err_tadd;
  
@@ -68,10 +68,10 @@ index cb74c6a..7a24d5d 100644
  	for (i = 0; i < host->n_ports; i++) {
  		struct ata_port *ap = host->ports[i];
 diff --git a/include/linux/libata.h b/include/linux/libata.h
-index a92908f..763a7c7 100644
+index 7715553..bac6d3b 100644
 --- a/include/linux/libata.h
 +++ b/include/linux/libata.h
-@@ -532,6 +532,7 @@ enum ata_lpm_hints {
+@@ -536,6 +536,7 @@ enum ata_lpm_hints {
  
  /* forward declarations */
  struct scsi_device;
@@ -79,7 +79,7 @@ index a92908f..763a7c7 100644
  struct ata_port_operations;
  struct ata_port;
  struct ata_link;
-@@ -880,6 +881,10 @@ struct ata_port {
+@@ -884,6 +885,10 @@ struct ata_port {
  	/* Flags that change dynamically, protected by ap->lock */
  	unsigned int		pflags; /* ATA_PFLAG_xxx */
  	unsigned int		print_id; /* user visible unique port ID */
