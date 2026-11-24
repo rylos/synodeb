@@ -11,42 +11,61 @@ case "$1" in prereqs) prereqs; exit 0 ;; esac
 . /scripts/functions
 case " $(cat /proc/cmdline) " in *" synodeb.entry=DEBIAN "*) ;; *) exit 0 ;; esac
 
-DOM=10EE-589C
+DOM=10EE-589C          # synoboot1 by its volume id, else partition 1 of the USB disk f400:f400
 MNT=/run/synodeb-dom
 CONF=$MNT/EFI/boot/SynoBootLoader.conf
 TRIAL=$MNT/EFI/boot/synodeb-trial
 
 modprobe vfat 2>/dev/null; modprobe nls_cp437 2>/dev/null; modprobe nls_ascii 2>/dev/null
 
-# Menu entries as GRUB numbers them (from 0): the lines whose first word is "menuentry";
-# the title is the first double-quoted string. Same rule as entry() in synodeb-dom
-# ("read" without IFS= drops the leading blanks).
-index_of() { # title conf: index of the entry, empty if absent
-    n=0
+# Menu entries as GRUB numbers them (from 0). GRUB 2: the lines whose first word is
+# "menuentry", the title is the first double-quoted string; GRUB legacy (LG=1, Avoton): the
+# lines whose first word is "title", the title is the rest of the line. Same rules as
+# titles() in synodeb-dom ("read" without IFS= drops the leading and trailing blanks).
+LG=0
+titles() { # conf
     while read -r l; do
         case "$l" in
-        menuentry\ *)
-            t=${l#*\"}; t=${t%%\"*}
-            [ "$t" = "$1" ] && { echo $n; return 0; }
-            n=$((n + 1)) ;;
+        menuentry\ *) [ $LG = 0 ] && { t=${l#*\"}; echo "${t%%\"*}"; } ;;
+        title\ *|title"	"*) [ $LG = 1 ] && printf '%s\n' "${l#title}" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//' ;;
         esac
-    done < "$2"
+    done < "$1"
+}
+index_of() { # title conf: index of the entry, empty if absent
+    n=0
+    titles "$2" | while read -r t; do
+        [ "$t" = "$1" ] && { echo $n; break; }
+        n=$((n + 1))
+    done
 }
 title_at() { # index conf
     n=0
-    while read -r l; do
-        case "$l" in
-        menuentry\ *)
-            [ $n = "$1" ] && { t=${l#*\"}; echo "${t%%\"*}"; return 0; }
-            n=$((n + 1)) ;;
-        esac
-    done < "$2"
+    titles "$2" | while read -r t; do
+        [ $n = "$1" ] && { echo "$t"; break; }
+        n=$((n + 1))
+    done
+}
+dom_disk() { # the USB disk f400:f400 (sdX)
+    for b in /sys/class/block/sd*; do
+        [ -e "$b/device" ] && [ ! -e "$b/partition" ] || continue
+        u=$(readlink -f "$b/device")
+        while [ -n "$u" ] && [ "$u" != /sys ]; do
+            if [ -f "$u/idVendor" ]; then
+                [ "$(cat "$u/idVendor")" = f400 ] && [ "$(cat "$u/idProduct")" = f400 ] &&
+                    { echo "${b##*/}"; return 0; }
+                break
+            fi
+            u=${u%/*}
+        done
+    done
+    return 1
 }
 
 i=0
 while [ $i -lt 20 ]; do           # the DOM is a USB device: give it a few seconds
     dev=$(blkid -U $DOM 2>/dev/null)
     [ -n "$dev" ] && break
+    d=$(dom_disk) && [ -b "/dev/${d}1" ] && { dev=/dev/${d}1; break; }
     sleep 1; i=$((i + 1))
 done
 [ -n "$dev" ] || exit 0
@@ -58,16 +77,25 @@ if [ ! -f "$TRIAL" ]; then
 fi
 umount $MNT
 mount -t vfat "$dev" $MNT 2>/dev/null || exit 0
+grep -q '^set default=' "$CONF" || ! grep -q '^default[[:space:]]' "$CONF" || LG=1
 o=$(index_of DEBIAN_OLD "$CONF")
 fb=
 for t in DEBIAN SYNOLOGY_2 SYNOLOGY_1; do
     x=$(index_of $t "$CONF"); [ -z "$x" ] || fb="${fb:+$fb }$x"
 done
-fbx='s/^set fallback=.*/&/'
-[ -z "$fb" ] || fbx="s/^set fallback=.*/set fallback='$fb'/"
+if [ $LG = 1 ]; then
+    # one fallback entry only (see set_default in synodeb-dom)
+    fbx='s/^fallback[[:space:]].*/&/'
+    [ -z "$fb" ] || fbx="s/^fallback[[:space:]].*/fallback ${fb%% *}/"
+    dx="s/^default[[:space:]].*/default $o/" dok="^default $o\$"
+else
+    fbx='s/^set fallback=.*/&/'
+    [ -z "$fb" ] || fbx="s/^set fallback=.*/set fallback='$fb'/"
+    dx="s/^set default='[0-9]*'/set default='$o'/" dok="^set default='$o'"
+fi
 # the new conf is checked (default index, title of that entry) before it replaces the old one
-if [ -n "$o" ] && sed -e "s/^set default='[0-9]*'/set default='$o'/" -e "$fbx" "$CONF" > "$CONF.tmp" &&
-   grep -q "^set default='$o'" "$CONF.tmp" && [ "$(title_at "$o" "$CONF.tmp")" = DEBIAN_OLD ] &&
+if [ -n "$o" ] && sed -e "$dx" -e "$fbx" "$CONF" > "$CONF.tmp" &&
+   grep -q "$dok" "$CONF.tmp" && [ "$(title_at "$o" "$CONF.tmp")" = DEBIAN_OLD ] &&
    mv -f "$CONF.tmp" "$CONF" && echo trying > "$TRIAL"; then
     [ ! -w /proc/sys/kernel/hung_task_panic ] || echo 1 > /proc/sys/kernel/hung_task_panic
     log_success_msg "synodeb: new kernel on trial, DEBIAN_OLD is the default until the boot is confirmed"

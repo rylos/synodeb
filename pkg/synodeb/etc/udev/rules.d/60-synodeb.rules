@@ -7,6 +7,10 @@ SUBSYSTEM=="tty", KERNEL=="ttyS*", ATTR{iomem_base}=="0xFEDC9000", SYMLINK+="syn
 # addresses): microcontroller on 00:18.0, serial console on 00:18.2
 SUBSYSTEM=="tty", KERNEL=="ttyS*", KERNELS=="0000:00:18.0", ATTRS{vendor}=="0x8086", SYMLINK+="synology-up", MODE="0600"
 SUBSYSTEM=="tty", KERNEL=="ttyS*", KERNELS=="0000:00:18.2", ATTRS{vendor}=="0x8086", SYMLINK+="synology-console"
+# DS415+ (avoton; DMI product name MohonPeak, a placeholder): the legacy UARTs, microcontroller
+# on ttyS1 (I/O 0x2f8), serial console on ttyS0 (I/O 0x3f8)
+SUBSYSTEM=="tty", KERNEL=="ttyS1", ATTR{port}=="0x2F8", ATTR{[dmi/id]product_name}=="MohonPeak", SYMLINK+="synology-up", MODE="0600"
+SUBSYSTEM=="tty", KERNEL=="ttyS0", ATTR{port}=="0x3F8", ATTR{[dmi/id]product_name}=="MohonPeak", SYMLINK+="synology-console"
 # The daemon drives the disk LEDs: no default trigger. Only on "add": the kernel sends a
 # "change" uevent on every trigger change, and without ACTION the rule would immediately
 # undo the ataN trigger set by synohwd

@@ -28,9 +28,17 @@
 # softlockup_panic and hung_task_panic off once the boot is over. A kernel that hangs before
 # its initramfs runs, without a soft lockup, is not caught: the Synology GRUB has no one-shot
 # boot entry.
+#
+# Two DOM generations: GRUB 2 syntax with synoboot2 in ext2 (DS920+, DS923+ and their
+# relatives, the same volume ids on every unit), and GRUB legacy syntax with synoboot2 in FAT
+# (Avoton: DS415+, volume ids that differ per unit). The partitions are found by those ids,
+# else as partitions 1 and 2 of the DOM (USB f400:f400, as the udev rule); the syntax is read
+# from the configuration itself.
 set -eu
 P1=10EE-589C                               # synoboot1, FAT: EFI/boot/SynoBootLoader.conf
-P2=45e5b07d-4783-4867-a369-f99c0cd1e610    # synoboot2, ext2: DSM zImage/rd.gz + /synodeb
+P2=45e5b07d-4783-4867-a369-f99c0cd1e610    # synoboot2, ext2 (FAT on Avoton): DSM kernel + /synodeb
+LG=0                                       # 1: GRUB legacy syntax (set when synoboot1 is mounted)
+P2FS=ext2                                  # file system of synoboot2 (set when it is mounted)
 M=/run/synodeb-dom
 CONF=$M/EFI/boot/SynoBootLoader.conf
 TRIAL=$M/EFI/boot/synodeb-trial
@@ -48,14 +56,48 @@ die() {
     [ -z "$FAIL_NOTIFY" ] || notify -p high ${FAIL_EVENT:+-e "$FAIL_EVENT"} -v "error=$*" "$FAIL_NOTIFY" "$*"
     exit 1
 }
-withmount() { # uuid fstype [options]
-    dev=$(blkid -U "$1" 2>/dev/null) || die "DOM partition $1 not found"
+# the DOM disk (sdX): the USB disk f400:f400
+dom_disk() {
+    for b in /sys/class/block/sd*; do
+        [ -e "$b/device" ] && [ ! -e "$b/partition" ] || continue
+        u=$(readlink -f "$b/device")
+        while [ -n "$u" ] && [ "$u" != /sys ]; do
+            if [ -f "$u/idVendor" ]; then
+                [ "$(cat "$u/idVendor")" = f400 ] && [ "$(cat "$u/idProduct")" = f400 ] &&
+                    { echo "${b##*/}"; return 0; }
+                break
+            fi
+            u=${u%/*}
+        done
+    done
+    return 1
+}
+dom_dev() { # 1|2: device of synoboot1/synoboot2
+    # tests/test-dom.sh points these at loop devices
+    case $1 in 1) id=$P1 t=${SYNODEB_TEST_DOM1:-} ;; *) id=$P2 t=${SYNODEB_TEST_DOM2:-} ;; esac
+    [ -z "$t" ] || { echo "$t"; return 0; }
+    blkid -U "$id" 2>/dev/null && return 0
+    d=$(dom_disk) && [ -b "/dev/$d$1" ] && { echo "/dev/$d$1"; return 0; }
+    return 1
+}
+withmount() { # 1|2 [options]: mount synoboot1 or synoboot2 on $M
+    dev=$(dom_dev "$1") || die "DOM partition synoboot$1 not found"
+    fs=$(blkid -o value -s TYPE "$dev" 2>/dev/null) || true
+    case "$fs" in vfat|ext2) ;; *) die "DOM partition $dev: unexpected file system '${fs:-none}'" ;; esac
+    [ "$1" = 2 ] || [ "$fs" = vfat ] || die "DOM partition $dev is $fs, not FAT"
     mkdir -p $M
     # with the lock held, a mount left here is from an interrupted run
     ! mountpoint -q $M || umount $M || die "$M is mounted and busy"
-    mount -t "$2" ${3:+-o "$3"} "$dev" $M || die "mounting $dev ($2) failed"
+    mount -t "$fs" ${2:+-o "$2"} "$dev" $M || die "mounting $dev ($fs) failed"
     trap 'umount $M 2>/dev/null || true' EXIT
     trap 'umount $M 2>/dev/null; exit 1' INT TERM HUP PIPE
+    if [ "$1" = 2 ]; then
+        P2FS=$fs
+    elif grep -q '^default[[:space:]]' "$CONF" 2>/dev/null && ! grep -q '^set default=' "$CONF"; then
+        LG=1
+    else
+        LG=0
+    fi
 }
 unmount() { sync; umount $M; trap - EXIT INT TERM HUP PIPE; }
 lock() { # one synodeb-dom at a time (boot-ok at boot, sync from apt)
@@ -70,19 +112,40 @@ put() { # file
     if cmp -s "$1.tmp" "$1"; then rm -f "$1.tmp"; return 0; fi
     mv -f "$1.tmp" "$1" || die "renaming $1.tmp failed"
 }
-# Menu entries as GRUB numbers them (from 0): the lines whose first word is "menuentry";
-# the title is the first double-quoted string. synodeb-trial (initramfs) uses the same rule.
+# Menu entries as GRUB numbers them (from 0). GRUB 2: the lines whose first word is
+# "menuentry", the title is the first double-quoted string; GRUB legacy: the lines whose
+# first word is "title", the title is the rest of the line. synodeb-trial (initramfs) uses
+# the same rules.
+titles() { # [conf]: the entry titles, in order
+    awk -v L=$LG '
+        L == 1 && /^[ \t]*title[ \t]/ { s = $0; sub(/^[ \t]*title[ \t]+/, "", s); sub(/[ \t\r]+$/, "", s); print s }
+        L == 0 && /^[ \t]*menuentry / { s = $0; sub(/^[^"]*"/, "", s); sub(/".*/, "", s); print s }' "${1:-$CONF}"
+}
 entry() { # title [conf]: index of the entry, empty if absent
-    awk -v t="$1" '/^[ \t]*menuentry / { s = $0; sub(/^[^"]*"/, "", s); sub(/".*/, "", s)
-        if (s == t) { print n + 0; exit } n++ }' "${2:-$CONF}"
+    titles "${2:-$CONF}" | awk -v t="$1" '$0 == t { print NR - 1; exit }'
 }
 title_at() { # index [conf]: title of the entry, empty if absent
-    awk -v d="$1" '/^[ \t]*menuentry / { if (n++ == d) { sub(/^[^"]*"/, ""); sub(/".*/, ""); print; exit } }' "${2:-$CONF}"
+    titles "${2:-$CONF}" | awk -v d="$1" 'NR - 1 == d { print; exit }'
 }
-cur_default() { sed -n "s/^set default='\([0-9]*\)'.*/\1/p" "${1:-$CONF}" | head -n 1; }
+cur_default() {
+    if [ $LG = 1 ]; then
+        sed -n 's/^default[[:space:]]\{1,\}\([0-9]\{1,\}\).*/\1/p' "${1:-$CONF}" | head -n 1
+    else
+        sed -n "s/^set default='\([0-9]*\)'.*/\1/p" "${1:-$CONF}" | head -n 1
+    fi
+}
+fallback_list() { # the fallback entries, as numbers
+    if [ $LG = 1 ]; then
+        sed -n 's/^fallback[[:space:]]\{1,\}\([0-9 ]*\).*/\1/p' "$CONF" | head -n 1
+    else
+        sed -n "s/^set fallback='\(.*\)'.*/\1/p" "$CONF" | head -n 1
+    fi
+}
 default_title() { title_at "$(cur_default)" 2>/dev/null || true; }
 # Make the entry titled $1 the default. The fallback list (GRUB uses it when a file of the
 # default entry is missing) is the other Debian entry, then DSM: SYNOLOGY_2, SYNOLOGY_1.
+# GRUB legacy gets the first of them only: whether the Synology build takes a list is not
+# known.
 set_default() { # title
     n=$(entry "$1")
     [ -n "$n" ] || die "no $1 entry in $CONF"
@@ -91,13 +154,20 @@ set_default() { # title
     for t in ${o:+$o SYNOLOGY_2 SYNOLOGY_1}; do
         i=$(entry "$t"); [ -z "$i" ] || fb="${fb:+$fb }$i"
     done
-    fbx='s/^set fallback=.*/&/'
-    [ -z "$fb" ] || fbx="s/^set fallback=.*/set fallback='$fb'/"
-    sed -e "s/^set default='[0-9]*'/set default='$n'/" -e "$fbx" "$CONF" > $NEWCONF ||
+    if [ $LG = 1 ]; then
+        fbx='s/^fallback[[:space:]].*/&/'
+        [ -z "$fb" ] || fbx="s/^fallback[[:space:]].*/fallback ${fb%% *}/"
+        dx="s/^default[[:space:]].*/default $n/"
+    else
+        fbx='s/^set fallback=.*/&/'
+        [ -z "$fb" ] || fbx="s/^set fallback=.*/set fallback='$fb'/"
+        dx="s/^set default='[0-9]*'/set default='$n'/"
+    fi
+    sed -e "$dx" -e "$fbx" "$CONF" > $NEWCONF ||
         die "writing $NEWCONF failed"
     # check what GRUB will read before writing it
     if [ "$(cur_default $NEWCONF)" != "$n" ] || [ "$(title_at "$n" $NEWCONF)" != "$1" ]; then
-        rm -f $NEWCONF; die "could not make $1 the default in $CONF (no 'set default' line?)"
+        rm -f $NEWCONF; die "could not make $1 the default in $CONF (no default entry line?)"
     fi
     put "$CONF" < $NEWCONF
     rm -f $NEWCONF
@@ -113,11 +183,11 @@ running_entry() { sed -n 's/.*synodeb\.entry=\([A-Z_]*\).*/\1/p' /proc/cmdline 2
 outdated() {
     grep -q "^$BEGIN" "$CONF" || return 1
     what=
-    grep -q '^[[:space:]]*linux /synodeb/vmlinuz .*raid=noautodetect' "$CONF" ||
+    grep -q '^[[:space:]]*\(linux\|kernel\) /synodeb/vmlinuz .*raid=noautodetect' "$CONF" ||
         what="softlockup_panic=1 raid=noautodetect"
     # shellcheck source=/dev/null
     if [ -z "$(ROOT=; [ ! -r $DEFAULTS ] || . $DEFAULTS; echo "$ROOT")" ] && [ -n "$(root_subvol)" ] &&
-       ! grep -q '^[[:space:]]*linux /synodeb/vmlinuz .*rootflags=' "$CONF"; then
+       ! grep -q '^[[:space:]]*\(linux\|kernel\) /synodeb/vmlinuz .*rootflags=' "$CONF"; then
         what="${what:+$what and }rootflags=$(root_subvol)"
     fi
     [ -n "$what" ] || return 1
@@ -195,6 +265,7 @@ root_spec() {
 #  raid=noautodetect    the kernel never assembles md arrays by itself (DSM's 0.90 md0/md1)
 #  vender /vender -s    the Synology GRUB adds sn= and macs= (from the DOM) to the command
 #                       line, as for DSM: the DS920+ NICs take their MAC addresses from it
+#                       (GRUB legacy: 'vender /vender show', as in its SYNOLOGY_2 entry)
 block() {
     # the kernel console of this model (board file); the DS923+ one if it cannot be read
     console=$(/usr/lib/synodeb/board CONSOLE 2>/dev/null) ||
@@ -205,6 +276,11 @@ block() {
         IFS=: read -r title k i <<EOT
 $e
 EOT
+        if [ $LG = 1 ]; then
+            printf 'title %s\n\troot (hd0,1)\n\tvender /vender show\n\tkernel /synodeb/%s %s synodeb.entry=%s\n\tinitrd /synodeb/%s\n' \
+                "$title" "$k" "$opts" "$title" "$i"
+            continue
+        fi
         cat <<EOT
 menuentry "$title" {
         search --fs-uuid --no-floppy --set=root ${P2}
@@ -239,22 +315,21 @@ jkernel() { # VERSION file -> {"release": ..., "version": ...} or null
 #   outdated (message or null), kernels.DEBIAN / kernels.DEBIAN_OLD ({release, version} or
 #   null), dom_free_kb (synoboot2)
 status_json() {
-    withmount $P1 vfat ro
+    withmount 1 ro
     # shellcheck disable=SC2046  # titles have no blanks
-    entries=$(jlist $(awk '/^[ \t]*menuentry / { s = $0; sub(/^[^"]*"/, "", s); sub(/".*/, "", s); print s }' "$CONF"))
+    entries=$(jlist $(titles))
     def=$(cur_default)
     fb=
-    # shellcheck disable=SC2013  # one line of numbers
-    for i in $(sed -n "s/^set fallback='\(.*\)'.*/\1/p" "$CONF"); do fb="$fb $(title_at "$i")"; done
+    for i in $(fallback_list); do fb="$fb $(title_at "$i")"; done
     # shellcheck disable=SC2086
     fallback=$(jlist $fb)
     trial=$(trial_state)
-    cmdline=$(sed -n 's/^ *linux \/synodeb\/vmlinuz \(.*\) synodeb\.entry=DEBIAN.*/\1/p' "$CONF" | head -n 1)
+    cmdline=$(sed -n 's/^[[:space:]]*\(linux\|kernel\) \/synodeb\/vmlinuz \(.*\) synodeb\.entry=DEBIAN.*/\2/p' "$CONF" | head -n 1)
     msg=
     ! outdated 2>/dev/null || msg=$OUTDATED_MSG
     title=$(default_title)
     unmount
-    withmount $P2 ext2 ro
+    withmount 2 ro
     k1=$(jkernel $M/synodeb/VERSION)
     k2=null
     [ ! -f $M/synodeb/vmlinuz.old ] || k2=$(jkernel $M/synodeb/VERSION.old)
@@ -303,14 +378,14 @@ sync)
         echo "synodeb-dom: previous kernel $old incomplete in $B: no DEBIAN_OLD" >&2
         old=$new; }
     # boot state, read before anything is written
-    withmount $P1 vfat ro
+    withmount 1 ro
     d=$(default_title)
     st=$(trial_state)
     block=0; ! grep -q "^$BEGIN" "$CONF" 2>/dev/null || block=1
     ! outdated 2>/dev/null || echo "synodeb-dom: $OUTDATED_MSG" >&2
     unmount
 
-    withmount $P2 ext2
+    withmount 2
     S=$M/synodeb
     mkdir -p $S
     rm -f $S/*.tmp                       # leftovers of an interrupted copy
@@ -329,7 +404,9 @@ sync)
     if [ "$old" != "$new" ] && [ -f $S/vmlinuz.old ] && pair_same "$old" .old; then keep=1; fi
     # kernel upgrade: DEBIAN holds the kernel that becomes DEBIAN_OLD: hard links, no copy
     link=0
-    if [ "$old" != "$new" ] && [ $changed = 1 ] && [ $keep = 0 ] && pair_same "$old" ""; then link=1; fi
+    # (FAT has no hard links: there the kernel is copied again below)
+    if [ "$old" != "$new" ] && [ $changed = 1 ] && [ $keep = 0 ] && [ "$P2FS" = ext2 ] &&
+       pair_same "$old" ""; then link=1; fi
     # space, before anything changes: DEBIAN (the new kernel) comes first; a stale .old is
     # dropped anyway; the kernel kept as DEBIAN_OLD only if it is not the default entry
     need=$(pair_need "$new" "")
@@ -351,11 +428,11 @@ sync)
     prearm=0
     if [ $changed = 1 ] && [ $block = 1 ] && { [ "$d" = DEBIAN ] || [ -n "$R" ]; } && [ "$old" != "$new" ]; then
         unmount
-        withmount $P1 vfat
+        withmount 1
         echo armed | put "$TRIAL"
         unmount
         prearm=1
-        withmount $P2 ext2
+        withmount 2
     fi
     [ $keep = 1 ] || drop .old
     if [ $link = 1 ]; then
@@ -405,12 +482,12 @@ sync)
     case $act in arm|rearm|debian) ;; *) [ $prearm = 0 ] || act=disarm ;; esac
     case $act in
     disarm)
-        withmount $P1 vfat
+        withmount 1
         rm -f "$TRIAL"
         unmount
         echo "synodeb-dom: no DEBIAN_OLD on the DOM: $new boots without a kernel trial" >&2 ;;
     debian|arm|rearm)
-        withmount $P1 vfat
+        withmount 1
         case $act in
         debian)
             set_default DEBIAN
@@ -447,9 +524,9 @@ sync)
 setup)
     [ "${2:-}" != --root ] || [ -n "${3:-}" ] || die "usage: synodeb-dom setup [--root SPEC]"
     root_spec "${3:-}"
-    withmount $P1 vfat
+    withmount 1
     [ -f "$CONF" ] || die "$CONF missing"
-    grep -q '^set default=' "$CONF" || die "unexpected $CONF (no 'set default')"
+    [ -n "$(cur_default)" ] || die "unexpected $CONF (no default entry line)"
     [ -f "$CONF.dsm" ] || cp "$CONF" "$CONF.dsm"
     # Synology lines (and any other entry) stay, the synodeb block is rewritten; old
     # DEBIAN* / INSTALLER entries written before the block markers existed are removed
@@ -464,9 +541,9 @@ setup)
     } | put "$CONF"
     set_default DEBIAN                   # fallback: DEBIAN_OLD, then the Synology entries
     rm -f "$TRIAL"
-    grep -E "^set (default|fallback)" "$CONF"
+    grep -E "^(set )?(default|fallback)" "$CONF"
     unmount
-    withmount $P2 ext2
+    withmount 2
     rm -f $M/synodeb/installer.img $M/synodeb/installer.*
     unmount
     echo "synodeb-dom: DEBIAN entries written (root=$ROOT), DEBIAN is the default"
@@ -476,10 +553,10 @@ default)
     debian) t=DEBIAN ;; debian-old) t=DEBIAN_OLD ;; dsm) t=SYNOLOGY_2 ;;
     *) echo "usage: synodeb-dom default debian|debian-old|dsm" >&2; exit 2 ;;
     esac
-    withmount $P1 vfat
+    withmount 1
     set_default $t
     rm -f "$TRIAL"            # explicit choice: no kernel trial in progress
-    grep -E "^set (default|fallback)" "$CONF"
+    grep -E "^(set )?(default|fallback)" "$CONF"
     unmount
     ;;
 boot-ok)
@@ -494,7 +571,7 @@ boot-ok)
     relax_panics
     lock
     entry_now=$(running_entry)
-    withmount $P1 vfat ro
+    withmount 1 ro
     st=$(trial_state)
     d=$(default_title)
     unmount
@@ -505,7 +582,7 @@ boot-ok)
         # the default and DEBIAN running: a trial started by an older synodeb-trial.
         [ "$d" = DEBIAN_OLD ] && [ "$entry_now" = DEBIAN ] || exit 0 ;;
     esac
-    withmount $P1 vfat
+    withmount 1
     case "$entry_now" in
     DEBIAN)
         set_default DEBIAN
@@ -517,7 +594,7 @@ boot-ok)
             "The DOM fell back to DEBIAN_OLD ($(uname -r)), which stays the default: newer kernels are installed as DEBIAN but not booted until: synodeb-dom default debian" ;;
     esac
     rm -f "$TRIAL"
-    grep -E "^set (default|fallback)" "$CONF"
+    grep -E "^(set )?(default|fallback)" "$CONF"
     unmount
     ;;
 status)
@@ -525,18 +602,18 @@ status)
         status_json
         exit 0
     fi
-    withmount $P1 vfat ro
+    withmount 1 ro
     echo "default entry: $(default_title) ($(cur_default))"
-    sed -n "s/^set fallback='\(.*\)'.*/fallback entries: \1/p" "$CONF"
+    fb=$(fallback_list); [ -z "$fb" ] || echo "fallback entries: $fb"
     case $(trial_state) in
     armed) echo "kernel trial armed: if the next DEBIAN boot fails, DEBIAN_OLD starts" ;;
     trying) echo "kernel trial in progress: DEBIAN_OLD starts if the new kernel fails" ;;
     esac
     # the whole command line of DEBIAN (the Synology GRUB adds sn= and macs= at boot)
-    sed -n 's/^ *linux \/synodeb\/vmlinuz \(.*\) synodeb\.entry=DEBIAN.*/DEBIAN command line: \1/p' "$CONF"
+    sed -n 's/^[[:space:]]*\(linux\|kernel\) \/synodeb\/vmlinuz \(.*\) synodeb\.entry=DEBIAN.*/DEBIAN command line: \2/p' "$CONF"
     ! outdated || echo "note: $OUTDATED_MSG"
     unmount
-    withmount $P2 ext2 ro
+    withmount 2 ro
     echo "DEBIAN:     $(cat $M/synodeb/VERSION 2>/dev/null || echo '?')"
     [ ! -f $M/synodeb/vmlinuz.old ] || echo "DEBIAN_OLD: $(cat $M/synodeb/VERSION.old 2>/dev/null || echo '?')"
     ls -la $M/synodeb 2>/dev/null || true

@@ -6,6 +6,8 @@
 #   CAPTURE=1  writes terminal captures for the README to /captures
 #   NET, REPO  --network and --repo of the first install
 #   DOWNLOAD=1 the first install downloads the installer (published release) instead of --local
+#   SYNODEB_TEST_MODEL  the model of the DOM image (default DS923+; DS415+: GRUB legacy, FAT
+#              synoboot2, made by make-test-dom.sh with MODEL=DS415+)
 set -euo pipefail
 W=/work
 export DEBIAN_FRONTEND=noninteractive
@@ -22,7 +24,7 @@ SYNOBOOT1=$(losetup -f --show -o $((s1 * 512)) --sizelimit $((z1 * 512)) $T/dom.
 SYNOBOOT2=$(losetup -f --show -o $((s2 * 512)) --sizelimit $((z2 * 512)) $T/dom.img)
 export SYNOBOOT SYNOBOOT1 SYNOBOOT2 SYNODEB_TEST=1
 trap 'umount $T/b 2>/dev/null || true; losetup -d $SYNOBOOT $SYNOBOOT1 $SYNOBOOT2' EXIT
-S="bash $W/synodeb-setup.sh"
+S="bash $W/synodeb-setup.sh${SYNODEB_TEST_MODEL:+ --experimental}"
 INST=$W/build/out/installer
 LOCAL=(--local "$INST")
 [ -z "${DOWNLOAD:-}" ] || LOCAL=()
@@ -60,13 +62,23 @@ fake_debian() { # vmlinuz-MB initrd-MB [old-vmlinuz-MB old-initrd-MB]
       echo '### synodeb begin (written by synodeb-dom setup; settings in /etc/default/synodeb)'
       for e in DEBIAN:vmlinuz:initrd.img DEBIAN_OLD:vmlinuz.old:initrd.img.old; do
           IFS=: read -r t k i <<< "$e"
-          printf 'menuentry "%s" {\n        search --fs-uuid --no-floppy --set=root 45e5b07d-4783-4867-a369-f99c0cd1e610\n        linux /synodeb/%s root=UUID=1234 ro synodeb.entry=%s\n        initrd /synodeb/%s\n}\n' "$t" "$k" "$t" "$i"
+          if [ "$LEGACY" = 1 ]; then
+              printf 'title %s\n\troot (hd0,1)\n\tvender /vender show\n\tkernel /synodeb/%s root=UUID=1234 ro synodeb.entry=%s\n\tinitrd /synodeb/%s\n' "$t" "$k" "$t" "$i"
+          else
+              printf 'menuentry "%s" {\n        search --fs-uuid --no-floppy --set=root 45e5b07d-4783-4867-a369-f99c0cd1e610\n        linux /synodeb/%s root=UUID=1234 ro synodeb.entry=%s\n        initrd /synodeb/%s\n}\n' "$t" "$k" "$t" "$i"
+          fi
       done
-      echo '### synodeb end'; } | sed "s/^set default='[0-9]*'/set default='2'/" > $c.new
+      echo '### synodeb end'; } | sed -e "s/^set default='[0-9]*'/set default='2'/" -e "s/^default[[:space:]].*/default 2/" > $c.new
     mv $c.new $c
     umount $T/b
 }
-has() { echo " $(debugfs -R 'ls /synodeb' "$SYNOBOOT2" 2>/dev/null | tr -s ' \n' '  ') " | grep -q " $1 "; }
+has() { # file in synoboot2:/synodeb (ext2 or FAT)
+    mount -o ro "$SYNOBOOT2" $T/b && { [ -e "$T/b/synodeb/$1" ]; r=$?; umount $T/b; return $r; }
+}
+LEGACY=0
+mount -o ro "$SYNOBOOT1" $T/b && { grep -q '^default[[:space:]]' $T/b/EFI/boot/SynoBootLoader.conf && LEGACY=1; umount $T/b; }
+echo "== GRUB legacy: $LEGACY"
+
 
 ORIG=$(dom_sha)
 $S status
@@ -77,6 +89,10 @@ check "backup of the original DOM" "[ -n '$B0' ] && [ \"\$(sha256sum < '$B0' | c
 check "backup readable by root only" "[ \"\$(stat -c %a '$B0')\" = 600 ]"
 check "INSTALLER default" "st && grep -q 'INSTALLER   <- default' $T/st"
 check "installer kernel as installer.vmlinuz" "has installer.vmlinuz && ! has vmlinuz"
+if [ "$LEGACY" = 1 ]; then
+    check "GRUB legacy: INSTALLER entry" "grep -q '^title INSTALLER\$' $T/conf && grep -q '^	kernel /synodeb/installer.vmlinuz ' $T/conf && grep -q '^	initrd /synodeb/installer.img\$' $T/conf && grep -q '^	root (hd0,1)\$' $T/conf"
+    check "GRUB legacy: default is INSTALLER (2), fallback unchanged" "grep -qx 'default 2' $T/conf && grep -qx 'fallback 0' $T/conf && ! grep -q -e menuentry -e 'set default' $T/conf"
+fi
 if [ -n "${OUT:-}" ]; then cp $T/dom.img /out.img; echo "== DOM saved"; fi
 check "boot dsm" "$S boot dsm && st && grep -q 'SYNOLOGY_2   <- default' $T/st"
 check "boot debian refused without Debian" "! $S boot debian 2>/dev/null"

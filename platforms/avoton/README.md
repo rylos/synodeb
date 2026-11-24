@@ -1,0 +1,72 @@
+# Platform avoton (Intel Atom C2000, Avoton)
+
+Models: DS415+ (work in progress, not booted yet). Board file: `boards/ds415plus.conf`.
+Hardware report: [#16](https://github.com/rylos/synodeb/issues/16). Each fact is marked as
+measured on a unit (under DSM 7.1.1) or inferred.
+
+## DS415+
+
+- **CPU**: Atom C2538, stepping B0 (`00:00.0` revision 02), affected by the AVR54 erratum (a
+  clock on the board that stops, the unit no longer starts; repairable). Measured.
+- **Identity under Debian**: the DMI names are placeholders, `Insyde` / `MohonPeak` /
+  `Type2 - Board Product Name1`, the same as on the DS2415+. The DS415+ has a SiI3132 SATA
+  controller (`1095:3132`, `01:00.0`), the DS2415+ Marvell 88SE92xx: `/usr/lib/synodeb/board`
+  chooses `ds415plus.conf` by `DMI_PRODUCT` and `PCI_DEVICE`. Measured (DS415+ report, DS2415+
+  from its owner).
+- **Model under DSM**: `/proc/sys/kernel/syno_hw_version` is `DS415+-j`, the kernel command line
+  says `syno_hw_version=DS415+`; `synodeb-setup.sh` reads the command line first. Measured.
+- **Bays**: `SataPortMap=422 DiskIdxMap=020006`; a disk in bay 2 is `ata6`. The rest of the map is
+  not confirmed yet (one disk moved through the bays, level 3 of the form).
+- **Serial**: DSM's console on ttyS0 (I/O 0x3f8), its microcontroller driver opens ttyS1
+  (I/O 0x2f8). The board file puts the kernel console on ttyS0; the udev rule names ttyS1
+  `/dev/synology-up` on MohonPeak boards. That the microcontroller speaks the same protocol as
+  on the other models is inferred, not tested.
+- **Network**: two onboard ports. Under DSM `macs=` comes from the boot loader (`vender`); the
+  NICs themselves carry a placeholder address (reported by luuvasara, #7), so until the kernel
+  sets the right ones, both ports may come up with the same MAC address.
+- **LEDs**: `syno_led0`-`15` under DSM, a 16-output LP3943 (inferred from other owners' reports,
+  #7). No driver here yet.
+
+## Boot flash (DOM)
+
+Measured (#16): 120 MiB, MBR, synoboot1 FAT16 from sector 63 (32067 sectors), synoboot2 FAT16
+from sector 32130 (192780 sectors), with volume ids of their own on every unit.
+
+- synoboot1: `EFI/boot/SynoBootLoader.conf` and `SynoBootLoader.efi`, `GRUB_VER`, the factory
+  `zImage` and `rd.gz`.
+- synoboot2: the DSM kernel as updated by DSM (`zImage`, `rd.gz`), `vender`,
+  `grub_cksum.syno`, `checksum.syno`; about 85 MB free.
+- `SynoBootLoader.conf` is in GRUB legacy syntax: `default 1` (SYNOLOGY_2, the kernel on
+  synoboot2), `fallback 0` (SYNOLOGY_1, the factory one), `serial --unit=1`, entries
+  `title` / `root (hd0,N)` / `kernel` / `initrd`; SYNOLOGY_2 also has `cksum /grub_cksum.syno`
+  and `vender /vender show`.
+
+synodeb writes its entries in the same syntax (`DOM_LOADER="grub-legacy"`):
+
+```
+title DEBIAN
+	root (hd0,1)
+	vender /vender show
+	kernel /synodeb/vmlinuz root=... synodeb.entry=DEBIAN
+	initrd /synodeb/initrd.img
+```
+
+and only one `fallback` number (whether this build takes a list is not known). FAT has no hard
+links, so a kernel update copies the previous kernel to DEBIAN_OLD instead of linking it.
+
+Open: whether this boot loader starts a current kernel (bzImage, EFI) with a Debian initrd at
+all. Only the first boot with `synodeb-setup.sh install --experimental` will tell. The DSM
+entries stay on the DOM, and once the installer runs it makes SYNOLOGY_2 the default again
+(any reboot before the end brings DSM back). If the boot loader cannot load the installer
+files, it goes to its `fallback` entry, SYNOLOGY_1 (Synology's own setting). If it loads them
+but the kernel never starts, the unit keeps booting the INSTALLER entry: DSM then comes back
+only through the boot loader menu, if a serial console reaches it (its `serial --unit=1` is
+ttyS1, the microcontroller's port: not checked), or by writing the DOM backup from another
+system. That is the risk of the first test.
+
+## Not done yet
+
+- kernel: no table in `synology_nas.c` (bay power, presence, fans, power-off) and no MAC address
+  fix for the onboard ports;
+- synohwd: no DS415+ bay map or fan curves (it falls back to the DS923+ ones);
+- disk LEDs (LP3943).

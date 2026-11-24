@@ -2,10 +2,53 @@
 # tests/make-test-dom.sh OUT.img: a synthetic DS923+ DOM for tests/run-test-setup.sh, with no
 # Synology files: MBR, p1 FAT (volume id 10EE-589C) with a GRUB2 SynoBootLoader.conf of the
 # same shape as the real one, p2 ext2 (the DS923+ UUID) with dummy zImage and rd.gz.
+# MODEL=DS415+: the Avoton layout instead (120 MiB, MBR from sector 63, p1 and p2 FAT with
+# volume ids of their own, SynoBootLoader.conf in GRUB legacy syntax).
 # Runs in a privileged debian:trixie container (loop devices).
 set -euo pipefail
 OUT=$(realpath "$1")
 touch "$OUT"
+if [ "${MODEL:-}" = DS415+ ]; then
+exec docker run --rm --privileged -v "$OUT":/out.img debian:trixie bash -euo pipefail -c '
+export DEBIAN_FRONTEND=noninteractive
+apt-get update -qq && apt-get install -y -qq fdisk dosfstools util-linux >/dev/null
+for i in $(seq 0 31); do [ -e /dev/loop$i ] || mknod -m 660 /dev/loop$i b 7 $i; done
+I=/tmp/dom.img; M=/tmp/m; mkdir -p $M
+truncate -s 120M $I
+printf "label: dos\nstart=63, size=32067, type=83, bootable\nstart=32130, size=192780, type=83\n" | sfdisk -q $I
+L1=$(losetup -f --show -o $((63 * 512)) --sizelimit $((32067 * 512)) $I)
+L2=$(losetup -f --show -o $((32130 * 512)) --sizelimit $((192780 * 512)) $I)
+mkfs.vfat -F 16 -i 12345678 $L1 >/dev/null
+mkfs.vfat -F 16 -i 9ABCDEF0 $L2 >/dev/null
+mount $L1 $M; mkdir -p $M/EFI/boot
+head -c 3M /dev/zero > $M/zImage; head -c 6M /dev/zero > $M/rd.gz
+cat > $M/EFI/boot/SynoBootLoader.conf <<EOT
+serial --unit=1 --speed=115200
+terminal serial
+default 1
+timeout 3
+verbose
+hiddenmenu
+fallback 0
+
+title SYNOLOGY_1
+	root (hd0,0)
+	kernel /zImage root=/dev/md0 ihd_num=4 netif_num=2 syno_hw_version=DS415+
+	initrd /rd.gz
+
+title SYNOLOGY_2
+	root (hd0,1)
+	cksum /grub_cksum.syno
+	vender /vender show
+	kernel /zImage root=/dev/md0 ihd_num=4 netif_num=2 syno_hw_version=DS415+
+	initrd /rd.gz
+EOT
+umount $M
+mount $L2 $M; head -c 3M /dev/zero > $M/zImage; head -c 6M /dev/zero > $M/rd.gz
+head -c 64K /dev/zero > $M/vender; echo test > $M/grub_cksum.syno; umount $M
+losetup -d $L1 $L2
+cp $I /out.img'
+fi
 exec docker run --rm --privileged -v "$OUT":/out.img debian:trixie bash -euo pipefail -c '
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq && apt-get install -y -qq fdisk e2fsprogs dosfstools util-linux >/dev/null

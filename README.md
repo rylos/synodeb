@@ -35,6 +35,7 @@ This project is not affiliated with, endorsed or supported by Synology Inc. "Syn
 | **DS920+** | Intel Celeron J4125 | supported, fully tested |
 | DS423+ | Intel Celeron J4125 | community: tested on the hardware by a user |
 | DS1522+ | AMD Ryzen R1600 | work in progress |
+| DS415+ | Intel Atom C2538 | work in progress |
 
 More models are planned in [#7](https://github.com/rylos/synodeb/discussions/7): if you own one
 and want to help, say hello there. [Adding a model](docs/porting.md) lists what a new model needs.
@@ -91,7 +92,7 @@ and troubleshooting: [docs/install.md](docs/install.md).
 - [How it works and building](docs/development.md): DOM, drivers, build, CI, models
 - [Serial console](docs/serial.md), for debugging
 - Hardware notes per platform: [r1000](platforms/r1000/README.md) (DS923+, DS1522+),
-  [geminilake](platforms/geminilake/README.md) (DS920+)
+  [geminilake](platforms/geminilake/README.md) (DS920+), [avoton](platforms/avoton/README.md) (DS415+)
 
 ## Known limitations
 
