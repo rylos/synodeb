@@ -111,6 +111,9 @@ body:
         88SM9705 port multiplier (`0x1b4b:0x9705`), revision 160. DSM hides the chip's sixth port,
         mainline shows it.
 
+        No expansion unit, and the collector file is attached? Leave this level empty: the file has
+        the same lines.
+
   - type: textarea
     id: level1
     attributes:
@@ -120,9 +123,11 @@ body:
   - type: markdown
     attributes:
       value: |
-        ### Level 2: boot log of synodeb on the real unit (30 minutes)
+        ### Level 2: boot log on the real unit (30 minutes)
 
-        Needed for anything that lands in the repository. The collector above already includes it,
+        Needed for anything that lands in the repository. For a model synodeb doesn't support yet,
+        start with the log under DSM; once a synodeb kernel boots on the unit, attach its log too
+        (see [Adding a model](https://github.com/rylos/synodeb/blob/main/docs/porting.md)). The collector above already includes it,
         with the host name, MAC addresses, serials and UUIDs replaced; by hand:
         ```sh
         journalctl -k -b > boot.txt
@@ -143,14 +148,29 @@ body:
     id: level2
     attributes:
       label: Level 2 files
-      description: boot.txt, lspci.txt, hosts.txt, dmi.txt
+      description: The collector's file, or boot.txt, lspci.txt, hosts.txt, dmi.txt
 
   - type: markdown
     attributes:
       value: |
-        ### Level 3: the unit's own identity
+        ### Level 3: which bay is which, and the expansion unit's identity
 
-        Synology units with the same port multiplier chip tell themselves apart by a small unit ID
+        **The NAS bays.** The collector prints the ATA port of each disk; which physical bay that is
+        has to be seen at the unit. Note the bay of each disk, run this (read-only, DSM or Linux):
+        ```sh
+        for d in /sys/block/sd* /sys/block/sata*; do [ -e "$d" ] || continue; echo "${d##*/} $(readlink -f $d | grep -o 'ata[0-9]*' | head -n 1) $(cat $d/device/model 2>/dev/null)"; done
+        ```
+        then shut down, move one disk to an empty bay, boot and run it again. One line per bay tried
+        is enough; empty bays are fine to leave out.
+
+        Example line, DS2415+ under DSM 7.1.1 with one disk in bay 1 (put together from its boot log):
+        ```
+        sda ata7 ST1000DM003-1CH1
+        ```
+        Read it as: bay 1 is ATA port 7, the first port of the Marvell 88SE9215 at `03:00.0`. The
+        model is cut to 16 characters, as the SCSI layer stores it.
+
+        **The expansion unit.** Synology units with the same port multiplier chip tell themselves apart by a small unit ID
         that the master port multiplier returns through its GPIO lines (for example `0x13` on a
         DX1215). Bay count, fans and LED order follow from it. The known IDs are in the unit table
         of the expansion-unit driver (`kernel/src/drivers/ata/synology_eunit_9705.h`, #9).
