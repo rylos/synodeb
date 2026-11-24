@@ -1,6 +1,6 @@
 {
  "format": 1,
- "generated": "2026-11-24T09:05:55Z",
+ "generated": "2026-11-24T09:52:56Z",
  "series": {
   "longterm": {
    "branch": "6.18",
@@ -12,6 +12,21 @@
   }
  },
  "kernels": [
+  {
+   "release": "7.3.6-14-synodeb",
+   "series": "stable",
+   "upstream": "7.3.6",
+   "package": "linux-image-7.3.6-14-synodeb",
+   "version": "7.3.6-14",
+   "published": "2026-11-24T09:48:26Z",
+   "available": true,
+   "changelog": "https://cdn.kernel.org/pub/linux/kernel/v7.x/ChangeLog-7.3.6",
+   "previous": "7.3.5-13-synodeb",
+   "changes": [
+    "kernel patches: refreshed for 6.18.65 and 7.3.6"
+   ],
+   "cves": []
+  },
   {
    "release": "6.18.65-13-synodeb",
    "series": "longterm",
