@@ -10,8 +10,8 @@
 # Moving to the next longterm branch is done by hand: kernel/patches/<x.y> and
 # kernel/config-debian-<x.y> must exist for it.
 SERIES=longterm
-KVER=6.18.64
-ABI=12
+KVER=6.18.65
+ABI=13
 # derived
 KMAJ=${KVER%%.*}; KMIN=${KVER#*.}; KMIN=${KMIN%%.*}
 KBRANCH=$KMAJ.$KMIN             # 6.18: kernel/patches/6.18, kernel/config-debian-6.18
