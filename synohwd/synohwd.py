@@ -999,7 +999,7 @@ class Daemon:
             bays[n] = {"present": read(f"{PLATFORM}/bay{n}_present") == "1",
                        "power": read(f"{PLATFORM}/bay{n}_power") == "1",
                        "device": self.bays.get(n)}
-        data = {"time": time.strftime("%F %T"), "epoch": int(time.time()),
+        data = {"model": PRODUCT, "time": time.strftime("%F %T"), "epoch": int(time.time()),
                 "period": self.conf["fan_period"], "sensors": s, "bays": bays,
                 "m2": m2_slots(PRODUCT), **self.state}
         tmp = STATUS + ".tmp"
@@ -1320,6 +1320,8 @@ def print_status(d):
     s = d["sensors"]
     age = time.time() - d.get("epoch", time.time())
     stale = "  (STALE: the daemon is not updating)" if age > 3 * d.get("period", 20) + 10 else ""
+    if d.get("model"):
+        print(f"model        {d['model']}")
     print(f"updated      {d['time']}{stale}")
     print(f"fans         duty {d['fan_duty']}%{'  FAILURE' if d['fan_fail'] else ''}")
     for f in d.get("fans", []):
