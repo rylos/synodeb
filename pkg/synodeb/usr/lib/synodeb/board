@@ -2,13 +2,15 @@
 # /usr/lib/synodeb/board — the board file of this NAS (/usr/share/synodeb/boards/<model>.conf,
 # a copy of boards/ in the synodeb repository), chosen by the DMI product name; on boards
 # whose DMI names are placeholders, by DMI_PRODUCT and PCI_DEVICE in the board file (DS415+:
-# MohonPeak, Avoton host bridge and SiI3132). Without DMI at all (a boot loader that does not
-# pass the EFI tables to the kernel), by PCI_DEVICE alone.
+# MohonPeak, Avoton host bridge and SiI3132). Without DMI at all (a kernel started without the
+# EFI tables, e.g. by kexec from a noefi kernel), by PCI_DEVICE alone.
 #
 #   /usr/lib/synodeb/board          print the path of the board file
 #   /usr/lib/synodeb/board KEY      print one value (MODEL, PLATFORM, CONSOLE, ...)
 #
-# A model without a board file falls back to the DS923+, the model synodeb started with.
+# A NAS that matches no board file gets none (exit 1): guessing a model would give an unknown
+# board the bay map, console and microcontroller port of another one. Callers have their own
+# default where one is safe (synodeb-dom: the DS923+ console).
 set -eu
 DIR=${SYNODEB_TEST_BOARDS:-/usr/share/synodeb/boards}
 SYS=${SYNODEB_TEST_SYS:-/sys}       # tests only
@@ -41,9 +43,8 @@ if [ -z "$name" ] || [ ! -f "$f" ]; then
         [ -z "$pci" ] || has_pci $pci || continue
         f=$b; break
     done
-    [ -n "$f" ] || f=$DIR/ds923plus.conf
+    [ -n "$f" ] || { echo "board: no board file for this NAS (DMI product: ${product:-none})" >&2; exit 1; }
 fi
-[ -f "$f" ] || { echo "board: no board file in $DIR" >&2; exit 1; }
 if [ $# -eq 0 ]; then
     echo "$f"
     exit 0

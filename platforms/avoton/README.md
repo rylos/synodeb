@@ -76,24 +76,39 @@ title DEBIAN
 and only one `fallback` number (whether this build takes a list is not known). FAT has no hard
 links, so a kernel update copies the previous kernel to DEBIAN_OLD instead of linking it.
 
-The boot loader starts a current kernel itself: on the DS2415+ it started Debian's 6.12
-kernel (`6.12.113+deb13-amd64`) straight from the boot flash, and that kernel got the EFI
-tables (`efi: EFI v2.4 by INSYDE Corp.`, `SMBIOS 2.7 present`, `DMI: Insyde MohonPeak/...`).
-Measured on the DS2415+ by its owner (serial log, #16), same `grub-0.97-efi` build; for the
-synodeb kernel and a Debian initrd on the DS415+ it is inferred.
+The boot loader starts a current kernel itself, and passes it the EFI tables. On the DS2415+,
+from the boot flash, with no `noefi` and no kexec (measured by its owner, serial logs, #16):
+- Debian's 6.12 kernel (`6.12.113+deb13-amd64`);
+- the synodeb kernel `6.18.60-5-ds923` with a small initramfs: `efi: EFI v2.4 by INSYDE Corp.`,
+  `SMBIOS 2.7 present`, `DMI: Insyde MohonPeak/...`, `/init` running after 4.8 s, no oops;
+  `/sys/firmware/efi` present, `product_name` `MohonPeak`.
+
+Same `grub-0.97-efi` build as the DS415+; on the DS415+ itself it is inferred. The `vender`
+line appends `macs=` and `sn=` to whatever kernel command line the entry gives.
+
+**Boot loader menu on the console.** On the DS2415+ GRUB's `Press Ctrl-C to enter the menu`,
+the menu and the `grub>` prompt appear on the console port, the 16550 at `0x3F8` (Linux's
+ttyS0), although the configuration says `serial --unit=1` (measured). In the EFI build of GRUB
+legacy the unit is a position in the firmware's list of serial devices, not the BIOS port
+number, so unit 1 is `0x3F8` there. On the DS415+ the same is likely (same build), but not
+measured: if it holds, a USB-UART adapter on the console header reaches the menu and can
+always pick a DSM entry. GRUB drops characters typed faster than about 60 ms apart; the BIOS
+prints nothing usable before GRUB.
 
 Open: the first boot with `synodeb-setup.sh install --experimental`. The DSM entries stay on
 the DOM, and once the installer runs it makes SYNOLOGY_2 the default again (any reboot before
 the end brings DSM back). If the boot loader cannot load the installer files, it goes to its
 `fallback` entry, SYNOLOGY_1 (Synology's own setting). If it loads them but the kernel never
-starts, the unit keeps booting the INSTALLER entry: DSM then comes back only through the boot
-loader menu, if a serial console reaches it (its `serial --unit=1` is ttyS1, the
-microcontroller's port: not checked), or by writing the DOM backup from another system.
+starts, the unit keeps booting the INSTALLER entry: DSM then comes back through the boot
+loader menu on the serial console (see above), or by writing the DOM backup from another
+system.
 
 ## Not done yet
 
 - kernel: no table in `synology_nas.c` (bay power, presence, fans, power-off) and no MAC address
-  fix for the onboard ports;
-- synohwd: the bay map above is in (from the next synodeb release), no fan curves (it falls back
-  to the DS923+ ones);
+  fix for the onboard ports. Without it there is no `synology-nas` platform device, so
+  `synohwd.service` does not start: fans stay under the microcontroller's own control, and
+  the power button, LEDs and beeps are not handled. The table comes after the first boot,
+  from measurements on the unit;
+- synohwd: the bay map above is in (from the next synodeb release), no fan curves;
 - disk LEDs (LP3943).
