@@ -15,12 +15,25 @@ measured on a unit (under DSM 7.1.1) or inferred.
   from its owner).
 - **Model under DSM**: `/proc/sys/kernel/syno_hw_version` is `DS415+-j`, the kernel command line
   says `syno_hw_version=DS415+`; `synodeb-setup.sh` reads the command line first. Measured.
-- **Bays**: `SataPortMap=422 DiskIdxMap=020006`; a disk in bay 2 is `ata6`. The rest of the map is
-  not confirmed yet (one disk moved through the bays, level 3 of the form).
+- **Bays**: `SataPortMap=422 DiskIdxMap=020006`. Measured with a known disk in each bay:
+
+  | bay | controller | port | under DSM |
+  |---|---|---|---|
+  | 1 | `00:18.0` AHCI, 2 ports, 6 Gbps | 0 | `ata5` |
+  | 2 | `00:18.0` | 1 | `ata6` |
+  | 3 | `00:17.0` AHCI, 4 ports, 3 Gbps | 0 | `ata1` |
+  | 4 | `00:17.0` | 1 | `ata2` |
+
+  Ports 2 and 3 of `00:17.0` and both SiI3132 ports had no disk; that the SiI3132 drives the
+  eSATA port is inferred. The `ataN` numbers are DSM's probe order and may differ under Debian:
+  the map is by PCI device and port.
 - **Serial**: DSM's console on ttyS0 (I/O 0x3f8), its microcontroller driver opens ttyS1
-  (I/O 0x2f8). The board file puts the kernel console on ttyS0; the udev rule names ttyS1
-  `/dev/synology-up` on MohonPeak boards. That the microcontroller speaks the same protocol as
-  on the other models is inferred, not tested.
+  (I/O 0x2f8, 9600 baud, measured with `stty`). The board file puts the kernel console on
+  ttyS0; the udev rule names ttyS1 `/dev/synology-up` on MohonPeak boards. That the microcontroller speaks the same protocol as
+  on the other models is inferred, not tested. The console header is reached through the
+  vent below the power button with the unit on its side (photo in #16); it looks like the
+  2×3 header of the DS923+ ([serial console](../../docs/serial.md)), but its pinout on the
+  DS415+ is not measured.
 - **Network**: two onboard ports. Under DSM `macs=` comes from the boot loader (`vender`); the
   NICs themselves carry a placeholder address (reported by luuvasara, #7), so until the kernel
   sets the right ones, both ports may come up with the same MAC address.
@@ -36,6 +49,7 @@ from sector 32130 (192780 sectors), with volume ids of their own on every unit.
   `zImage` and `rd.gz`.
 - synoboot2: the DSM kernel as updated by DSM (`zImage`, `rd.gz`), `vender`,
   `grub_cksum.syno`, `checksum.syno`; about 85 MB free.
+- `GRUB_VER`: `GRUB_PROJECT="grub-0.97-efi"`, `GRUB_VERSION="1"`: GRUB legacy 0.97, EFI build.
 - `SynoBootLoader.conf` is in GRUB legacy syntax: `default 1` (SYNOLOGY_2, the kernel on
   synoboot2), `fallback 0` (SYNOLOGY_1, the factory one), `serial --unit=1`, entries
   `title` / `root (hd0,N)` / `kernel` / `initrd`; SYNOLOGY_2 also has `cksum /grub_cksum.syno`
@@ -68,5 +82,5 @@ system. That is the risk of the first test.
 
 - kernel: no table in `synology_nas.c` (bay power, presence, fans, power-off) and no MAC address
   fix for the onboard ports;
-- synohwd: no DS415+ bay map or fan curves (it falls back to the DS923+ ones);
+- synohwd: the bay map above is not in it yet, no fan curves (it falls back to the DS923+ ones);
 - disk LEDs (LP3943).
