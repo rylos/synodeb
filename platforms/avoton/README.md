@@ -32,8 +32,11 @@ measured on a unit (under DSM 7.1.1) or inferred.
   ttyS0; the udev rule names ttyS1 `/dev/synology-up` on MohonPeak boards. That the microcontroller speaks the same protocol as
   on the other models is inferred, not tested. The console header is reached through the
   vent below the power button with the unit on its side (photo in #16); it looks like the
-  2×3 header of the DS923+ ([serial console](../../docs/serial.md)), but its pinout on the
-  DS415+ is not measured.
+  2×3 header of the DS923+ ([serial console](../../docs/serial.md)). The DS414 (ARM, another
+  board) uses the same header the same way: the row closest to the board, pins 2-4-6, with NAS RX
+  closest to the power button
+  ([forum post](https://forum.doozan.com/read.php?3,100059)). On the DS415+ that is inferred,
+  not measured.
 - **Network**: two onboard ports. Under DSM `macs=` comes from the boot loader (`vender`); the
   NICs themselves carry a placeholder address (reported by luuvasara, #7), so until the kernel
   sets the right ones, both ports may come up with the same MAC address.
