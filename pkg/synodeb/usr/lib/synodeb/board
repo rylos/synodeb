@@ -2,30 +2,43 @@
 # /usr/lib/synodeb/board — the board file of this NAS (/usr/share/synodeb/boards/<model>.conf,
 # a copy of boards/ in the synodeb repository), chosen by the DMI product name; on boards
 # whose DMI names are placeholders, by DMI_PRODUCT and PCI_DEVICE in the board file (DS415+:
-# MohonPeak with a SiI3132).
+# MohonPeak, Avoton host bridge and SiI3132). Without DMI at all (a boot loader that does not
+# pass the EFI tables to the kernel), by PCI_DEVICE alone.
 #
 #   /usr/lib/synodeb/board          print the path of the board file
 #   /usr/lib/synodeb/board KEY      print one value (MODEL, PLATFORM, CONSOLE, ...)
 #
 # A model without a board file falls back to the DS923+, the model synodeb started with.
 set -eu
-DIR=/usr/share/synodeb/boards
-product=$(cat /sys/class/dmi/id/product_name 2>/dev/null || true)
+DIR=${SYNODEB_TEST_BOARDS:-/usr/share/synodeb/boards}
+SYS=${SYNODEB_TEST_SYS:-/sys}       # tests only
+product=$(cat "$SYS"/class/dmi/id/product_name 2>/dev/null || true)
 name=$(printf '%s' "$product" | tr 'A-Z' 'a-z' | sed 's/+/plus/g' | tr -cd 'a-z0-9')
 val() { sed -n "s/^$1=\"\([^\"]*\)\".*/\1/p" "$2" | head -n 1; }   # KEY file
-has_pci() { # vendor:device
-    for d in /sys/bus/pci/devices/*; do
-        [ "$(cat "$d/vendor" 2>/dev/null):$(cat "$d/device" 2>/dev/null)" = "0x${1%:*}:0x${1#*:}" ] && return 0
+has_pci() { # vendor:device...: all of them present
+    for id in "$@"; do
+        found=0
+        for d in "$SYS"/bus/pci/devices/*; do
+            [ "$(cat "$d/vendor" 2>/dev/null):$(cat "$d/device" 2>/dev/null)" = "0x${id%:*}:0x${id#*:}" ] &&
+                { found=1; break; }
+        done
+        [ $found = 1 ] || return 1
     done
-    return 1
+    return 0
 }
 f=$DIR/$name.conf
 if [ -z "$name" ] || [ ! -f "$f" ]; then
     f=
     for b in "$DIR"/*.conf; do
-        [ -f "$b" ] && [ -n "$product" ] && [ "$(val DMI_PRODUCT "$b")" = "$product" ] || continue
+        [ -f "$b" ] || continue
         pci=$(val PCI_DEVICE "$b")
-        [ -z "$pci" ] || has_pci "$pci" || continue
+        if [ -n "$product" ]; then
+            [ "$(val DMI_PRODUCT "$b")" = "$product" ] || continue
+        else
+            [ -n "$pci" ] || continue           # no DMI: only a board file with PCI devices
+        fi
+        # shellcheck disable=SC2086  # a list of vendor:device
+        [ -z "$pci" ] || has_pci $pci || continue
         f=$b; break
     done
     [ -n "$f" ] || f=$DIR/ds923plus.conf

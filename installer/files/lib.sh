@@ -12,9 +12,11 @@ log() { echo "synodeb: $*" >> $LOG; logger -t synodeb -- "$*" 2>/dev/null || tru
 
 # --- front-panel microcontroller (uP), 9600 8N1: on r1000 (DS923+) the UART at MMIO
 # 0xFEDCA000, on geminilake (DS920+) LPSS UART 0, PCI 00:18.0, on avoton (DS415+) ttyS1,
-# I/O 0x2f8 (MohonPeak board) ---
+# I/O 0x2f8 (MohonPeak board: by its DMI name, or by its Avoton host bridge 8086:1f0c when the
+# boot loader leaves the kernel without DMI) ---
 up_dev() {
-    if [ "$(cat /sys/class/dmi/id/product_name 2>/dev/null)" = MohonPeak ]; then
+    if [ "$(cat /sys/class/dmi/id/product_name 2>/dev/null)" = MohonPeak ] ||
+        [ "$(cat /sys/bus/pci/devices/0000:00:00.0/vendor /sys/bus/pci/devices/0000:00:00.0/device 2>/dev/null | tr '\n' :)" = 0x8086:0x1f0c: ]; then
         [ "$(cat /sys/class/tty/ttyS1/port 2>/dev/null)" = 0x2F8 ] && { echo /dev/ttyS1; return 0; }
         return 1
     fi

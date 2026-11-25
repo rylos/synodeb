@@ -11,8 +11,11 @@ measured on a unit (under DSM 7.1.1) or inferred.
 - **Identity under Debian**: the DMI names are placeholders, `Insyde` / `MohonPeak` /
   `Type2 - Board Product Name1`, the same as on the DS2415+. The DS415+ has a SiI3132 SATA
   controller (`1095:3132`, `01:00.0`), the DS2415+ Marvell 88SE92xx: `/usr/lib/synodeb/board`
-  chooses `ds415plus.conf` by `DMI_PRODUCT` and `PCI_DEVICE`. Measured (DS415+ report, DS2415+
-  from its owner).
+  chooses `ds415plus.conf` by `DMI_PRODUCT` and `PCI_DEVICE` (Avoton host bridge `8086:1f0c`
+  and the SiI3132). Measured (DS415+ report, DS2415+ from its owner). A synodeb kernel booted
+  on the DS2415+ logged `DMI not present or invalid` and no EFI tables (#9; how it was booted
+  is not known yet): without DMI the board file is chosen by `PCI_DEVICE` alone, and so is the
+  udev rule of the microcontroller port.
 - **Model under DSM**: `/proc/sys/kernel/syno_hw_version` is `DS415+-j`, the kernel command line
   says `syno_hw_version=DS415+`; `synodeb-setup.sh` reads the command line first. Measured.
 - **Bays**: `SataPortMap=422 DiskIdxMap=020006`. Measured with a known disk in each bay:
@@ -29,7 +32,7 @@ measured on a unit (under DSM 7.1.1) or inferred.
   the map is by PCI device and port.
 - **Serial**: DSM's console on ttyS0 (I/O 0x3f8), its microcontroller driver opens ttyS1
   (I/O 0x2f8, 9600 baud, measured with `stty`). The board file puts the kernel console on
-  ttyS0; the udev rule names ttyS1 `/dev/synology-up` on MohonPeak boards. That the microcontroller speaks the same protocol as
+  ttyS0; the udev rule names ttyS1 `/dev/synology-up` when the board file is the DS415+ one. That the microcontroller speaks the same protocol as
   on the other models is inferred, not tested. The console header is reached through the
   vent below the power button with the unit on its side (photo in #16); it looks like the
   2×3 header of the DS923+ ([serial console](../../docs/serial.md)). The DS414 (ARM, another

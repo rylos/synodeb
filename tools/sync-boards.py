@@ -23,6 +23,7 @@ END = "### boards end"
 KEYS = ("MODEL", "PLATFORM", "TIER", "BAYS", "CONSOLE", "DOM_LOADER", "DOM_P2_FS",
         "DOM_FAT_ID", "DOM_EXT_UUID", "DOM_P1_MIN", "DOM_P2_MIN")
 # optional: how /usr/lib/synodeb/board finds a model whose DMI product name is a placeholder
+# (or missing): DMI_PRODUCT and PCI_DEVICE, PCI devices that must all be present
 OPTIONAL = ("DMI_PRODUCT", "PCI_DEVICE")
 TIERS = ("supported", "community", "wip")
 LOADERS = ("grub2", "grub-legacy")      # syntax of SynoBootLoader.conf
@@ -66,8 +67,9 @@ def load(path):
         sys.exit(f"{path}: DOM_EXT_UUID given for a FAT synoboot2")
     if board["DOM_LOADER"] == "grub2" and board["DOM_P2_FS"] != "ext2":
         sys.exit(f"{path}: the GRUB 2 entries are written for an ext2 synoboot2 only")
-    if board.get("PCI_DEVICE") and not re.fullmatch(r"[0-9a-f]{4}:[0-9a-f]{4}", board["PCI_DEVICE"]):
-        sys.exit(f"{path}: PCI_DEVICE is not vendor:device (lowercase hex)")
+    if board.get("PCI_DEVICE") and not re.fullmatch(r"[0-9a-f]{4}:[0-9a-f]{4}( [0-9a-f]{4}:[0-9a-f]{4})*",
+                                                    board["PCI_DEVICE"]):
+        sys.exit(f"{path}: PCI_DEVICE is not a list of vendor:device (lowercase hex, one space apart)")
     if board.get("PCI_DEVICE") and not board.get("DMI_PRODUCT"):
         sys.exit(f"{path}: PCI_DEVICE without DMI_PRODUCT")
     for k in ("BAYS", "DOM_P1_MIN", "DOM_P2_MIN"):

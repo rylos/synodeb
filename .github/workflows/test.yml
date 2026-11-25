@@ -41,6 +41,8 @@ jobs:
               model_profile DS1522+ && [ "$TIER" = wip ] && [ "$PLATFORM" = r1000 ]
               model_profile DS415+ && [ "$TIER" = wip ] && [ "$LOADER" = grub-legacy ] && [ "$P2FS" = vfat ] && [ -z "$FAT_ID" ]
               ! model_profile DS218+'
+          # /usr/lib/synodeb/board: by DMI name, DMI placeholder + PCI devices, PCI devices alone
+          sh tests/test-board.sh
 
       - name: Shell scripts
         run: |
