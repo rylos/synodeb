@@ -28,7 +28,7 @@ boot log in the report. What each part of it is used for:
 | in the report | used for |
 |---|---|
 | `syno_hw_version` | `MODEL` in the board file: `synodeb-setup.sh` finds the board file by it under DSM |
-| DMI vendor and product name | under Debian the board file and the kernel's model table are chosen by them; placeholder strings (e.g. `Insyde`/`MohonPeak` on Avoton boards), or no DMI at all when the boot loader does not pass the EFI tables, mean the model has to be told apart by its PCI devices instead (`PCI_DEVICE`: all of them present) |
+| DMI vendor and product name | under Debian the board file and the kernel's model table are chosen by them; placeholder strings (e.g. `Insyde`/`MohonPeak` on Avoton boards), or no DMI at all when the kernel runs without the EFI tables and the BIOS publishes SMBIOS only there, mean the model has to be told apart by its PCI devices instead (`PCI_DEVICE`: all of them present) |
 | CPU model, `lspci -nn` | `PLATFORM` (one platform per SoC family, `platforms/<platform>/`) |
 | kernel command line | `ihd_num` is `BAYS`; `SataPortMap`, `DiskIdxMap` and the DSM GPIO parameters are the first guess at the bay map |
 | `scsi_host` paths, disk → ATA port list | the bay map: which controller and port each bay is (confirm by moving one disk across empty bays, level 3 of the form) |

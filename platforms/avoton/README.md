@@ -12,10 +12,12 @@ measured on a unit (under DSM 7.1.1) or inferred.
   `Type2 - Board Product Name1`, the same as on the DS2415+. The DS415+ has a SiI3132 SATA
   controller (`1095:3132`, `01:00.0`), the DS2415+ Marvell 88SE92xx: `/usr/lib/synodeb/board`
   chooses `ds415plus.conf` by `DMI_PRODUCT` and `PCI_DEVICE` (Avoton host bridge `8086:1f0c`
-  and the SiI3132). Measured (DS415+ report, DS2415+ from its owner). A synodeb kernel booted
-  on the DS2415+ logged `DMI not present or invalid` and no EFI tables (#9; how it was booted
-  is not known yet): without DMI the board file is chosen by `PCI_DEVICE` alone, and so is the
-  udev rule of the microcontroller port.
+  and the SiI3132). Measured (DS415+ report, DS2415+ from its owner). The BIOS publishes
+  SMBIOS only through the EFI tables (nothing in the legacy area at `0xF0000`), so a kernel
+  without EFI has no DMI at all: that happened on the DS2415+ when the synodeb kernel was
+  started through a `noefi` kernel and kexec (#9, #16). Without DMI the board file is chosen
+  by `PCI_DEVICE` alone, and so is the udev rule of the microcontroller port. Measured on the
+  DS2415+.
 - **Model under DSM**: `/proc/sys/kernel/syno_hw_version` is `DS415+-j`, the kernel command line
   says `syno_hw_version=DS415+`; `synodeb-setup.sh` reads the command line first. Measured.
 - **Bays**: `SataPortMap=422 DiskIdxMap=020006`. Measured with a known disk in each bay:
@@ -74,15 +76,19 @@ title DEBIAN
 and only one `fallback` number (whether this build takes a list is not known). FAT has no hard
 links, so a kernel update copies the previous kernel to DEBIAN_OLD instead of linking it.
 
-Open: whether this boot loader starts a current kernel (bzImage, EFI) with a Debian initrd at
-all. Only the first boot with `synodeb-setup.sh install --experimental` will tell. The DSM
-entries stay on the DOM, and once the installer runs it makes SYNOLOGY_2 the default again
-(any reboot before the end brings DSM back). If the boot loader cannot load the installer
-files, it goes to its `fallback` entry, SYNOLOGY_1 (Synology's own setting). If it loads them
-but the kernel never starts, the unit keeps booting the INSTALLER entry: DSM then comes back
-only through the boot loader menu, if a serial console reaches it (its `serial --unit=1` is
-ttyS1, the microcontroller's port: not checked), or by writing the DOM backup from another
-system. That is the risk of the first test.
+The boot loader starts a current kernel itself: on the DS2415+ it started Debian's 6.12
+kernel (`6.12.113+deb13-amd64`) straight from the boot flash, and that kernel got the EFI
+tables (`efi: EFI v2.4 by INSYDE Corp.`, `SMBIOS 2.7 present`, `DMI: Insyde MohonPeak/...`).
+Measured on the DS2415+ by its owner (serial log, #16), same `grub-0.97-efi` build; for the
+synodeb kernel and a Debian initrd on the DS415+ it is inferred.
+
+Open: the first boot with `synodeb-setup.sh install --experimental`. The DSM entries stay on
+the DOM, and once the installer runs it makes SYNOLOGY_2 the default again (any reboot before
+the end brings DSM back). If the boot loader cannot load the installer files, it goes to its
+`fallback` entry, SYNOLOGY_1 (Synology's own setting). If it loads them but the kernel never
+starts, the unit keeps booting the INSTALLER entry: DSM then comes back only through the boot
+loader menu, if a serial console reaches it (its `serial --unit=1` is ttyS1, the
+microcontroller's port: not checked), or by writing the DOM backup from another system.
 
 ## Not done yet
 
