@@ -1,6 +1,6 @@
 {
  "format": 1,
- "generated": "2026-11-25T22:11:33Z",
+ "generated": "2026-11-25T22:43:43Z",
  "series": {
   "longterm": {
    "branch": "6.18",
@@ -13,12 +13,25 @@
  },
  "kernels": [
   {
+   "release": "7.3.6-15-synodeb",
+   "series": "stable",
+   "upstream": "7.3.6",
+   "package": "linux-image-7.3.6-15-synodeb",
+   "version": "7.3.6-15",
+   "published": "2026-11-25T22:43:43Z",
+   "available": true,
+   "changelog": "https://cdn.kernel.org/pub/linux/kernel/v7.x/ChangeLog-7.3.6",
+   "previous": "7.3.6-14-synodeb",
+   "changes": [],
+   "cves": []
+  },
+  {
    "release": "6.18.65-14-synodeb",
    "series": "longterm",
    "upstream": "6.18.65",
    "package": "linux-image-6.18.65-14-synodeb",
    "version": "6.18.65-14",
-   "published": "2026-11-25T22:11:33Z",
+   "published": "2026-11-25T22:43:43Z",
    "available": true,
    "changelog": "https://cdn.kernel.org/pub/linux/kernel/v6.x/ChangeLog-6.18.65",
    "previous": "6.18.65-13-synodeb",
@@ -98,7 +111,7 @@
    "package": "linux-image-7.3.5-13-synodeb",
    "version": "7.3.5-13",
    "published": "2026-11-23T00:22:42Z",
-   "available": true,
+   "available": false,
    "changelog": "https://cdn.kernel.org/pub/linux/kernel/v7.x/ChangeLog-7.3.5",
    "previous": "7.3.4-12-synodeb",
    "changes": [
