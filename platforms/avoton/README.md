@@ -107,7 +107,7 @@ system.
 
 - kernel: no table in `synology_nas.c` (bay power, presence, fans, power-off) and no MAC address
   fix for the onboard ports. Without it there is no `synology-nas` platform device, so
-  `synohwd.service` does not start: fans stay under the microcontroller's own control, and
+  `synohwd.service` does not start: synodeb does not drive the fans (what the microcontroller does on its own is not measured), and
   the power button, LEDs and beeps are not handled. The table comes after the first boot,
   from measurements on the unit;
 - synohwd: the bay map above is in (from the next synodeb release), no fan curves;
