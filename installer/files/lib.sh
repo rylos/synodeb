@@ -140,6 +140,67 @@ dom_unprotect() {
     done
 }
 
+# --- network ---
+# synodeb-setup.sh picks the installer's port by DSM's MAC address (netcfg/choose_interface)
+# and passes that port's PCI address (synodeb.netdev). On models whose kernel does not yet
+# give the NICs the MAC addresses DSM uses (macs= from the boot loader; Avoton: the NICs carry
+# a placeholder), no port would match: give DSM's address to the port at that PCI address,
+# before netcfg runs. Nothing to do when a port has it already (DS920+, DS923+).
+cmdline_arg() { tr ' ' '\n' < /proc/cmdline | sed -n "s|^$1=||p" | head -n 1; }
+net_dsm_mac() {
+    mac=$(cmdline_arg netcfg/choose_interface | tr 'A-F' 'a-f')
+    pci=$(cmdline_arg synodeb.netdev)
+    case "$mac" in ??:??:??:??:??:??) ;; *) return 0 ;; esac
+    i=0 ifc=
+    while [ $i -lt 20 ]; do
+        for d in /sys/class/net/*; do
+            [ "$(cat "$d/address" 2>/dev/null)" = "$mac" ] && { log "port ${d##*/} has DSM's MAC $mac"; return 0; }
+        done
+        [ -z "$pci" ] || for d in /sys/bus/pci/devices/"$pci"/net/*; do [ -e "$d" ] && ifc=${d##*/}; done
+        [ -z "$ifc" ] || break
+        # its driver not loaded yet: load it by the device's modalias
+        [ $i != 5 ] || [ -z "$pci" ] || modprobe "$(cat /sys/bus/pci/devices/"$pci"/modalias 2>/dev/null)" 2>/dev/null || true
+        sleep 1; i=$((i + 1))
+    done
+    if [ -z "$ifc" ]; then
+        log "no port with DSM's MAC $mac and no port at PCI ${pci:-?}: netcfg may find no interface"
+        return 0
+    fi
+    was=$(cat "/sys/class/net/$ifc/address" 2>/dev/null)
+    if ip link set dev "$ifc" address "$mac" 2>/dev/null; then
+        log "port $ifc (PCI $pci): MAC $was replaced by DSM's $mac"
+    else
+        log "port $ifc (PCI $pci): could not set DSM's MAC $mac (it has $was)"
+    fi
+}
+
+# What the installer knew when it gave up waiting for SSH, kept on synoboot2 so that
+# 'synodeb-setup.sh status' can show it under DSM: our log, the network state, the kernel
+# log and the end of the installer's syslog. The SSH password, the serial number and the MAC
+# list of the command line are masked (owners post this log).
+FAIL_LOG=synodeb/installer-fail.log
+mask() { sed -e 's/password\(-again\)\{0,1\}=[^ ]*/password\1=***/g' -e 's/\(^\| \)sn=[^ ]*/\1sn=***/g' -e 's/\(^\| \)macs=[^ ]*/\1macs=***/g'; }
+save_fail_log() {
+    dom_unprotect || { log "could not unmount the DOM from $DOM_LOCK: no log kept"; return 1; }
+    dom_mount 2 || { log "DOM synoboot2 not found: no log kept"; return 1; }
+    mkdir -p "$DOM_MNT/synodeb"
+    {
+        echo "synodeb installer: no SSH after 8 minutes ($(date 2>/dev/null))"
+        echo "== /proc/cmdline"; cat /proc/cmdline
+        echo "== $LOG"; cat $LOG 2>/dev/null
+        echo "== ip addr"; ip addr 2>&1
+        echo "== ip route"; ip route 2>&1
+        echo "== network devices"
+        for d in /sys/class/net/*; do
+            echo "${d##*/} $(readlink -f "$d/device" 2>/dev/null) $(cat "$d/address" 2>/dev/null) $(cat "$d/operstate" 2>/dev/null) carrier=$(cat "$d/carrier" 2>/dev/null)"
+        done
+        echo "== dmesg"; dmesg 2>&1 | tail -n 1500
+        echo "== /var/log/syslog (end)"; tail -n 1500 /var/log/syslog 2>/dev/null
+    } | mask > "$DOM_MNT/$FAIL_LOG" 2>/dev/null
+    log "log kept on synoboot2:/$FAIL_LOG"
+    dom_umount
+}
+
 # Block devices under the new system: the devices of its mounts on /target and of the active
 # swaps, then down through partitions (md0p1 -> md0) and slaves (dm -> md -> sd), one name
 # per line. MOUNTS, SWAPS and SYSBLK can be pointed elsewhere (tests).

@@ -418,6 +418,10 @@ dsm_net() {
 aggregation. If the switch ports are set up for link aggregation (LACP), the installer may get
 no network: connect $DEV to a port without it, or remove the bond in DSM first." ;;
     esac
+    # PCI address of that port: the installer gives it DSM's MAC address where its kernel
+    # does not (Avoton), so that netcfg/choose_interface finds it
+    NETPCI=$(basename "$(readlink -f "/sys/class/net/$DEV/device" 2>/dev/null)" 2>/dev/null)
+    case "$NETPCI" in ????:??:??.?) ;; *) NETPCI= ;; esac
     CIDR=$(ip -4 -o addr show dev "$IFACE" scope global | awk '{ print $4; exit }')
     IP=${CIDR%/*}; PREFIX=${CIDR#*/}
     GW=$(ip -4 route show default | awk '{ print $3; exit }')
@@ -541,6 +545,7 @@ cmd_install() {
     else
         net="netcfg/choose_interface=$MAC"
     fi
+    net="$net${NETPCI:+ synodeb.netdev=$NETPCI}"
     {
         if [ $keep = 1 ]; then drop_installer "$C"; else strip_conf "$C.dsm"; fi
         echo "$BEGIN (written by synodeb-setup.sh)"
@@ -700,6 +705,16 @@ cmd_status() {
     grab "$P1" "$T/m1" vfat
     grab "$P2" "$T/m2" "$P2FS"
     show_status "$T/m1/$CONF_REL" "$T/m2"
+    # left by an installer that got no SSH within 8 minutes (password, serial number and
+    # MAC list masked)
+    f=$T/m2/synodeb/installer-fail.log
+    if [ -f "$f" ]; then
+        out=$PWD/synodeb-installer-fail.log
+        cp "$f" "$out" && { [ -z "${SUDO_USER:-}" ] || chown "$SUDO_USER" "$out" 2>/dev/null || true; }
+        say ""
+        say "The last installer run got no SSH connection within 8 minutes. Its log: $out"
+        say "(the SSH password, serial number and MAC addresses are masked in it)"
+    fi
 }
 
 # byte offset of partition 1 in a DOM image (GPT or MBR), empty if there is none
