@@ -501,6 +501,32 @@ with tempfile.TemporaryDirectory() as d:
     check("bay_disks DS920+", m.bay_disks(), {1: ("sda", 4), 4: ("sdc", 2)})
     m.SYS_BLOCK, m.BAYS = saved_blk, saved
 
+# DS415+: AHCI ports right under the SoC SATA functions, the SiI3132 is not a bay; the
+# model comes from the board file, the DMI name being a placeholder
+with tempfile.TemporaryDirectory() as d:
+    s6 = f"{d}/devices/pci0000:00/0000:00:18.0"
+    s3 = f"{d}/devices/pci0000:00/0000:00:17.0"
+    sil = f"{d}/devices/pci0000:00/0000:00:01.0/0000:01:00.0"
+    for c, ports in ((s3, (1, 2, 3, 4)), (s6, (5, 6)), (sil, (7, 8))):
+        for n in ports:
+            os.makedirs(f"{c}/ata{n}/host{n}/target{n}:0:0/{n}:0:0:0")
+    os.makedirs(f"{d}/block")
+    # the disks of the report: bay 1 ata5, bay 2 ata6, bay 3 ata1, bay 4 ata2; one on the SiI3132
+    for dev, c, n in (("sda", s6, 5), ("sdb", s6, 6), ("sdc", s3, 1), ("sdd", s3, 2), ("sde", sil, 7)):
+        os.makedirs(f"{d}/block/{dev}")
+        os.symlink(f"{c}/ata{n}/host{n}/target{n}:0:0/{n}:0:0:0", f"{d}/block/{dev}/device")
+    saved_blk, saved, m.SYS_BLOCK, m.BAYS = m.SYS_BLOCK, m.BAYS, f"{d}/block", m.model_bays("DS415+")
+    check("bay_disks DS415+", m.bay_disks(),
+          {1: ("sda", 5), 2: ("sdb", 6), 3: ("sdc", 1), 4: ("sdd", 2)})
+    m.SYS_BLOCK, m.BAYS = saved_blk, saved
+    board = f"{d}/board"
+    with open(board, "w") as fh:
+        fh.write('#!/bin/sh\n[ "$1" = MODEL ] && echo "DS415+"\n')
+    os.chmod(board, 0o755)
+    check("model_name MohonPeak -> board file", m.model_name("MohonPeak", board), "DS415+")
+    check("model_name known DMI name", m.model_name("DS920+", board), "DS920+")
+    check("model_name no board helper", m.model_name("MohonPeak", f"{d}/none"), "MohonPeak")
+
 # --- fan curves per model ---
 check("fan tables DS923+", m.model_fan_tables("DS923+") is m.MODEL_FAN_TABLES.get("DS923+", m.model_fan_tables("x")), True)
 check("fan tables DS920+ low disk", m.model_fan_tables("DS920+")["low"]["disk"][0], (0, 20))

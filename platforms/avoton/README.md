@@ -85,5 +85,6 @@ system. That is the risk of the first test.
 
 - kernel: no table in `synology_nas.c` (bay power, presence, fans, power-off) and no MAC address
   fix for the onboard ports;
-- synohwd: the bay map above is not in it yet, no fan curves (it falls back to the DS923+ ones);
+- synohwd: the bay map above is in (from the next synodeb release), no fan curves (it falls back
+  to the DS923+ ones);
 - disk LEDs (LP3943).

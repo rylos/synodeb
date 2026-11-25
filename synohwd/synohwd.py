@@ -1,5 +1,5 @@
 #!/usr/bin/python3 -I
-"""synohwd — Synology NAS hardware daemon for Debian (DS920+, DS923+, DS423+; DS1522+ wip).
+"""synohwd — Synology NAS hardware daemon for Debian (DS920+, DS923+, DS423+; DS1522+, DS415+ wip).
 
 Takes over the hardware management DSM does, using the front-panel microcontroller
 (uP: on the DS923+ the AMD UART at MMIO 0xFEDCA000, AMDI0020:01; on the DS920+ LPSS
@@ -165,6 +165,9 @@ MODEL_BAYS = {
     "DS920+": {1: ("00:13.0", 1), 2: ("00:13.0", 2), 3: ("00:12.0", 0), 4: ("00:12.0", 1)},
     # bays 1-2 on the ASMedia ASM1061 ports 0, 1 (behind 00:13.0), bays 3-4 on the SoC SATA
     "DS423+": {1: ("00:13.0", 0), 2: ("00:13.0", 1), 3: ("00:12.0", 0), 4: ("00:12.0", 1)},
+    # bays 1-2 on the SoC SATA 00:18.0 (6 Gbps), bays 3-4 on ports 0, 1 of 00:17.0 (3 Gbps);
+    # measured under DSM (#16). The SiI3132 behind 00:01.0 is not a bay
+    "DS415+": {1: ("00:18.0", 0), 2: ("00:18.0", 1), 3: ("00:17.0", 0), 4: ("00:17.0", 1)},
 }
 # M.2 slot -> PCIe root port of its NVMe controller, per model (model.dtb power_limit order,
 # as /usr/lib/synodeb/nvme-power-limit). The nvmeX names do not follow the slots (they can
@@ -175,6 +178,7 @@ MODEL_M2 = {
     "DS423+": {1: "00:13.3", 2: "00:14.0"},
 }
 DMI_PRODUCT = "/sys/class/dmi/id/product_name"
+BOARD = "/usr/lib/synodeb/board"
 # Front-panel LED dimmer, per model, from DSM's led_brightness.xml: its I2C bus (by the name
 # of a client of that bus, or by the start of the adapter name, in /sys/bus/i2c/devices), the
 # address and register, the value for each level (0 = off) and the default level.
@@ -296,9 +300,23 @@ def m2_slots(product, nvme_class=NVME_CLASS):
     return slots
 
 
-BAYS = model_bays(read(DMI_PRODUCT, ""))
-PRODUCT = read(DMI_PRODUCT, "")
-FAN_TABLES = model_fan_tables(read(DMI_PRODUCT, ""))
+def model_name(product, board=BOARD):
+    """The model: the DMI product name, or, where that is a placeholder (Avoton boards:
+    MohonPeak), MODEL from the board file (/usr/lib/synodeb/board, which tells the models
+    apart by their PCI devices)."""
+    if product in MODEL_BAYS or not os.access(board, os.X_OK):
+        return product
+    try:
+        out = subprocess.run([board, "MODEL"], capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.SubprocessError):
+        return product
+    model = out.stdout.strip()
+    return model if out.returncode == 0 and model in MODEL_BAYS else product
+
+
+PRODUCT = model_name(read(DMI_PRODUCT, ""))
+BAYS = model_bays(PRODUCT)
+FAN_TABLES = model_fan_tables(PRODUCT)
 
 
 def write(path, value):
