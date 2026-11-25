@@ -1,6 +1,6 @@
 {
  "format": 1,
- "generated": "2026-11-24T09:52:56Z",
+ "generated": "2026-11-25T22:11:33Z",
  "series": {
   "longterm": {
    "branch": "6.18",
@@ -12,6 +12,19 @@
   }
  },
  "kernels": [
+  {
+   "release": "6.18.65-14-synodeb",
+   "series": "longterm",
+   "upstream": "6.18.65",
+   "package": "linux-image-6.18.65-14-synodeb",
+   "version": "6.18.65-14",
+   "published": "2026-11-25T22:11:33Z",
+   "available": true,
+   "changelog": "https://cdn.kernel.org/pub/linux/kernel/v6.x/ChangeLog-6.18.65",
+   "previous": "6.18.65-13-synodeb",
+   "changes": [],
+   "cves": []
+  },
   {
    "release": "7.3.6-14-synodeb",
    "series": "stable",
@@ -25,7 +38,11 @@
    "changes": [
     "kernel patches: refreshed for 6.18.65 and 7.3.6"
    ],
-   "cves": []
+   "cves": [
+    "CVE-2026-99809",
+    "CVE-2026-99810",
+    "CVE-2026-99811"
+   ]
   },
   {
    "release": "6.18.65-13-synodeb",
@@ -68,7 +85,10 @@
     "CVE-2026-99746",
     "CVE-2026-99748",
     "CVE-2026-99749",
-    "CVE-2026-99756"
+    "CVE-2026-99756",
+    "CVE-2026-99809",
+    "CVE-2026-99810",
+    "CVE-2026-99811"
    ]
   },
   {
@@ -334,7 +354,7 @@
    "package": "linux-image-6.18.64-12-synodeb",
    "version": "6.18.64-12",
    "published": "2026-11-22T23:52:37Z",
-   "available": true,
+   "available": false,
    "changelog": "https://cdn.kernel.org/pub/linux/kernel/v6.x/ChangeLog-6.18.64",
    "previous": "6.18.63-11-synodeb",
    "changes": [
@@ -604,7 +624,11 @@
     "CVE-2026-99304",
     "CVE-2026-99306",
     "CVE-2026-99307",
-    "CVE-2026-99308"
+    "CVE-2026-99308",
+    "CVE-2026-99805",
+    "CVE-2026-99806",
+    "CVE-2026-99807",
+    "CVE-2026-99808"
    ]
   },
   {
@@ -871,6 +895,10 @@
     "CVE-2026-99798",
     "CVE-2026-99799",
     "CVE-2026-99804",
+    "CVE-2026-99805",
+    "CVE-2026-99806",
+    "CVE-2026-99807",
+    "CVE-2026-99808",
     "CVE-2026-100080",
     "CVE-2026-100081",
     "CVE-2026-100082"
@@ -2110,6 +2138,13 @@
   "CVE-2026-99801": "io_uring/bpf-ops: clear bpf_ctx while submitting SQEs",
   "CVE-2026-99802": "io_uring/register: enforce per-task restrictions in io_uring_register_blind()",
   "CVE-2026-99803": "io_uring/net: mask socket type with SOCK_TYPE_MASK in io_socket_bpf_populate()",
-  "CVE-2026-99804": "io_uring/io-wq: save worker type before dropping its reference"
+  "CVE-2026-99804": "io_uring/io-wq: save worker type before dropping its reference",
+  "CVE-2026-99805": "net: limit priority VLAN untag depth",
+  "CVE-2026-99806": "Bluetooth: L2CAP: Reject mode changes on connected channels",
+  "CVE-2026-99807": "Bluetooth: L2CAP: Reject invalid TxWindow in configuration requests",
+  "CVE-2026-99808": "Bluetooth: L2CAP: Use default TxWindow for zero socket option",
+  "CVE-2026-99809": "vfio/platform: prevent read-only region mappings from becoming writable",
+  "CVE-2026-99810": "vfio/fsl-mc: prevent read-only region mappings from becoming writable",
+  "CVE-2026-99811": "vfio/cdx: prevent read-only region mappings from becoming writable"
  }
 }

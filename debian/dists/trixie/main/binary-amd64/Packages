@@ -183,26 +183,6 @@ Description: network UPS tools - client library
  .
  This package provides the shared client library.
 
-Package: linux-headers-6.18.64-12-synodeb
-Architecture: amd64
-Version: 6.18.64-12
-Priority: optional
-Section: kernel
-Source: linux-upstream
-Maintainer: synodeb <synodeb@synodeb>
-Installed-Size: 55513
-Filename: pool/main/linux-headers-6.18.64-12-synodeb_6.18.64-12_amd64.deb
-Size: 9459676
-MD5sum: cf00f5233fe308ac4f9118a1a68d1bdc
-SHA1: 566f16f45128470729fab944e59fe2acb3dc512c
-SHA256: bbc77f404b7656238fd7ff8f22051b37458679d047ccec7d7633f079eab6f0a0
-SHA512: b04e4513911b9f55ae24d23c41624932faefc46c8d448e31b1eba6c1676f74af3990e1a274793cc78232afffdbc052b7a19a7ce96ed158335523e2dd44e77f54
-Homepage: https://www.kernel.org/
-Description: Linux kernel headers for 6.18.64-12-synodeb on amd64
- This package provides kernel header files for 6.18.64-12-synodeb on amd64
- .
- This is useful for people who need to build external modules
-
 Package: linux-headers-6.18.65-13-synodeb
 Architecture: amd64
 Version: 6.18.65-13
@@ -220,6 +200,26 @@ SHA512: edf9b03b50409d8e61ff65b6c11647051cd4604bd509e760959a1a6c1897be4310442c10
 Homepage: https://www.kernel.org/
 Description: Linux kernel headers for 6.18.65-13-synodeb on amd64
  This package provides kernel header files for 6.18.65-13-synodeb on amd64
+ .
+ This is useful for people who need to build external modules
+
+Package: linux-headers-6.18.65-14-synodeb
+Architecture: amd64
+Version: 6.18.65-14
+Priority: optional
+Section: kernel
+Source: linux-upstream
+Maintainer: synodeb <synodeb@synodeb>
+Installed-Size: 55597
+Filename: pool/main/linux-headers-6.18.65-14-synodeb_6.18.65-14_amd64.deb
+Size: 9476720
+MD5sum: a6e6d00aa671fce4bbec5798b66f339e
+SHA1: 05c434ccb0253d812d830bc884990c03a7963beb
+SHA256: 85159b7d82c90cb337d1dd678d3b8ecb73ab23261c7bb5af24b3118876293e51
+SHA512: edf9bd1b8cd60a8cb2f5ca615f4f1648018eea97969d5586fd7e58072cc155205433b21b94822e0e540c56b92fcb8114b59ecd48d33432c01cf86cefb6c4c53f
+Homepage: https://www.kernel.org/
+Description: Linux kernel headers for 6.18.65-14-synodeb on amd64
+ This package provides kernel header files for 6.18.65-14-synodeb on amd64
  .
  This is useful for people who need to build external modules
 
@@ -265,17 +265,17 @@ Description: Linux kernel headers for 7.3.6-14-synodeb on amd64
 
 Package: linux-headers-ds923-longterm
 Architecture: amd64
-Version: 6.18.65-13
+Version: 6.18.65-14
 Priority: optional
 Section: oldlibs
 Maintainer: Marco Ziliani <508111+rylos@users.noreply.github.com>
-Depends: linux-headers-synodeb-longterm (= 6.18.65-13)
-Filename: pool/main/linux-headers-ds923-longterm_6.18.65-13_amd64.deb
+Depends: linux-headers-synodeb-longterm (= 6.18.65-14)
+Filename: pool/main/linux-headers-ds923-longterm_6.18.65-14_amd64.deb
 Size: 780
-MD5sum: c475271ee08190739eaebead67477f87
-SHA1: 863dc213a685142d3111faf9b2bb2d79ea1c82a5
-SHA256: 729f86c88707d5666e68828cb9911537724a75fa2102b28bea57ea5e628e2b26
-SHA512: ef8efd8b375bc287c14ca72404249500865d9c26941a4568b8f10636c02470426339f183ad26e9b03c1a8b1b7147b0d6bb3bc588171dccf901f92e13a569bfce
+MD5sum: db011ea929ca587fa93ab0110ecd1b9c
+SHA1: 69822dc4633dec29dd5cfe977090c9ea26f1c84d
+SHA256: b993bc269e4487322e8d2aacbaf5b3f09b5f2151c22b7ac55ab75b6b8c6e6174
+SHA512: 13bbd895976b3716cedac283fa65dc14bd2bd275a98b6eb833f728d6ca151c4bb228786fda1f0b7e2eb1259ccf2d9100b3f3259fe1a279718efd6b71014ace9e
 Description: transitional package for linux-headers-synodeb-longterm
  This package can be removed.
 
@@ -297,33 +297,33 @@ Description: transitional package for linux-headers-synodeb-stable
 
 Package: linux-headers-ds923
 Architecture: amd64
-Version: 1:6.18.65-13
+Version: 1:6.18.65-14
 Priority: optional
 Section: oldlibs
 Maintainer: Marco Ziliani <508111+rylos@users.noreply.github.com>
-Depends: linux-headers-synodeb (= 6.18.65-13)
-Filename: pool/main/linux-headers-ds923_6.18.65-13_amd64.deb
+Depends: linux-headers-synodeb (= 6.18.65-14)
+Filename: pool/main/linux-headers-ds923_6.18.65-14_amd64.deb
 Size: 768
-MD5sum: 3807dd5a681c9178c437a0b651530e2e
-SHA1: 85c8f5875e16a8bfeb3c6db45c4adca2373a603d
-SHA256: 1a6f50759022ad2d15a0fd1f816639d253dd3f2a4556e8353a541c3b916e3c2d
-SHA512: a920e052495138605c2b29126661cafbf97c54ca838b51b5fb530c7142db2eb6d1229d70a4206352954534311211a4720a475f7dc27f75e54104eccbfdafef17
+MD5sum: cda366107ecabf5172d176a86b0fcfc7
+SHA1: d735d7b9bf6576577d0be3b13d16ccefde116b28
+SHA256: fa56ff090800bb732850961b3b7db03c85299be5ec010affae01ec32f631dfb5
+SHA512: 3b9ca3cd836bec3e500310594064113fc8a19e47344daa17d61d856e6494eca3af8c9c4cd155c6b620329f7e567f2178016c7d9c24c0a323e1e2dd4f5443a86a
 Description: transitional package for linux-headers-synodeb
  This package can be removed.
 
 Package: linux-headers-synodeb-longterm
 Architecture: amd64
-Version: 6.18.65-13
+Version: 6.18.65-14
 Priority: optional
 Section: kernel
 Maintainer: Marco Ziliani <508111+rylos@users.noreply.github.com>
-Depends: linux-headers-6.18.65-13-synodeb (= 6.18.65-13)
-Filename: pool/main/linux-headers-synodeb-longterm_6.18.65-13_amd64.deb
+Depends: linux-headers-6.18.65-14-synodeb (= 6.18.65-14)
+Filename: pool/main/linux-headers-synodeb-longterm_6.18.65-14_amd64.deb
 Size: 816
-MD5sum: af6e1848ecf8be2d8e5925a086cb2309
-SHA1: 71d4dfc9dce3504ef71cdca0326a33b1a4269cad
-SHA256: e912c19377f0adc27d09dbb0f52e9cc0a70eaf631683dc193efcb1e755b98551
-SHA512: 5a1d78903136fc918b9ae647565c1569f22a0d5067c173e5ec9694e28f6f4e1416c031df8641b55158c097df77318c3cb615084a4d859aae2469706cc795b661
+MD5sum: 54fd5c2fe2047158ecfc44d7287057f8
+SHA1: 9d5a60df0838e2af3ec17ec640cb455df8505416
+SHA256: 9875f4378cea494c5b8ea46890f7f70bbfe1f7afdcbbaf01dc39f0ae3bf1a151
+SHA512: 4753cdab3d1bf0c0db2d0e813adba10f807d0e5974492b6a35cf6407f6bdd86b00e11e49f2f8c6e07967c9c8e20e95ddbfaf3f8d58253189adb960ccc73b7e50
 Description: Linux kernel for Synology NAS, synodeb (headers, longterm series)
  Depends on the latest synodeb kernel headers package of the longterm series (6.18).
 
@@ -345,39 +345,20 @@ Description: Linux kernel for Synology NAS, synodeb (headers, stable series)
 
 Package: linux-headers-synodeb
 Architecture: amd64
-Version: 6.18.65-13
+Version: 6.18.65-14
 Priority: optional
 Section: kernel
 Maintainer: Marco Ziliani <508111+rylos@users.noreply.github.com>
-Depends: linux-headers-synodeb-longterm (= 6.18.65-13)
-Filename: pool/main/linux-headers-synodeb_6.18.65-13_amd64.deb
+Depends: linux-headers-synodeb-longterm (= 6.18.65-14)
+Filename: pool/main/linux-headers-synodeb_6.18.65-14_amd64.deb
 Size: 828
-MD5sum: 38db6557a6a0ff290158b73c51785fe0
-SHA1: 36e5543a871c8eeadccbc58c4abbe1ca4ab47ad8
-SHA256: bd637e2c5b321de924e34a1f60392da000693ef0f1d9525912945d7c9be69872
-SHA512: a72a4ac81c9446395a8130f42ac8e17404fc269670e432aa8b816882f3f9e2ce629fa1fec7347014d12ec427b7f6b85fa6764b17054212984e866e99a19077ad
+MD5sum: 89a862274561152c7950614fa8e90330
+SHA1: 20a6ca8f65106ea8648f4a75bb6d4690185616d8
+SHA256: c0a537bd5b8f7fefad9c948442f2dfa54994723b04484371d8e5458dd6e88ac1
+SHA512: 958fa043a1c15645f0bcb2aaa2f9899ed27754cecd52d7f7e65e62159a1f3cc87fdd921026ee3e33234fdd74e0b91d0fefa0e7c1692625c5af74e988b15798c3
 Description: Linux kernel for Synology NAS, synodeb (headers, default)
  Depends on the synodeb kernel of the longterm series. For the newest stable series
  install linux-headers-synodeb-stable instead.
-
-Package: linux-image-6.18.64-12-synodeb
-Architecture: amd64
-Version: 6.18.64-12
-Priority: optional
-Section: kernel
-Source: linux-upstream
-Maintainer: synodeb <synodeb@synodeb>
-Installed-Size: 61139
-Filename: pool/main/linux-image-6.18.64-12-synodeb_6.18.64-12_amd64.deb
-Size: 51474104
-MD5sum: 43d1729a018caea1d6034e3ccd52c915
-SHA1: bea26968a324360c1c1041c80f724c1e959ec173
-SHA256: f14060269c40801c4dc452a2ec6b0d5ec61ec23e9d35c0ff77bf438c4e8b1993
-SHA512: fcb9c7471eb3aefa50644e0e36dab0e1b04edf35e49e2d75c322a6271b330a1194841e9467334cd86ddfedc4003fab5e638b981d7b4422deadc632a3e7ec6d8e
-Homepage: https://www.kernel.org/
-Description: Linux kernel, version 6.18.64-12-synodeb
- This package contains the Linux kernel, modules and corresponding other
- files, version: 6.18.64-12-synodeb.
 
 Package: linux-image-6.18.65-13-synodeb
 Architecture: amd64
@@ -397,6 +378,25 @@ Homepage: https://www.kernel.org/
 Description: Linux kernel, version 6.18.65-13-synodeb
  This package contains the Linux kernel, modules and corresponding other
  files, version: 6.18.65-13-synodeb.
+
+Package: linux-image-6.18.65-14-synodeb
+Architecture: amd64
+Version: 6.18.65-14
+Priority: optional
+Section: kernel
+Source: linux-upstream
+Maintainer: synodeb <synodeb@synodeb>
+Installed-Size: 61166
+Filename: pool/main/linux-image-6.18.65-14-synodeb_6.18.65-14_amd64.deb
+Size: 51489184
+MD5sum: cc4ec68e429eec306d389794b586d839
+SHA1: af585025edd7053000dbf4fa99ac50dcbc355755
+SHA256: 648bdc713501f0f3e2bc013d7b667f76ec7a32c95c0b8cab2ef4841c85a18402
+SHA512: aca0a5ffa8cf74b2006d432a115c71e54d83cb9dd11c591cfd46c01d59e5e79cbb5d43ae238c480c339085f421341ffa15905b8391b4c0be500a4bb339700134
+Homepage: https://www.kernel.org/
+Description: Linux kernel, version 6.18.65-14-synodeb
+ This package contains the Linux kernel, modules and corresponding other
+ files, version: 6.18.65-14-synodeb.
 
 Package: linux-image-7.3.5-13-synodeb
 Architecture: amd64
@@ -438,17 +438,17 @@ Description: Linux kernel, version 7.3.6-14-synodeb
 
 Package: linux-image-ds923-longterm
 Architecture: amd64
-Version: 6.18.65-13
+Version: 6.18.65-14
 Priority: optional
 Section: oldlibs
 Maintainer: Marco Ziliani <508111+rylos@users.noreply.github.com>
-Depends: linux-image-synodeb-longterm (= 6.18.65-13)
-Filename: pool/main/linux-image-ds923-longterm_6.18.65-13_amd64.deb
+Depends: linux-image-synodeb-longterm (= 6.18.65-14)
+Filename: pool/main/linux-image-ds923-longterm_6.18.65-14_amd64.deb
 Size: 776
-MD5sum: 7978eed96b23f766dd0013004df7d6d0
-SHA1: 2aa9bb2b269f447eda2379f3251d67c233b76b46
-SHA256: 2b6825ec240464cff86766177955a2b818a32c0e9f8e24c3a003d4ee9d3254e0
-SHA512: ca478e207ee3e5babf67125af63b291992b40895eeb289979bb57666cad70690b525b882a87fa63c84152681b42e34d0bbc308e9fcb9528723d5e9abbe62a570
+MD5sum: 29f81080f0124e2d824b71983bcd93b3
+SHA1: b253483c0401d99d3af29f2afd9116646318427d
+SHA256: 9b1fb17a9b3d914eb8a626f52ed486bc676a730bfb4960fd9536acdda72840d2
+SHA512: 2bce8ae47003c22d07981394f7b1fc7275657da432381815cd0a398bbb2fc900135e4c183aa67c2f89672956862af4932c3172d284c97691c0cceffa90eaa32c
 Description: transitional package for linux-image-synodeb-longterm
  This package can be removed.
 
@@ -470,33 +470,33 @@ Description: transitional package for linux-image-synodeb-stable
 
 Package: linux-image-ds923
 Architecture: amd64
-Version: 1:6.18.65-13
+Version: 1:6.18.65-14
 Priority: optional
 Section: oldlibs
 Maintainer: Marco Ziliani <508111+rylos@users.noreply.github.com>
-Depends: linux-image-synodeb (= 6.18.65-13)
-Filename: pool/main/linux-image-ds923_6.18.65-13_amd64.deb
-Size: 772
-MD5sum: 5cd9a76d604f8175c62c726f7db528d4
-SHA1: 272e187e2586f5dc42318f89aa2642f7b37f0bda
-SHA256: 029014cdd491ba0f4ecdda770fc6b6136374d1637e98171d3c7a4392b53ebed2
-SHA512: 3544e68d4331b78a0f655fa98a725f34f0d2c31d5ad16ab5f9762d2853fc3e3cc4d1bef06e99d4cbe0f6aa5ac7cefd2ab70fdfd9753185960a01e7d5a1b89fff
+Depends: linux-image-synodeb (= 6.18.65-14)
+Filename: pool/main/linux-image-ds923_6.18.65-14_amd64.deb
+Size: 768
+MD5sum: 12c608bb5b51fa3d80339a0bd2b79865
+SHA1: b2c4a3760a1de5a814814094e84d137f724d8295
+SHA256: 8a62f2b84eca61e609c67815908c50be0c551072c87c899b375688d5666af5e4
+SHA512: 5f1ab9808d3df8c094bfd0c1f434f2b6e60a7ad7cfd0276094e23001630ca1336c1798ca13f40424e032eae6f586c37d5e0243cb4ef9e74d0e06aac2b30ee0fe
 Description: transitional package for linux-image-synodeb
  This package can be removed.
 
 Package: linux-image-synodeb-longterm
 Architecture: amd64
-Version: 6.18.65-13
+Version: 6.18.65-14
 Priority: optional
 Section: kernel
 Maintainer: Marco Ziliani <508111+rylos@users.noreply.github.com>
-Depends: linux-image-6.18.65-13-synodeb (= 6.18.65-13)
-Filename: pool/main/linux-image-synodeb-longterm_6.18.65-13_amd64.deb
+Depends: linux-image-6.18.65-14-synodeb (= 6.18.65-14)
+Filename: pool/main/linux-image-synodeb-longterm_6.18.65-14_amd64.deb
 Size: 940
-MD5sum: 23ef6798f310b39bcef357c95a6baf92
-SHA1: 4ec80edd0c1847adbf4d168324b16e0356eb809e
-SHA256: a8e3e44a0b23bf57a651837eaa7eb457d54636a5a1d6ac6483893e7722106dac
-SHA512: f31156be3eff456e127bf835bc1897dd5d06b08581ff1d96c2f9691bf606735af548cda2b50e4b3229bbf01a680d22317496d44b4cc7495c62584ff97bf44381
+MD5sum: 49abe1082ae7a85e731ab62cdee1168e
+SHA1: 6998feee4e22ee6d92c114a99b761bb0cb03bd92
+SHA256: bc119af37bf86cafeb86bb1935b61c3d31fc7dbd26b11ceaaaa7bc5a9dc08936
+SHA512: 148365ba13dc6f4cd010cb47a3bae20d87f0659614b7056f30cbe4173ebb89e9f21d4564785c1137abc798791386089a123cf3947dcfd77b6f5df42130127f23
 Description: Linux kernel for Synology NAS, synodeb (image, longterm series)
  Depends on the latest synodeb kernel image package of the longterm series (6.18).
 
@@ -518,17 +518,17 @@ Description: Linux kernel for Synology NAS, synodeb (image, stable series)
 
 Package: linux-image-synodeb
 Architecture: amd64
-Version: 6.18.65-13
+Version: 6.18.65-14
 Priority: optional
 Section: kernel
 Maintainer: Marco Ziliani <508111+rylos@users.noreply.github.com>
-Depends: linux-image-synodeb-longterm (= 6.18.65-13)
-Filename: pool/main/linux-image-synodeb_6.18.65-13_amd64.deb
+Depends: linux-image-synodeb-longterm (= 6.18.65-14)
+Filename: pool/main/linux-image-synodeb_6.18.65-14_amd64.deb
 Size: 828
-MD5sum: 2ceb9c546f43dcd65a251675fd757dc3
-SHA1: 7a132a0afe777f875530f214c53786dca529cd2e
-SHA256: 2d9007c1d55e348498289b36059e80022d043adf2cd9bb5104e8a9438ce6297c
-SHA512: 683c40d696aac8771dd3ba7cbd883d22ba3c302e007f27a3b4231a65b84a9ad78d2d2e3b172d63220b3e445e481e85318dd85e2fa15d16ab6eb70f9e5060bd64
+MD5sum: 85346d4ff275872a58984e115d311d63
+SHA1: 82b27e1fd69460262eadd87721d4221d5c471bb8
+SHA256: 7ff923fcd372d85b1860415d51df748ef12989720320edefe42de31fd8d9716b
+SHA512: 5bd16500e796720321b31a9b0b8500a14f226bd6b35ea5f9067116769eac0d90d3c706cdfdc0b0d3b90ed519904e6a68a601511bd415ea0e855a54611479098f
 Description: Linux kernel for Synology NAS, synodeb (image, default)
  Depends on the synodeb kernel of the longterm series. For the newest stable series
  install linux-image-synodeb-stable instead.
@@ -887,7 +887,7 @@ Description: network UPS tools - Python3 bindings for NUT server
 
 Package: synodeb
 Architecture: all
-Version: 4.11
+Version: 4.12
 Priority: optional
 Section: admin
 Maintainer: Marco Ziliani <508111+rylos@users.noreply.github.com>
@@ -896,12 +896,12 @@ Recommends: nut-server, nut-client, nftables, smartmontools, lm-sensors, mdadm, 
 Conflicts: systemd-boot
 Breaks: synology-ds923 (<< 4.0~)
 Replaces: synology-ds923 (<< 4.0~)
-Filename: pool/main/synodeb_4.11_all.deb
-Size: 68644
-MD5sum: dd267b679c9d02e26493e5bbe33a094f
-SHA1: fd57027a306534c09a4dcc45d0d8b21830f9203d
-SHA256: 9503fc1ba02769db2221247642ac40123eea45aa646566ae50ffb22f99a2f0f8
-SHA512: b7fa91e460a4521f2443557a225826cd9fc0ece29533e40e3ea0e7f226f52bddd354f69f7bd07de3fee411eec880df4b25b0c2d18af0f59c37645919fc12c9f6
+Filename: pool/main/synodeb_4.12_all.deb
+Size: 70232
+MD5sum: 142d443ea544bd3ebb624bd0af2edd39
+SHA1: 6ae12eb00180cd7606407fff5d7ba5d01059cf47
+SHA256: fc2bd280a3339f44912c9c88b033971307c3ddd4205deef7b81b94b3cfae692a
+SHA512: e23504181883990847b167f30a803a4b67a03d02433d41ba47cbdba19ca05009c855b91529d9657bfece99367db069360207d06270a2b860dbc02e24f7e2a95e
 Homepage: https://github.com/rylos/synodeb
 Description: Debian on Synology NAS (DS920+, DS923+, DS423+): hardware support
  The platform drivers (bay power with DSM-style staggered spin-up and hot-plug,
@@ -918,7 +918,7 @@ Description: Debian on Synology NAS (DS920+, DS923+, DS423+): hardware support
 
 Package: synodeb
 Architecture: all
-Version: 4.12
+Version: 4.13
 Priority: optional
 Section: admin
 Maintainer: Marco Ziliani <508111+rylos@users.noreply.github.com>
@@ -927,12 +927,12 @@ Recommends: nut-server, nut-client, nftables, smartmontools, lm-sensors, mdadm, 
 Conflicts: systemd-boot
 Breaks: synology-ds923 (<< 4.0~)
 Replaces: synology-ds923 (<< 4.0~)
-Filename: pool/main/synodeb_4.12_all.deb
-Size: 70232
-MD5sum: 142d443ea544bd3ebb624bd0af2edd39
-SHA1: 6ae12eb00180cd7606407fff5d7ba5d01059cf47
-SHA256: fc2bd280a3339f44912c9c88b033971307c3ddd4205deef7b81b94b3cfae692a
-SHA512: e23504181883990847b167f30a803a4b67a03d02433d41ba47cbdba19ca05009c855b91529d9657bfece99367db069360207d06270a2b860dbc02e24f7e2a95e
+Filename: pool/main/synodeb_4.13_all.deb
+Size: 70844
+MD5sum: cea09478fea7fecc426b38da4ad3fb3b
+SHA1: ab3ed97259c1aef9fdb680484f506a1b62a28dbe
+SHA256: ec103eed469a1ccd809c0b361a47f2ce5a2f80c9a784658eebd084452f0d816e
+SHA512: 24e7ea70ee13742351f0cefe89960cdbe61c4950082c149f510a6aeba04579e8625a4b2722faa4ee259cc563ee9410b758ef62792e87a327dcc73fc814578ee0
 Homepage: https://github.com/rylos/synodeb
 Description: Debian on Synology NAS (DS920+, DS923+, DS423+): hardware support
  The platform drivers (bay power with DSM-style staggered spin-up and hot-plug,

@@ -33,9 +33,9 @@ umask 022
 VERSION=1
 BASE_URL=https://rylos.github.io/synodeb
 # installer files of this version of the script (updated by tools/publish.sh)
-INSTALLER_DIR=installer/6.18.65-13-synodeb
-SHA_VMLINUZ=c2810fb0f80db466755fda1c4ea326ed3ff0e69697a48fdd93721b44474ab557
-SHA_INSTALLER=5bd75012bac4bb89a56f129879d243773e235d7bb2f541667c6eb2772b1525f5
+INSTALLER_DIR=installer/6.18.65-14-synodeb
+SHA_VMLINUZ=09553c67e18dec7a1a4a81c8576a1c5585b35fc8d54e6f9b6cc035d367f8c077
+SHA_INSTALLER=89d6453efe581faf14216511be8d2e9d6342cd9fe5e6ed85c3f4a4b5ee7092aa
 
 P1=${SYNOBOOT1:-/dev/synoboot1}      # overridable for tests only
 P2=${SYNOBOOT2:-/dev/synoboot2}
@@ -418,6 +418,10 @@ dsm_net() {
 aggregation. If the switch ports are set up for link aggregation (LACP), the installer may get
 no network: connect $DEV to a port without it, or remove the bond in DSM first." ;;
     esac
+    # PCI address of that port: the installer gives it DSM's MAC address where its kernel
+    # does not (Avoton), so that netcfg/choose_interface finds it
+    NETPCI=$(basename "$(readlink -f "/sys/class/net/$DEV/device" 2>/dev/null)" 2>/dev/null)
+    case "$NETPCI" in ????:??:??.?) ;; *) NETPCI= ;; esac
     CIDR=$(ip -4 -o addr show dev "$IFACE" scope global | awk '{ print $4; exit }')
     IP=${CIDR%/*}; PREFIX=${CIDR#*/}
     GW=$(ip -4 route show default | awk '{ print $3; exit }')
@@ -541,6 +545,7 @@ cmd_install() {
     else
         net="netcfg/choose_interface=$MAC"
     fi
+    net="$net${NETPCI:+ synodeb.netdev=$NETPCI}"
     {
         if [ $keep = 1 ]; then drop_installer "$C"; else strip_conf "$C.dsm"; fi
         echo "$BEGIN (written by synodeb-setup.sh)"
@@ -700,6 +705,16 @@ cmd_status() {
     grab "$P1" "$T/m1" vfat
     grab "$P2" "$T/m2" "$P2FS"
     show_status "$T/m1/$CONF_REL" "$T/m2"
+    # left by an installer that got no SSH within 8 minutes (password, serial number and
+    # MAC list masked)
+    f=$T/m2/synodeb/installer-fail.log
+    if [ -f "$f" ]; then
+        out=$PWD/synodeb-installer-fail.log
+        cp "$f" "$out" && { [ -z "${SUDO_USER:-}" ] || chown "$SUDO_USER" "$out" 2>/dev/null || true; }
+        say ""
+        say "The last installer run got no SSH connection within 8 minutes. Its log: $out"
+        say "(the SSH password, serial number and MAC addresses are masked in it)"
+    fi
 }
 
 # byte offset of partition 1 in a DOM image (GPT or MBR), empty if there is none
