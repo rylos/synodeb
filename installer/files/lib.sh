@@ -176,10 +176,16 @@ net_dsm_mac() {
 
 # What the installer knew when it gave up waiting for SSH, kept on synoboot2 so that
 # 'synodeb-setup.sh status' can show it under DSM: our log, the network state, the kernel
-# log and the end of the installer's syslog. The SSH password, the serial number and the MAC
-# list of the command line are masked (owners post this log).
+# log and the end of the installer's syslog. Masked, since owners post this log: the SSH
+# password, the serial number, the MAC list of the command line, the last three bytes of every
+# MAC address (the vendor part stays) and the IPv6 addresses (they can contain the MAC).
 FAIL_LOG=synodeb/installer-fail.log
-mask() { sed -e 's/password\(-again\)\{0,1\}=[^ ]*/password\1=***/g' -e 's/\(^\| \)sn=[^ ]*/\1sn=***/g' -e 's/\(^\| \)macs=[^ ]*/\1macs=***/g'; }
+HEX2='[0-9a-fA-F]\{2\}'
+mask() {
+    sed -e 's/password\(-again\)\{0,1\}=[^ ]*/password\1=***/g' -e 's/\(^\| \)sn=[^ ]*/\1sn=***/g' \
+        -e 's/\(^\| \)macs=[^ ]*/\1macs=***/g' -e "s/\(${HEX2}[:-]${HEX2}[:-]${HEX2}\)[:-]${HEX2}[:-]${HEX2}[:-]${HEX2}/\1:**:**:**/g" \
+        -e 's/inet6 [^ ]*/inet6 ***/g'
+}
 save_fail_log() {
     dom_unprotect || { log "could not unmount the DOM from $DOM_LOCK: no log kept"; return 1; }
     dom_mount 2 || { log "DOM synoboot2 not found: no log kept"; return 1; }

@@ -705,15 +705,15 @@ cmd_status() {
     grab "$P1" "$T/m1" vfat
     grab "$P2" "$T/m2" "$P2FS"
     show_status "$T/m1/$CONF_REL" "$T/m2"
-    # left by an installer that got no SSH within 8 minutes (password, serial number and
-    # MAC list masked)
+    # left by an installer that got no SSH within 8 minutes (password, serial number, the
+    # device part of MAC addresses and IPv6 addresses masked)
     f=$T/m2/synodeb/installer-fail.log
     if [ -f "$f" ]; then
         out=$PWD/synodeb-installer-fail.log
         cp "$f" "$out" && { [ -z "${SUDO_USER:-}" ] || chown "$SUDO_USER" "$out" 2>/dev/null || true; }
         say ""
         say "The last installer run got no SSH connection within 8 minutes. Its log: $out"
-        say "(the SSH password, serial number and MAC addresses are masked in it)"
+        say "(the SSH password, serial number, IPv6 addresses and the last three bytes of MAC addresses are masked in it)"
     fi
 }
 
