@@ -1,13 +1,19 @@
 // SPDX-License-Identifier: GPL-2.0
 /*
  * Disk LEDs of Synology NAS with a TI LP3943 LED driver (DS920+ and other
- * Gemini Lake models).
+ * Gemini Lake models, DS415+).
  *
  * The BIOS describes the LP3943 in ACPI as "LED3943" (on the SMBus of the
  * DS920+, address 0x60). Its 16 open-drain outputs each sink one LED; the
  * mode of output n is 2 bits in register LS0 + n / 4 (00 off, 01 on, 10/11
  * blink at PWM0/PWM1). The wiring is the one of DSM's model.dtb: output 2n is
  * the green LED of bay n + 1, output 2n + 1 its orange LED.
+ *
+ * Without an ACPI description (DS415+: LP3943 at 0x60 on the SMBus of the
+ * SoC) the platform driver creates the client as "synology-lp3943". There
+ * the LEDs are wired the other way round: an LED is lit while its output is
+ * released (mode 00) and dark while it sinks (01). The device property
+ * "synology,leds-active-low" selects that polarity.
  *
  * Only on/off is used; blinking is left to the LED triggers (synohwd uses
  * "ataN" for disk activity and "timer" for a failed disk). The mfd lp3943
@@ -20,6 +26,7 @@
 #include <linux/leds.h>
 #include <linux/module.h>
 #include <linux/mutex.h>
+#include <linux/property.h>
 
 #define LP3943_LS0	0x06		/* LS0..LS3: outputs 0-3 .. 12-15 */
 #define LP3943_OUTPUTS	16
@@ -39,6 +46,7 @@ struct lp3943_led {
 
 struct lp3943 {
 	struct i2c_client *client;
+	bool active_low;		/* LED lit when its output is off (DS415+) */
 	struct mutex lock;		/* read-modify-write of the LS registers */
 	struct lp3943_led led[LP3943_OUTPUTS];
 };
@@ -64,17 +72,23 @@ static int lp3943_brightness_set(struct led_classdev *cdev, enum led_brightness 
 {
 	struct lp3943_led *led = container_of(cdev, struct lp3943_led, cdev);
 
-	return lp3943_set_mode(led->chip, led->output, value ? LP3943_ON : LP3943_OFF);
+	bool on = value != LED_OFF;
+
+	if (led->chip->active_low)
+		on = !on;
+	return lp3943_set_mode(led->chip, led->output, on ? LP3943_ON : LP3943_OFF);
 }
 
 static enum led_brightness lp3943_brightness_get(struct led_classdev *cdev)
 {
 	struct lp3943_led *led = container_of(cdev, struct lp3943_led, cdev);
 	int val = i2c_smbus_read_byte_data(led->chip->client, LP3943_LS0 + led->output / 4);
+	bool sinking;
 
 	if (val < 0)
 		return LED_OFF;
-	return ((val >> ((led->output % 4) * 2)) & 0x3) != LP3943_OFF;
+	sinking = ((val >> ((led->output % 4) * 2)) & 0x3) != LP3943_OFF;
+	return sinking != led->chip->active_low;
 }
 
 static int lp3943_probe(struct i2c_client *client)
@@ -95,6 +109,7 @@ static int lp3943_probe(struct i2c_client *client)
 	if (!chip)
 		return -ENOMEM;
 	chip->client = client;
+	chip->active_low = device_property_read_bool(dev, "synology,leds-active-low");
 	ret = devm_mutex_init(dev, &chip->lock);
 	if (ret)
 		return ret;
@@ -124,15 +139,23 @@ static const struct acpi_device_id lp3943_acpi_ids[] = {
 };
 MODULE_DEVICE_TABLE(acpi, lp3943_acpi_ids);
 
+/* created by the synology-nas platform driver where ACPI does not describe the chip */
+static const struct i2c_device_id lp3943_i2c_ids[] = {
+	{ "synology-lp3943" },
+	{ }
+};
+MODULE_DEVICE_TABLE(i2c, lp3943_i2c_ids);
+
 static struct i2c_driver lp3943_driver = {
 	.driver = {
 		.name = "leds-synology-lp3943",
 		.acpi_match_table = lp3943_acpi_ids,
 	},
 	.probe = lp3943_probe,
+	.id_table = lp3943_i2c_ids,
 };
 module_i2c_driver(lp3943_driver);
 
 MODULE_AUTHOR("Marco Ziliani <508111+rylos@users.noreply.github.com>");
-MODULE_DESCRIPTION("Disk LEDs of Synology NAS on a TI LP3943 (ACPI LED3943)");
+MODULE_DESCRIPTION("Disk LEDs of Synology NAS on a TI LP3943");
 MODULE_LICENSE("GPL");

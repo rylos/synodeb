@@ -7,7 +7,7 @@ index 957034f39..24c3e54d8 100644
  	  will be called sel3350-platform.
  
 +config SYNOLOGY_NAS
-+	bool "Synology NAS platform support (DS920+, DS923+)"
++	bool "Synology NAS platform support (DS923+, DS920+, DS423+, DS415+)"
 +	depends on ACPI && DMI && I2C=y && GPIOLIB && HWMON=y
 +	depends on PINCTRL_AMD
 +	help

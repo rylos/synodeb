@@ -11,7 +11,7 @@ index ac61ec3..fb7d99d 100644
 +	depends on LEDS_CLASS && I2C && ACPI
 +	help
 +	  The TI LP3943 that drives the green/orange disk LEDs of Synology NAS
-+	  such as the DS920+, described in ACPI as LED3943.
++	  such as the DS920+ (ACPI LED3943) and the DS415+.
 +
  config LEDS_AW200XX
  	tristate "LED support for Awinic AW20036/AW20054/AW20072/AW20108"

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0
 /*
- * Synology NAS platform driver (DS923+, and the models in syno_dmi[]).
+ * Synology NAS platform driver (DS923+, the models in syno_dmi[], and the DS415+).
  *
  * The description below is that of the DS923+ (platform r1000). Other models
  * differ in the GPIO chip and pins, the bay count, the spin-up groups, the I2C
@@ -11,6 +11,21 @@
  * and its microcontroller on LPSS UART 0 (PCI 00:18.0). Its Realtek NICs
  * carry no MAC address of their own: the Synology GRUB passes them on the
  * command line (macs=, from "vender" on the DOM), and DSM's order is kept.
+ *
+ * The DS415+ (platform avoton, Atom C2538) has no Synology DMI names (the BIOS
+ * says Insyde "MohonPeak", as on the DS2415+, and with a boot loader that does
+ * not pass the EFI tables there is no DMI at all): it is told by the Avoton
+ * host bridge (8086:1f0c) together with its SiI3132 SATA controller
+ * (1095:3132). Its GPIOs are those of the SoC's legacy block (gpio-ich,
+ * "gpio_ich"): bay power 10, 15, 16, 17 (active high), presence 18, 28, 34, 44
+ * (active low), fan tachometers 11 and 12, disk LED enable 49. DSM powers its
+ * disks one at a time, 5 s apart, and waits 3 s before probing. The USB ports
+ * have no VBUS switch. The disk LEDs are a TI LP3943 at 0x60 on the SMBus of
+ * the SoC (i2c-i801), not described in ACPI and wired active low; the RTC is
+ * the CMOS one (rtc-cmos, alarm with the day of the month). The front-panel
+ * microcontroller is the legacy UART at I/O 0x2F8 (ttyS1, 1.8432 MHz clock),
+ * 9600 8N1, and takes the same 'C' and '1' as the other models. The two Intel
+ * NICs (igb) carry a placeholder MAC address: the macs= list gives theirs.
  *
  * Implements, following the DSM 7.4 GPL kernel sources and the model.dtb of
  * the DS923+ (platform "r1000", board "Bilby"), the parts of the hardware DSM
@@ -95,6 +110,10 @@
 #define LPSS_UP_N	31250
 #define LPSS_UP_CLK	1843200
 
+/* avoton: microcontroller on the legacy 16550 at I/O 0x2F8 (ttyS1), 1.8432 MHz clock */
+#define PIO_UP_PORT	0x2f8
+#define PIO_UP_CLK	1843200
+
 static bool force;
 module_param(force, bool, 0444);
 MODULE_PARM_DESC(force, "Load as a DS923+ even if DMI does not report a supported model");
@@ -103,9 +122,12 @@ static char *spinup_groups;
 module_param(spinup_groups, charp, 0444);
 MODULE_PARM_DESC(spinup_groups, "Bays powered together per spin-up group (default: the model's, DS923+ 2,1,1)");
 
-static unsigned int spinup_delay = 11;
-module_param(spinup_delay, uint, 0444);
-MODULE_PARM_DESC(spinup_delay, "Seconds between spin-up groups and hot-plugged disks (DSM: 11)");
+static int spinup_delay = -1;
+module_param(spinup_delay, int, 0444);
+MODULE_PARM_DESC(spinup_delay, "Seconds between spin-up groups and hot-plugged disks (default: the model's, DSM DS923+ 11, DS415+ 5)");
+
+/* spinup_delay, or the model's when not given */
+static unsigned int spinup_secs;
 
 static unsigned int settle_ms = 3000;
 module_param(settle_ms, uint, 0444);
@@ -142,6 +164,7 @@ MODULE_PARM_DESC(fan_pulses, "Tachometer pulses per fan revolution");
 
 #define AMD_GPIO	"AMDI0030:00"
 #define GLK_GPIO	"INT3453:00"	/* Gemini Lake community northwest (UID 1) */
+#define ICH_GPIO	"gpio_ich"	/* Avoton legacy GPIO block (lpc_ich + gpio-ich) */
 
 static struct gpiod_lookup_table ds923plus_gpios = {
 	.dev_id = DRV_NAME,
@@ -191,13 +214,38 @@ static struct gpiod_lookup_table ds920_gpios = {
  */
 #define ds423_gpios ds920_gpios
 
+/*
+ * DS415+: the GPIO numbers of the SoC's legacy block, the same in DSM and in
+ * gpio-ich (bank 1: 0-31, bank 2: 32-63). Pin n is bay n: DSM's disk index,
+ * which is the bay order of its SATA port map. No USB VBUS.
+ */
+static struct gpiod_lookup_table ds415plus_gpios = {
+	.dev_id = DRV_NAME,
+	.table = {
+		GPIO_LOOKUP_IDX(ICH_GPIO, 10, "power", 0, GPIO_ACTIVE_HIGH),
+		GPIO_LOOKUP_IDX(ICH_GPIO, 15, "power", 1, GPIO_ACTIVE_HIGH),
+		GPIO_LOOKUP_IDX(ICH_GPIO, 16, "power", 2, GPIO_ACTIVE_HIGH),
+		GPIO_LOOKUP_IDX(ICH_GPIO, 17, "power", 3, GPIO_ACTIVE_HIGH),
+		GPIO_LOOKUP_IDX(ICH_GPIO, 18, "present", 0, GPIO_ACTIVE_LOW),
+		GPIO_LOOKUP_IDX(ICH_GPIO, 28, "present", 1, GPIO_ACTIVE_LOW),
+		GPIO_LOOKUP_IDX(ICH_GPIO, 34, "present", 2, GPIO_ACTIVE_LOW),
+		GPIO_LOOKUP_IDX(ICH_GPIO, 44, "present", 3, GPIO_ACTIVE_LOW),
+		GPIO_LOOKUP_IDX(ICH_GPIO, 11, "fan-tach", 0, GPIO_ACTIVE_HIGH),
+		GPIO_LOOKUP_IDX(ICH_GPIO, 12, "fan-tach", 1, GPIO_ACTIVE_HIGH),
+		/* disk LED enable: the LP3943 LEDs stay dark while it is low */
+		GPIO_LOOKUP_IDX(ICH_GPIO, 49, "disk-led-ctrl", 0, GPIO_ACTIVE_HIGH),
+		{ }
+	},
+};
+
 /* What differs between the models this driver supports. */
-enum syno_up { UP_AMD, UP_LPSS };
+enum syno_up { UP_AMD, UP_LPSS, UP_PIO };
 
 struct syno_model {
 	const char *name;
 	unsigned int bays;		/* at most MAX_BAYS */
 	const char *spinup_groups;	/* DSM's spin-up groups */
+	unsigned int spinup_delay;	/* DSM's seconds between them */
 	struct gpiod_lookup_table *gpios;
 	const char *gpio_chip;		/* for messages */
 	/*
@@ -208,6 +256,11 @@ struct syno_model {
 	const char *rtc_bus_hid, *rtc_bus_uid;
 	const char *rtc_acpi_hid;
 	bool atmega_leds;		/* ATmega1608 disk LED controller at 0x60 */
+	/*
+	 * TI LP3943 disk LEDs not described in ACPI (wired active low): created
+	 * at 0x60 on the I2C adapter whose name starts with lp3943_bus.
+	 */
+	const char *lp3943_bus;
 	enum syno_up up;		/* microcontroller UART */
 	/*
 	 * Onboard NICs without a MAC address of their own, in the order of
@@ -220,6 +273,7 @@ static const struct syno_model ds923plus = {
 	.name = "DS923+",
 	.bays = 4,
 	.spinup_groups = "2,1,1",
+	.spinup_delay = 11,
 	.gpios = &ds923plus_gpios,
 	.gpio_chip = AMD_GPIO,
 	.rtc_bus_hid = "AMDI0010", .rtc_bus_uid = "3",
@@ -234,6 +288,7 @@ static const struct syno_model ds920plus = {
 	.name = "DS920+",
 	.bays = 4,
 	.spinup_groups = "2,1,1",
+	.spinup_delay = 11,
 	.gpios = &ds920_gpios,
 	.gpio_chip = GLK_GPIO,
 	.rtc_acpi_hid = "RTC35390",
@@ -248,11 +303,27 @@ static const struct syno_model ds423plus = {
 	.name = "DS423+",
 	.bays = 4,
 	.spinup_groups = "2,1,1",
+	.spinup_delay = 11,
 	.gpios = &ds423_gpios,
 	.gpio_chip = GLK_GPIO,
 	.rtc_acpi_hid = "RTC35390",
 	.up = UP_LPSS,
 	.nics = ds423_nics,
+};
+
+/* DSM: eth0 (LAN 1) is 00:14.0, eth1 (LAN 2) is 00:14.1 (PCI order, as their placeholder MACs) */
+static const char * const ds415_nics[] = { "0000:00:14.0", "0000:00:14.1", NULL };
+
+static const struct syno_model ds415plus = {
+	.name = "DS415+",
+	.bays = 4,
+	.spinup_groups = "1,1,1,1",
+	.spinup_delay = 5,
+	.gpios = &ds415plus_gpios,
+	.gpio_chip = ICH_GPIO,
+	.lp3943_bus = "SMBus I801 adapter",
+	.up = UP_PIO,
+	.nics = ds415_nics,
 };
 
 /* the model found at init, used by probe and the I2C work */
@@ -361,11 +432,11 @@ static void syno_spinup(struct syno *ds)
 			}
 			if (!present && !power_empty_bays)
 				continue;
-			if (!powered_any && g > 0 && spinup_delay &&
-			    time_before(jiffies, ds->last_power_on + spinup_delay * HZ)) {
+			if (!powered_any && g > 0 && spinup_secs &&
+			    time_before(jiffies, ds->last_power_on + spinup_secs * HZ)) {
 				dev_info(ds->dev, "delay %u s before spin-up group %d\n",
-					 spinup_delay, g + 1);
-				ssleep(spinup_delay);
+					 spinup_secs, g + 1);
+				ssleep(spinup_secs);
 			}
 			if (!bay_set_power(ds, bay, true))
 				powered_any = true;
@@ -401,8 +472,8 @@ static void syno_bays_poll(struct syno *ds)
 		if (++b->stable < 3 || b->stable * syno_poll_ms() < 200)
 			continue;
 		if (present && hotplug && !power_empty_bays && b->power &&
-		    !bay_powered(ds, bay) && spinup_delay &&
-		    time_before(jiffies, ds->last_power_on + spinup_delay * HZ))
+		    !bay_powered(ds, bay) && spinup_secs &&
+		    time_before(jiffies, ds->last_power_on + spinup_secs * HZ))
 			continue;	/* another disk is spinning up: retry later */
 		b->state = present;
 		b->pending = false;
@@ -500,12 +571,29 @@ static void syno_poll(struct work_struct *work)
 
 /* ---------------------------------------------------------------- microcontroller */
 
+/*
+ * 16550 registers of the microcontroller UART: 32-bit MMIO with reg-shift 2
+ * (r1000, geminilake), or 8-bit I/O ports (avoton, mapped with ioport_map).
+ */
+static u32 syno_up_in(void __iomem *p, unsigned int reg)
+{
+	return model->up == UP_PIO ? ioread8(p + reg) : readl(p + (reg << 2));
+}
+
+static void syno_up_out(void __iomem *p, unsigned int reg, u32 val)
+{
+	if (model->up == UP_PIO)
+		iowrite8(val, p + reg);
+	else
+		writel(val, p + (reg << 2));
+}
+
 /* Bounded busy wait for an LSR bit, in 10 us steps. */
 static void syno_up_wait(void __iomem *p, u32 bit, unsigned int us)
 {
 	unsigned int i;
 
-	for (i = 0; i < us / 10 && !(readl(p + (UART_LSR << 2)) & bit); i++)
+	for (i = 0; i < us / 10 && !(syno_up_in(p, UART_LSR) & bit); i++)
 		udelay(10);
 }
 
@@ -516,7 +604,8 @@ static void syno_up_wait(void __iomem *p, u32 bit, unsigned int us)
  */
 static void syno_up_write(struct syno *ds, u8 c)
 {
-	unsigned int clk = model->up == UP_LPSS ? LPSS_UP_CLK : AMD_UP_CLK;
+	unsigned int clk = model->up == UP_LPSS ? LPSS_UP_CLK :
+			   model->up == UP_PIO ? PIO_UP_CLK : AMD_UP_CLK;
 	unsigned int div = DIV_ROUND_CLOSEST(clk, 16 * UP_UART_BAUD);
 	void __iomem *p = ds->up;
 
@@ -534,12 +623,12 @@ static void syno_up_write(struct syno *ds, u8 c)
 		writel(v, p + LPSS_CLOCK);
 		writel(v | BIT(31), p + LPSS_CLOCK);
 	}
-	writel(UART_LCR_DLAB | UART_LCR_WLEN8, p + (UART_LCR << 2));
-	writel(div & 0xff, p + (UART_DLL << 2));
-	writel(div >> 8, p + (UART_DLM << 2));
-	writel(UART_LCR_WLEN8, p + (UART_LCR << 2));
+	syno_up_out(p, UART_LCR, UART_LCR_DLAB | UART_LCR_WLEN8);
+	syno_up_out(p, UART_DLL, div & 0xff);
+	syno_up_out(p, UART_DLM, div >> 8);
+	syno_up_out(p, UART_LCR, UART_LCR_WLEN8);
 	syno_up_wait(p, UART_LSR_THRE, 10000);
-	writel(c, p + (UART_TX << 2));
+	syno_up_out(p, UART_TX, c);
 	syno_up_wait(p, UART_LSR_TEMT, 10000);
 	mdelay(20);
 }
@@ -701,13 +790,15 @@ static struct attribute *syno_attrs[] = {
 	NULL
 };
 
-/* bayN_* only for the bays the model has */
+/* bayN_* only for the bays the model has, usb*_vbus only with a VBUS switch */
 static umode_t syno_attr_visible(struct kobject *kobj, struct attribute *attr, int n)
 {
 	struct syno *ds = dev_get_drvdata(kobj_to_dev(kobj));
 
 	if (!strncmp(attr->name, "bay", 3) && attr->name[3] - '1' >= ds->nbays)
 		return 0;
+	if (!strncmp(attr->name, "usb", 3) && !ds->vbus[0] && !ds->vbus[1])
+		return 0;		/* no VBUS switch (DS415+) */
 	return attr->mode;
 }
 
@@ -777,6 +868,16 @@ static const struct hwmon_chip_info syno_hwmon_chip = {
 
 /* ---------------------------------------------------------------- I2C */
 
+/* DS415+: an LP3943 LED is lit while its output is released */
+static const struct property_entry syno_lp3943_props[] = {
+	PROPERTY_ENTRY_BOOL("synology,leds-active-low"),
+	{ }
+};
+
+static const struct software_node syno_lp3943_swnode = {
+	.properties = syno_lp3943_props,
+};
+
 /* The S-35390A INT1 output is the one wired to the power-on logic. */
 static const struct property_entry syno_rtc_props[] = {
 	PROPERTY_ENTRY_BOOL("sii,alarm-int1"),
@@ -800,6 +901,15 @@ static bool is_syno_adapter(struct device *dev)
 		return false;
 	adev = ACPI_COMPANION(adap->dev.parent);
 	return adev && acpi_dev_hid_uid_match(adev, model->rtc_bus_hid, model->rtc_bus_uid);
+}
+
+/* avoton: the SMBus of the SoC (i2c-i801, a module) carries the LP3943 */
+static bool is_led_adapter(struct device *dev)
+{
+	struct i2c_adapter *adap = i2c_verify_adapter(dev);
+
+	return model->lp3943_bus && adap &&
+	       !strncmp(adap->name, model->lp3943_bus, strlen(model->lp3943_bus));
 }
 
 /*
@@ -827,6 +937,11 @@ static int match_rtc_acpi_client(struct device *dev, const void *data)
 static int match_adapter(struct device *dev, const void *data)
 {
 	return is_syno_adapter(dev);
+}
+
+static int match_led_adapter(struct device *dev, const void *data)
+{
+	return is_led_adapter(dev);
 }
 
 static int match_client_addr(struct device *dev, void *data)
@@ -861,7 +976,17 @@ static void syno_i2c_register(struct work_struct *work)
 		.swnode = &syno_rtc_swnode,
 	};
 	struct i2c_board_info leds = { I2C_BOARD_INFO("atmega1608", 0x60) };
+	struct i2c_board_info lp3943 = {
+		I2C_BOARD_INFO("synology-lp3943", 0x60),
+		.swnode = &syno_lp3943_swnode,
+	};
 	struct device *dev;
+
+	dev = bus_find_device(&i2c_bus_type, NULL, NULL, match_led_adapter);
+	if (dev) {
+		syno_i2c_add(i2c_verify_adapter(dev), &lp3943, "LP3943 LEDs");
+		put_device(dev);
+	}
 
 	dev = bus_find_device(&i2c_bus_type, NULL, NULL, match_rtc_acpi_client);
 	if (dev) {
@@ -898,7 +1023,7 @@ static DECLARE_WORK(syno_i2c_work, syno_i2c_register);
 static int syno_i2c_notify(struct notifier_block *nb, unsigned long action, void *data)
 {
 	if (action == BUS_NOTIFY_ADD_DEVICE &&
-	    (is_syno_adapter(data) || is_rtc_acpi_client(data)))
+	    (is_syno_adapter(data) || is_led_adapter(data) || is_rtc_acpi_client(data)))
 		schedule_work(&syno_i2c_work);
 	return NOTIFY_DONE;
 }
@@ -981,6 +1106,9 @@ static void syno_up_map(struct syno *ds)
 
 	if (model->up == UP_AMD) {
 		ds->up = devm_ioremap(ds->dev, AMD_UP_BASE, AMD_UP_SIZE);
+	} else if (model->up == UP_PIO) {
+		/* the port belongs to the 8250 driver (ttyS1): no region request */
+		ds->up = devm_ioport_map(ds->dev, PIO_UP_PORT, 8);
 	} else {
 		up = pci_get_domain_bus_and_slot(0, 0, LPSS_UP_DEVFN);
 		if (up && up->vendor == PCI_VENDOR_ID_INTEL &&
@@ -1012,12 +1140,13 @@ static int syno_probe(struct platform_device *pdev)
 	ds->dev = dev;
 	ds->nbays = model->bays;
 	mutex_init(&ds->lock);
-	ds->last_power_on = jiffies - spinup_delay * HZ - 1;
+	ds->last_power_on = jiffies - spinup_secs * HZ - 1;
 	platform_set_drvdata(pdev, ds);
 
 	/* USB first: the boot device may sit behind these ports. */
 	for (i = 0; i < NUM_USB; i++) {
-		ds->vbus[i] = devm_gpiod_get_index(dev, "usb-vbus", i, GPIOD_ASIS);
+		/* optional: the DS415+ has no VBUS switch */
+		ds->vbus[i] = devm_gpiod_get_index_optional(dev, "usb-vbus", i, GPIOD_ASIS);
 		/* pinctrl-amd not bound yet: come back later, never give up on USB */
 		if (PTR_ERR(ds->vbus[i]) == -EPROBE_DEFER)
 			return dev_err_probe(dev, -EPROBE_DEFER, "waiting for %s\n",
@@ -1027,7 +1156,7 @@ static int syno_probe(struct platform_device *pdev)
 			ds->vbus[i] = NULL;
 			continue;
 		}
-		if (usb_vbus) {
+		if (ds->vbus[i] && usb_vbus) {
 			ret = gpiod_direction_output(ds->vbus[i], 1);
 			if (ret)
 				dev_err(dev, "usb vbus %d on: %d\n", i, ret);
@@ -1038,6 +1167,10 @@ static int syno_probe(struct platform_device *pdev)
 		struct syno_bay *b = &ds->bay[i];
 
 		b->present = devm_gpiod_get_index(dev, "present", i, GPIOD_IN);
+		/* gpio-ich not bound yet (models without USB VBUS get here first) */
+		if (PTR_ERR(b->present) == -EPROBE_DEFER)
+			return dev_err_probe(dev, -EPROBE_DEFER, "waiting for %s\n",
+					     model->gpio_chip);
 		if (IS_ERR(b->present)) {
 			dev_err(dev, "bay %d presence gpio: %pe\n", i + 1, b->present);
 			b->present = NULL;
@@ -1182,6 +1315,25 @@ static const struct dmi_system_id syno_dmi[] = {
 };
 MODULE_DEVICE_TABLE(dmi, syno_dmi);
 
+/*
+ * DS415+: the DMI product name is a placeholder ("MohonPeak", as on the
+ * DS2415+), or missing when the boot loader passes no EFI tables. The Avoton
+ * host bridge with the SiI3132 tells it (the DS2415+ has a Marvell 88SE92xx).
+ */
+static const struct syno_model * __init syno_avoton_model(void)
+{
+	const char *product = dmi_get_system_info(DMI_PRODUCT_NAME);
+
+	if (product && strcmp(product, "MohonPeak"))
+		return NULL;
+	if (pci_dev_present((const struct pci_device_id[]){
+			{ PCI_DEVICE(PCI_VENDOR_ID_INTEL, 0x1f0c) }, { } }) &&
+	    pci_dev_present((const struct pci_device_id[]){
+			{ PCI_DEVICE(0x1095, 0x3132) }, { } }))
+		return &ds415plus;
+	return NULL;
+}
+
 /* Built in only (Kconfig bool): there is no exit path. */
 static int __init syno_init(void)
 {
@@ -1191,12 +1343,15 @@ static int __init syno_init(void)
 
 	if (id)
 		model = id->driver_data;
-	else if (force)
-		model = &ds923plus;
 	else
+		model = syno_avoton_model();
+	if (!model && force)
+		model = &ds923plus;
+	if (!model)
 		return -ENODEV;
 	if (model->bays > MAX_BAYS)
 		return -EINVAL;
+	spinup_secs = spinup_delay >= 0 ? spinup_delay : model->spinup_delay;
 
 	/*
 	 * The notifier stays registered for good, so the clients come back
@@ -1238,5 +1393,5 @@ err_table:
 module_init(syno_init);
 
 MODULE_AUTHOR("Marco Ziliani <508111+rylos@users.noreply.github.com>");
-MODULE_DESCRIPTION("Synology NAS platform (DS923+, DS920+, DS423+): bays, USB VBUS, fans, RTC/LED devices, microcontroller shutdown");
+MODULE_DESCRIPTION("Synology NAS platform (DS923+, DS920+, DS423+, DS415+): bays, USB VBUS, fans, RTC/LED devices, microcontroller shutdown");
 MODULE_LICENSE("GPL");
