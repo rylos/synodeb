@@ -223,26 +223,6 @@ Description: Linux kernel headers for 6.18.65-16-synodeb on amd64
  .
  This is useful for people who need to build external modules
 
-Package: linux-headers-7.3.6-15-synodeb
-Architecture: amd64
-Version: 7.3.6-15
-Priority: optional
-Section: kernel
-Source: linux-upstream
-Maintainer: synodeb <synodeb@synodeb>
-Installed-Size: 58761
-Filename: pool/main/linux-headers-7.3.6-15-synodeb_7.3.6-15_amd64.deb
-Size: 9898812
-MD5sum: d4357d8352ba21c1bef8fb924bb4341b
-SHA1: f7ab5766c88fe421d0011615221ef04f2681759e
-SHA256: f4ab418bb84d6bb2a1721aba86b7ef83c6717fe1baade3d0403148c6e73f588a
-SHA512: 347c86999dd9bd6907de1037d90dec4f93f91e274aeb5dd8cbc0ba0ac74b057feee88980a68d783c92695dfc804c33a9b82c1ed64de1945552cf50d32ff0c8a6
-Homepage: https://www.kernel.org/
-Description: Linux kernel headers for 7.3.6-15-synodeb on amd64
- This package provides kernel header files for 7.3.6-15-synodeb on amd64
- .
- This is useful for people who need to build external modules
-
 Package: linux-headers-7.3.6-16-synodeb
 Architecture: amd64
 Version: 7.3.6-16
@@ -260,6 +240,26 @@ SHA512: b5060a346dc83f866e8501274600201eb0168e391fcb1ad9d54957082a6025090209a8b7
 Homepage: https://www.kernel.org/
 Description: Linux kernel headers for 7.3.6-16-synodeb on amd64
  This package provides kernel header files for 7.3.6-16-synodeb on amd64
+ .
+ This is useful for people who need to build external modules
+
+Package: linux-headers-7.3.6-17-synodeb
+Architecture: amd64
+Version: 7.3.6-17
+Priority: optional
+Section: kernel
+Source: linux-upstream
+Maintainer: synodeb <synodeb@synodeb>
+Installed-Size: 58761
+Filename: pool/main/linux-headers-7.3.6-17-synodeb_7.3.6-17_amd64.deb
+Size: 9899308
+MD5sum: 946ef36dd65073e269043486a90c4688
+SHA1: 4208a21ab7e479905f9abcc634fcd84fcece9d3c
+SHA256: b7b61a116aa10446f774bb5cc03f941c8608805158f31e979c54cc7a342ff33d
+SHA512: e0c2400237994dc6a219d4c9b587f11764c5b2664ffa710d10db241f438708ff838bdf4323f4bb2c757f0992785d85eba5240ba83d72002e52db47d348b38e60
+Homepage: https://www.kernel.org/
+Description: Linux kernel headers for 7.3.6-17-synodeb on amd64
+ This package provides kernel header files for 7.3.6-17-synodeb on amd64
  .
  This is useful for people who need to build external modules
 
@@ -281,17 +281,17 @@ Description: transitional package for linux-headers-synodeb-longterm
 
 Package: linux-headers-ds923-stable
 Architecture: amd64
-Version: 7.3.6-16
+Version: 7.3.6-17
 Priority: optional
 Section: oldlibs
 Maintainer: Marco Ziliani <508111+rylos@users.noreply.github.com>
-Depends: linux-headers-synodeb-stable (= 7.3.6-16)
-Filename: pool/main/linux-headers-ds923-stable_7.3.6-16_amd64.deb
+Depends: linux-headers-synodeb-stable (= 7.3.6-17)
+Filename: pool/main/linux-headers-ds923-stable_7.3.6-17_amd64.deb
 Size: 776
-MD5sum: 5a52560aff7c2116d631fe023b1036ed
-SHA1: d5eeca6f713d51a4d6940b50ffd9315f60190add
-SHA256: 60a7eeb7147300f02f26bede693f880192a00c4dbe54ec171a2d8ae7a55d425b
-SHA512: b1e02f941e759c645435648e439739fdcb322584180c10f869ba37683cb14041ba6d85d86ae602978d12eb7241264ceb4535a848f89468d9af7b8ada90681733
+MD5sum: 1b7751cf79274c340eb25cb35aacd709
+SHA1: af59909e2a4470bb08c6ef20a38238efc1e22fc4
+SHA256: d374d2b565f7150709479f0dd517ccafa0d292e70b131d3af83b1fe4ff7e3155
+SHA512: 0512b37764964994cce9842cdba2fe051f1a79d1f9cd79c765361db5e9589c72bceee0de5bd6874b5c3c1f42919e871656ee3b662c5a68a5dd1de5682f3ed74b
 Description: transitional package for linux-headers-synodeb-stable
  This package can be removed.
 
@@ -329,17 +329,17 @@ Description: Linux kernel for Synology NAS, synodeb (headers, longterm series)
 
 Package: linux-headers-synodeb-stable
 Architecture: amd64
-Version: 7.3.6-16
+Version: 7.3.6-17
 Priority: optional
 Section: kernel
 Maintainer: Marco Ziliani <508111+rylos@users.noreply.github.com>
-Depends: linux-headers-7.3.6-16-synodeb (= 7.3.6-16)
-Filename: pool/main/linux-headers-synodeb-stable_7.3.6-16_amd64.deb
-Size: 808
-MD5sum: 5cfd80e130d136149fe36901a8435385
-SHA1: eec23b77a41e23922203c28062915fb8ba68a2d8
-SHA256: 24685b1d1a0b529f38642fd7daf1eb6858c8e9072f4e9d8019dd5c450fb73d4a
-SHA512: f4f707f59d73b26b368ca0e7395c4b16eb9ec5a83691f4ce17f9cede84f06cb19ef9a37737b7f0c74577fb2ec9387ff569b34831184982ee88a9818cab1d7e8c
+Depends: linux-headers-7.3.6-17-synodeb (= 7.3.6-17)
+Filename: pool/main/linux-headers-synodeb-stable_7.3.6-17_amd64.deb
+Size: 812
+MD5sum: 0dbc06cedafd485e95338f74f4856da3
+SHA1: d4b6deb2dc2d1be44fddbc51428218dc376c5f4c
+SHA256: 3c452cfb9c49f9bc0df9b2c5b50ffe4b26c537393ff9ded8eb3b3dac6634d8f1
+SHA512: d405c8afff96a7dae92ce161c0b65f9e89c1011da83190f60d67db28273f24f1012fe0d8c71bbb82f2305fdb4d4afb3628c51cac8a78f548a0d8a5ccf05c92a1
 Description: Linux kernel for Synology NAS, synodeb (headers, stable series)
  Depends on the latest synodeb kernel headers package of the stable series (7.3).
 
@@ -398,25 +398,6 @@ Description: Linux kernel, version 6.18.65-16-synodeb
  This package contains the Linux kernel, modules and corresponding other
  files, version: 6.18.65-16-synodeb.
 
-Package: linux-image-7.3.6-15-synodeb
-Architecture: amd64
-Version: 7.3.6-15
-Priority: optional
-Section: kernel
-Source: linux-upstream
-Maintainer: synodeb <synodeb@synodeb>
-Installed-Size: 62569
-Filename: pool/main/linux-image-7.3.6-15-synodeb_7.3.6-15_amd64.deb
-Size: 52181496
-MD5sum: c036ab610c8876629653583a99e15f82
-SHA1: 0c57415a1a240f7ca8ac105c847e6e21ad2ca039
-SHA256: 931c09a4a1b8380220553bda060ac4273e5007ea7b616133ecc359accb83b83f
-SHA512: 9984408b3cb4850762fb2a9811a6f9dc11a2e1cd98963eb5f6661fdaf81ba62f1d1c0cd9626aac51e32d1fbbf916ea6767f6510ea76f0742a4de24d0f24dff51
-Homepage: https://www.kernel.org/
-Description: Linux kernel, version 7.3.6-15-synodeb
- This package contains the Linux kernel, modules and corresponding other
- files, version: 7.3.6-15-synodeb.
-
 Package: linux-image-7.3.6-16-synodeb
 Architecture: amd64
 Version: 7.3.6-16
@@ -436,6 +417,25 @@ Description: Linux kernel, version 7.3.6-16-synodeb
  This package contains the Linux kernel, modules and corresponding other
  files, version: 7.3.6-16-synodeb.
 
+Package: linux-image-7.3.6-17-synodeb
+Architecture: amd64
+Version: 7.3.6-17
+Priority: optional
+Section: kernel
+Source: linux-upstream
+Maintainer: synodeb <synodeb@synodeb>
+Installed-Size: 62569
+Filename: pool/main/linux-image-7.3.6-17-synodeb_7.3.6-17_amd64.deb
+Size: 52151348
+MD5sum: 550cfdcce479e8ae45fb940a3cfe9db2
+SHA1: d8aae1605a62989e386655466b12a31649b3c86b
+SHA256: 31f27a28b4af8142f9932df30bd71a655e870a9dd812703a4c19a6c6960411c7
+SHA512: e147adebb61ebe580a15d39d4410ba3bc9e649baca1ff92cce2693a96dfe19462425f8f3a9b48324a136a223e3ea439fb62446d69cc5b0f1cb6e9fd4c91e4bc6
+Homepage: https://www.kernel.org/
+Description: Linux kernel, version 7.3.6-17-synodeb
+ This package contains the Linux kernel, modules and corresponding other
+ files, version: 7.3.6-17-synodeb.
+
 Package: linux-image-ds923-longterm
 Architecture: amd64
 Version: 6.18.65-16
@@ -454,17 +454,17 @@ Description: transitional package for linux-image-synodeb-longterm
 
 Package: linux-image-ds923-stable
 Architecture: amd64
-Version: 7.3.6-16
+Version: 7.3.6-17
 Priority: optional
 Section: oldlibs
 Maintainer: Marco Ziliani <508111+rylos@users.noreply.github.com>
-Depends: linux-image-synodeb-stable (= 7.3.6-16)
-Filename: pool/main/linux-image-ds923-stable_7.3.6-16_amd64.deb
-Size: 772
-MD5sum: 72ce94bf6d1f358c06a1e4220145b2a1
-SHA1: 1c86d3e237e8721f7a09ba2cea088ca3baeee4f2
-SHA256: a575e8c0520b0ff16df0e2d8e4d704e462224e38851524cdf5db55da9526da02
-SHA512: 87dac310c9b1a4ff5b0f048e822fe6bea96cb9b0f74cac6a5f983011b372af451285bda53cabcaf261a49081da3fdd31fb23077fb780ff01f6d2a15694bbb8b8
+Depends: linux-image-synodeb-stable (= 7.3.6-17)
+Filename: pool/main/linux-image-ds923-stable_7.3.6-17_amd64.deb
+Size: 776
+MD5sum: 7b05cb2f78eaeb262d46856cd370f743
+SHA1: e3b753327fa133d701c539d707afc14e3f4d4f3a
+SHA256: 2754750bb1d4d39cdb3073628788ba18308079327fe8ee2aa006a2bbee49b7c2
+SHA512: 90227ae3e300fc40cbf769097d87e2e6c285bcc390213c0ead71078c29f6c16a19070c43eea408f669f77aa689235f78c8838a8eb5408570c85847c2bca78454
 Description: transitional package for linux-image-synodeb-stable
  This package can be removed.
 
@@ -502,17 +502,17 @@ Description: Linux kernel for Synology NAS, synodeb (image, longterm series)
 
 Package: linux-image-synodeb-stable
 Architecture: amd64
-Version: 7.3.6-16
+Version: 7.3.6-17
 Priority: optional
 Section: kernel
 Maintainer: Marco Ziliani <508111+rylos@users.noreply.github.com>
-Depends: linux-image-7.3.6-16-synodeb (= 7.3.6-16)
-Filename: pool/main/linux-image-synodeb-stable_7.3.6-16_amd64.deb
+Depends: linux-image-7.3.6-17-synodeb (= 7.3.6-17)
+Filename: pool/main/linux-image-synodeb-stable_7.3.6-17_amd64.deb
 Size: 936
-MD5sum: eadcb58daa23018abb7f051d0046cf4e
-SHA1: 132f81a34f5f4178323242ae52e896ac20345157
-SHA256: 24e64b98a5cd87970b022daf6889961f63117fdf581f99eebce2e23373e02a1b
-SHA512: 7c188cb0bbad5e1422d19abb70b8198aa1ede989cc0177a2853a085c9ded030bfcb14e5790cec8c16762c4f8a953851b6a492df1537b0014d618703d9c94872d
+MD5sum: e15707eba594896e3a5d3806cab4dfe9
+SHA1: 3ad3566791a9f6f3c37ffcb422c21d731476281a
+SHA256: 083a3299e04062f944b83b28c3e6bfe8bf0b27eb5bf6541b99042e93cf119267
+SHA512: ae2ae637b8444ecb9c476b18d4678fab280406a02c9a2b86ee0108d46402dbcaf2a36e8fdb02fff4dd2e001fcb5ebca3fe7667a9dd66cd822b8aea5b76e3abb9
 Description: Linux kernel for Synology NAS, synodeb (image, stable series)
  Depends on the latest synodeb kernel image package of the stable series (7.3).
 

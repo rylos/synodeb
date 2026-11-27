@@ -1,6 +1,6 @@
 {
  "format": 1,
- "generated": "2026-11-27T10:27:34Z",
+ "generated": "2026-11-27T10:59:49Z",
  "series": {
   "longterm": {
    "branch": "6.18",
@@ -13,12 +13,28 @@
  },
  "kernels": [
   {
+   "release": "7.3.6-17-synodeb",
+   "series": "stable",
+   "upstream": "7.3.6",
+   "package": "linux-image-7.3.6-17-synodeb",
+   "version": "7.3.6-17",
+   "published": "2026-11-27T10:59:49Z",
+   "available": true,
+   "changelog": "https://cdn.kernel.org/pub/linux/kernel/v7.x/ChangeLog-7.3.6",
+   "previous": "7.3.6-16-synodeb",
+   "changes": [
+    "kernel: DS415+ (avoton) in synology_nas: bay power 10/15/16/17 and presence 18/28/34/44 on gpio_ich (lpc_ich, gpio-ich built in), disks one at a time 5 s apart, fan tachometers 11/12, disk LED enable 49, LP3943 LEDs at 0x60 on the i801 SMBus (active low), microcontroller on the 16550 at 0x2F8, NIC MAC addresses from macs=; model by the Avoton host bridge with the SiI3132 (#16)",
+    "kernel: Debian configuration of 7.3.6-1 for the 7.3 series (was 7.3~rc7)"
+   ],
+   "cves": []
+  },
+  {
    "release": "6.18.65-16-synodeb",
    "series": "longterm",
    "upstream": "6.18.65",
    "package": "linux-image-6.18.65-16-synodeb",
    "version": "6.18.65-16",
-   "published": "2026-11-27T10:27:34Z",
+   "published": "2026-11-27T10:59:49Z",
    "available": true,
    "changelog": "https://cdn.kernel.org/pub/linux/kernel/v6.x/ChangeLog-6.18.65",
    "previous": "6.18.65-15-synodeb",
@@ -61,7 +77,7 @@
    "package": "linux-image-7.3.6-15-synodeb",
    "version": "7.3.6-15",
    "published": "2026-11-25T23:12:24Z",
-   "available": true,
+   "available": false,
    "changelog": "https://cdn.kernel.org/pub/linux/kernel/v7.x/ChangeLog-7.3.6",
    "previous": "7.3.6-14-synodeb",
    "changes": [],
