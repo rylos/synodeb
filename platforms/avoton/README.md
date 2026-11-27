@@ -1,6 +1,6 @@
 # Platform avoton (Intel Atom C2000, Avoton)
 
-Models: DS415+ (work in progress, not booted yet). Board file: `boards/ds415plus.conf`.
+Models: DS415+ (work in progress: installer reached, bays not yet tested). Board file: `boards/ds415plus.conf`.
 Hardware report: [#16](https://github.com/rylos/synodeb/issues/16). Each fact is marked as
 measured on a unit (under DSM 7.1.1) or inferred.
 
@@ -34,19 +34,43 @@ measured on a unit (under DSM 7.1.1) or inferred.
   the map is by PCI device and port.
 - **Serial**: DSM's console on ttyS0 (I/O 0x3f8), its microcontroller driver opens ttyS1
   (I/O 0x2f8, 9600 baud, measured with `stty`). The board file puts the kernel console on
-  ttyS0; the udev rule names ttyS1 `/dev/synology-up` when the board file is the DS415+ one. That the microcontroller speaks the same protocol as
-  on the other models is inferred, not tested. The console header is reached through the
+  ttyS0; the udev rule names ttyS1 `/dev/synology-up` when the board file is the DS415+ one. The microcontroller takes the same commands as on the
+  other models (9600 8N1, see below); not yet tested from Debian. The console header is reached through the
   vent below the power button with the unit on its side (photo in #16); it looks like the
   2×3 header of the DS923+ ([serial console](../../docs/serial.md)). The DS414 (ARM, another
   board) uses the same header the same way: the row closest to the board, pins 2-4-6, with NAS RX
   closest to the power button
   ([forum post](https://forum.doozan.com/read.php?3,100059)). On the DS415+ that is inferred,
   not measured.
-- **Network**: two onboard ports. Under DSM `macs=` comes from the boot loader (`vender`); the
-  NICs themselves carry a placeholder address (reported by luuvasara, #7), so until the kernel
-  sets the right ones, both ports may come up with the same MAC address.
-- **LEDs**: `syno_led0`-`15` under DSM, a 16-output LP3943 (inferred from other owners' reports,
-  #7). No driver here yet.
+- **Network**: two onboard ports (Intel igb, `00:14.0` and `00:14.1`). Under DSM `macs=` comes
+  from the boot loader (`vender`); the NICs themselves carry a placeholder address (reported by
+  luuvasara, #7). The kernel gives them the `macs=` addresses in PCI order (`00:14.0` the first,
+  `00:14.1` the second); that this is DSM's LAN 1 / LAN 2 order is inferred.
+
+## What the synodeb kernel and synohwd do on the DS415+
+
+From the next kernel release (not yet checked on a unit):
+
+- **Model**: the platform driver `synology_nas` takes the DS415+ by the Avoton host bridge
+  (`8086:1f0c`) with the SiI3132 (`1095:3132`), when the DMI name is `MohonPeak` or missing.
+- **Bays**: power on GPIO 10, 15, 16, 17 (active high), presence on GPIO 18, 28, 34, 44 (active
+  low), the SoC's legacy GPIO block (`gpio_ich`, built into the kernel with `lpc_ich`). Disks are
+  powered one at a time, 5 s apart, then 3 s before the SATA probe; hot-plug like the other
+  models; off one by one at power-off. Without this the bays stay unpowered and no disk is seen.
+- **Disk LEDs**: a TI LP3943 at 0x60 on the SMBus of the SoC (`i2c-i801`), output 2n green and
+  2n+1 orange of bay n+1, wired active low; GPIO 49 enables them. Driver
+  `leds-synology-lp3943` (`syno:green:diskN`, `syno:orange:diskN`), driven by synohwd.
+- **Fans**: tachometers on GPIO 11 and 12 (`fan1`, `fan2` of hwmon `synology`, sampled); speed
+  set by synohwd through the microcontroller (`V<duty>`), with the DS415+ curves (disks
+  0/37/41/48/53 °C → 21/35/50/70/99 % in cool mode, 0/42/46/53/58 °C in quiet mode, shutdown
+  at 61 °C; CPU 0/50/85 °C → 21/50/99 %, shutdown at 95 °C).
+- **Microcontroller**: ttyS1 (I/O 0x2F8), 9600 8N1 raw, no flow control (`/dev/synology-up`).
+  Restart sends `C`, power-off `1`, as on the other models; power LED, beeps, status LED and the
+  power button use the same commands.
+- **RTC**: the CMOS RTC (`rtc_cmos`, rtc0), loaded only on this model; the system clock is set
+  from it at boot (UTC). Scheduled power-on: its wake alarm (`rtcwake -d rtc0`), and synohwd
+  tells the microcontroller at power-off.
+- **USB**: no VBUS switch, the ports are always powered.
 
 ## Boot flash (DOM)
 
@@ -105,10 +129,7 @@ system.
 
 ## Not done yet
 
-- kernel: no table in `synology_nas.c` (bay power, presence, fans, power-off) and no MAC address
-  fix for the onboard ports. Without it there is no `synology-nas` platform device, so
-  `synohwd.service` does not start: synodeb does not drive the fans (what the microcontroller does on its own is not measured), and
-  the power button, LEDs and beeps are not handled. The table comes after the first boot,
-  from measurements on the unit;
-- synohwd: the bay map above is in (from the next synodeb release), no fan curves;
-- disk LEDs (LP3943).
+- everything above still has to be checked on a unit (the first boots, #16, reached the
+  installer but saw no disk: the bays were not powered);
+- front LED dimming (no table for this model);
+- `pwrctl_pin=N0754` on the DSM command line (power control of expansion units): not used.

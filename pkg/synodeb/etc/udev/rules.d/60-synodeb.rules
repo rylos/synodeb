@@ -12,6 +12,9 @@ SUBSYSTEM=="tty", KERNEL=="ttyS*", KERNELS=="0000:00:18.2", ATTRS{vendor}=="0x80
 # (MohonPeak), or missing when the boot loader does not pass the EFI tables
 SUBSYSTEM=="tty", KERNEL=="ttyS1", ATTR{port}=="0x2F8", PROGRAM="/usr/lib/synodeb/board MODEL", RESULT=="DS415+", SYMLINK+="synology-up", MODE="0600"
 SUBSYSTEM=="tty", KERNEL=="ttyS0", ATTR{port}=="0x3F8", PROGRAM="/usr/lib/synodeb/board MODEL", RESULT=="DS415+", SYMLINK+="synology-console"
+# DS415+: the CMOS RTC (rtc_cmos, a module) shows up after the kernel's hctosys: the system
+# clock is set from it here (UTC, as DSM keeps it)
+SUBSYSTEM=="rtc", KERNEL=="rtc0", ACTION=="add", DRIVERS=="rtc_cmos", RUN+="/bin/sh -c '[ ! -x /usr/sbin/hwclock ] || /usr/sbin/hwclock --hctosys --utc --rtc=/dev/rtc0'"
 # The daemon drives the disk LEDs: no default trigger. Only on "add": the kernel sends a
 # "change" uevent on every trigger change, and without ACTION the rule would immediately
 # undo the ataN trigger set by synohwd

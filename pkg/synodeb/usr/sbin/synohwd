@@ -151,6 +151,22 @@ MODEL_FAN_TABLES = {
             "nic": FAN_TABLES["low"]["nic"], "nic_shutdown": FAN_TABLES["low"]["nic_shutdown"],
         },
     },
+    # DS415+ (DSM 7.1.1 scemd.xml): DUAL_MODE_HIGH/LOW, 40 Hz; no M.2 and no NIC sensor, so
+    # "nvme" and "nic" are the DS923+ ones (they never have a reading there)
+    "DS415+": {
+        "high": {
+            "disk": [(0, 21), (37, 35), (41, 50), (48, 70), (53, 99)], "disk_shutdown": 61,
+            "nvme": FAN_TABLES["high"]["nvme"], "nvme_shutdown": FAN_TABLES["high"]["nvme_shutdown"],
+            "cpu": [(0, 21), (50, 50), (85, 99)], "cpu_shutdown": 95,
+            "nic": FAN_TABLES["high"]["nic"], "nic_shutdown": FAN_TABLES["high"]["nic_shutdown"],
+        },
+        "low": {
+            "disk": [(0, 21), (42, 35), (46, 50), (53, 70), (58, 99)], "disk_shutdown": 61,
+            "nvme": FAN_TABLES["low"]["nvme"], "nvme_shutdown": FAN_TABLES["low"]["nvme_shutdown"],
+            "cpu": [(0, 21), (50, 50), (85, 99)], "cpu_shutdown": 95,
+            "nic": FAN_TABLES["low"]["nic"], "nic_shutdown": FAN_TABLES["low"]["nic_shutdown"],
+        },
+    },
 }
 
 # Bay -> (PCI function of the SATA controller, port index), per model (DMI product name).
@@ -177,6 +193,10 @@ MODEL_M2 = {
     "DS920+": {1: "00:14.1", 2: "00:14.0"},
     "DS423+": {1: "00:13.3", 2: "00:14.0"},
 }
+# The RTC that powers the NAS on (its wakealarm is the scheduled power-on): the S-35390A
+# (I2C client at 0x30) unless listed here by the name of its driver. DS415+: the CMOS RTC,
+# whose alarm wakes the board through ACPI.
+MODEL_WAKE_RTC = {"DS415+": "rtc_cmos"}
 DMI_PRODUCT = "/sys/class/dmi/id/product_name"
 BOARD = "/usr/lib/synodeb/board"
 # Front-panel LED dimmer, per model, from DSM's led_brightness.xml: its I2C bus (by the name
@@ -1029,8 +1049,13 @@ class Daemon:
     def prepare_poweroff(self):
         """Tell the uP what may wake the NAS once it is off (like DSM does)."""
         alarm = False
+        wake_rtc = MODEL_WAKE_RTC.get(PRODUCT)
         for rtc in glob.glob("/sys/class/rtc/rtc*"):
-            if os.path.basename(os.path.realpath(f"{rtc}/device")).endswith("-0030"):  # S-35390A
+            if wake_rtc:
+                ours = read(f"{rtc}/name", "").split()[:1] == [wake_rtc]
+            else:   # S-35390A
+                ours = os.path.basename(os.path.realpath(f"{rtc}/device")).endswith("-0030")
+            if ours:
                 alarm = bool(read(f"{rtc}/wakealarm"))
         self.up.send("s" if alarm else "r")
         self.up.send("l" if self.conf["wol"] else "k")
