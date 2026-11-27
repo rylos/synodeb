@@ -83,11 +83,12 @@ echo "== GRUB legacy: $LEGACY"
 ORIG=$(dom_sha)
 $S status
 # --- fresh install, switching, cancel
-check install "$S install --yes --network '${NET:-dhcp}' --hostname nas --lang en ${LOCAL[*]+${LOCAL[*]}} ${REPO:+--repo '$REPO'} | tee $T/install.out && grep -q 'Password:' $T/install.out"
+check install "$S install --yes --network '${NET:-dhcp}' --hostname nas --lang fr ${LOCAL[*]+${LOCAL[*]}} ${REPO:+--repo '$REPO'} | tee $T/install.out && grep -q 'Password:' $T/install.out"
 B0=$(sed -n 's/^DOM backup: *//p' $T/install.out)
 check "backup of the original DOM" "[ -n '$B0' ] && [ \"\$(sha256sum < '$B0' | cut -c1-64)\" = $ORIG ]"
 check "backup readable by root only" "[ \"\$(stat -c %a '$B0')\" = 600 ]"
 check "INSTALLER default" "st && grep -q 'INSTALLER   <- default' $T/st"
+check "installer in English, locale of the installed system" "grep -q 'debian-installer/language=en debian-installer/country=FR debian-installer/locale=fr_FR.UTF-8 keyboard-configuration/xkb-keymap=fr ' $T/conf"
 check "installer kernel as installer.vmlinuz" "has installer.vmlinuz && ! has vmlinuz"
 if [ "$LEGACY" = 1 ]; then
     check "GRUB legacy: INSTALLER entry" "grep -q '^title INSTALLER\$' $T/conf && grep -q '^	kernel /synodeb/installer.vmlinuz ' $T/conf && grep -q '^	initrd /synodeb/installer.img\$' $T/conf && grep -q '^	root (hd0,1)\$' $T/conf"

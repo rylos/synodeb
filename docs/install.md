@@ -139,7 +139,7 @@ Options of `install` (they can come before or after the command):
 |---|---|---|
 | `--network dsm\|dhcp` | asked (`dsm`, or `dhcp` if DSM uses DHCP) | `dsm`: the address DSM has now, as a static address; `dhcp`: an address from the DHCP server. With a DSM bond or Open vSwitch the installer uses one port only |
 | `--hostname NAME` | asked (DSM host name) | letters, digits and `-` |
-| `--lang en\|it\|de\|fr\|es\|nl\|pt` | asked (`en`) | language and keyboard layout of the installer |
+| `--lang en\|it\|de\|fr\|es\|nl\|pt` | asked (`en`) | locale and keyboard layout of the installed system (the installer itself is in English: on the serial console it offers no other language) |
 | `--backup-dir DIR` | current folder | where the DOM backup goes |
 | `--yes` | | no questions, defaults for everything not given |
 | `--local DIR` | | take `vmlinuz` and `installer.img` from DIR instead of downloading them |
