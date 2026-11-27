@@ -15,7 +15,7 @@
 #                                              original Synology boot configuration back
 #
 # install options: --yes (no questions), --network dsm|dhcp, --hostname NAME,
-#   --lang en|it|de|fr|es|nl|pt, --backup-dir DIR, --local DIR (installer files from DIR
+#   --lang en|it|de|fr|es|nl|pt (installed system), --backup-dir DIR, --local DIR (installer files from DIR
 #   instead of the download), --repo URL (apt repository for the installed system),
 #   --replace-debian (if the DOM has no room for the installer next to an installed Debian,
 #   remove that Debian's kernels from the DOM instead of stopping), --experimental (allow a
@@ -33,9 +33,9 @@ umask 022
 VERSION=1
 BASE_URL=https://rylos.github.io/synodeb
 # installer files of this version of the script (updated by tools/publish.sh)
-INSTALLER_DIR=installer/6.18.65-15-synodeb
-SHA_VMLINUZ=671834d72a11282aa5e7601ec268ed55133e698005d2c7e750ba0aea03537182
-SHA_INSTALLER=8a6ddd373cced37a5590098db20fc7940b8f26ff7ef8fc4c83cc5234f4ee1d5d
+INSTALLER_DIR=installer/6.18.65-16-synodeb
+SHA_VMLINUZ=702f8e0a7ad81a138af5964051241e95b0b9a12b6b5d430e19e6ccd6eae7b7ad
+SHA_INSTALLER=7036b2cc0d70e20e5dc76b4673be289b3eea54c6930036c8d4e91028da2be5b5
 
 P1=${SYNOBOOT1:-/dev/synoboot1}      # overridable for tests only
 P2=${SYNOBOOT2:-/dev/synoboot2}
@@ -466,13 +466,17 @@ cmd_install() {
     case "$NETWORK" in dsm|dhcp) ;; *) die "network: dsm or dhcp" ;; esac
     HOST=$(ask "Host name of the Debian system" "$HOST")
     valid_host "$HOST" || die "host name '$HOST': letters, digits and '-' only (at most 63), not starting or ending with '-'"
-    LANG_OPT=$(ask "Installer language (en it de fr es nl pt)" "${LANG_OPT:-en}")
+    LANG_OPT=$(ask "Language of the installed system (en it de fr es nl pt; the installer itself is in English)" "${LANG_OPT:-en}")
     case "$LANG_OPT" in
     en) LOCALE=en_US.UTF-8 KEYMAP=us ;; it) LOCALE=it_IT.UTF-8 KEYMAP=it ;;
     de) LOCALE=de_DE.UTF-8 KEYMAP=de ;; fr) LOCALE=fr_FR.UTF-8 KEYMAP=fr ;;
     es) LOCALE=es_ES.UTF-8 KEYMAP=es ;; nl) LOCALE=nl_NL.UTF-8 KEYMAP=us ;;
     pt) LOCALE=pt_PT.UTF-8 KEYMAP=pt ;; *) die "language: en it de fr es nl pt" ;;
     esac
+    # The installer starts on the serial console, where it offers English only: a preseeded
+    # locale of another language is ignored and it waits there for a language, so SSH never
+    # comes up. English for the installer, the country and the locale for the installed system.
+    COUNTRY=${LOCALE%%.*}; COUNTRY=${COUNTRY#*_}
     PW=$(tr -dc 'abcdefghijkmnpqrstuvwxyzACDEFGHJKLMNPQRTUVWXY34679' < /dev/urandom 2>/dev/null | head -c 12)
     [ ${#PW} = 12 ] || die "could not generate a password"
 
@@ -549,7 +553,7 @@ cmd_install() {
     {
         if [ $keep = 1 ]; then drop_installer "$C"; else strip_conf "$C.dsm"; fi
         echo "$BEGIN (written by synodeb-setup.sh)"
-        args="$CONSOLE debian-installer/locale=$LOCALE keyboard-configuration/xkb-keymap=$KEYMAP netcfg/get_hostname=$HOST netcfg/hostname=$HOST $net network-console/password=$PW network-console/password-again=$PW${REPO:+ synodeb.repo=$REPO}"
+        args="$CONSOLE debian-installer/language=en debian-installer/country=$COUNTRY debian-installer/locale=$LOCALE keyboard-configuration/xkb-keymap=$KEYMAP netcfg/get_hostname=$HOST netcfg/hostname=$HOST $net network-console/password=$PW network-console/password-again=$PW${REPO:+ synodeb.repo=$REPO}"
         if [ "$(lg)" = 1 ]; then
             # as SYNOLOGY_2: synoboot2 is (hd0,1); 'vender /vender show' adds sn= and macs=
             printf 'title INSTALLER\n\troot (hd0,1)\n\tvender /vender show\n\tkernel /synodeb/installer.vmlinuz %s\n\tinitrd /synodeb/installer.img\n' "$args"
