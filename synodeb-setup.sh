@@ -33,9 +33,9 @@ umask 022
 VERSION=1
 BASE_URL=https://rylos.github.io/synodeb
 # installer files of this version of the script (updated by tools/publish.sh)
-INSTALLER_DIR=installer/6.18.65-15-synodeb
-SHA_VMLINUZ=671834d72a11282aa5e7601ec268ed55133e698005d2c7e750ba0aea03537182
-SHA_INSTALLER=8a6ddd373cced37a5590098db20fc7940b8f26ff7ef8fc4c83cc5234f4ee1d5d
+INSTALLER_DIR=installer/6.18.65-16-synodeb
+SHA_VMLINUZ=702f8e0a7ad81a138af5964051241e95b0b9a12b6b5d430e19e6ccd6eae7b7ad
+SHA_INSTALLER=7036b2cc0d70e20e5dc76b4673be289b3eea54c6930036c8d4e91028da2be5b5
 
 P1=${SYNOBOOT1:-/dev/synoboot1}      # overridable for tests only
 P2=${SYNOBOOT2:-/dev/synoboot2}
